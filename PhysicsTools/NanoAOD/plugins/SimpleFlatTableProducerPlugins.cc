@@ -39,6 +39,12 @@ typedef BXVectorSimpleFlatTableProducer<l1t::Tau> SimpleTriggerL1TauFlatTablePro
 #include "DataFormats/L1Trigger/interface/Muon.h"
 typedef BXVectorSimpleFlatTableProducer<l1t::Muon> SimpleTriggerL1MuonFlatTableProducer;
 
+#include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
+typedef SimpleFlatTableProducer<l1t::TrackerMuon> SimpleTriggerL1TkMuonFlatTableProducer;
+
+#include "DataFormats/TrackReco/interface/Track.h"
+typedef SimpleFlatTableProducer<reco::Track> SimpleTriggerL2TkMuonFlatTableProducer;
+
 #include "DataFormats/L1Trigger/interface/EtSum.h"
 typedef BXVectorSimpleFlatTableProducer<l1t::EtSum> SimpleTriggerL1EtSumFlatTableProducer;
 
@@ -70,6 +76,8 @@ DEFINE_FWK_MODULE(SimpleBeamspotFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1EGFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1JetFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1MuonFlatTableProducer);
+DEFINE_FWK_MODULE(SimpleTriggerL1TkMuonFlatTableProducer);
+DEFINE_FWK_MODULE(SimpleTriggerL2TkMuonFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1TauFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1EtSumFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleRun3ScoutingVertexFlatTableProducer);
