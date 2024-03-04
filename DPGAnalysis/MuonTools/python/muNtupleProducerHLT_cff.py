@@ -5,12 +5,15 @@ from PhysicsTools.NanoAOD.common_cff import *
 from DPGAnalysis.MuonTools.nano_mu_local_reco_cff import *
 from PhysicsTools.NanoAOD.genparticles_cff import *
 from PhysicsTools.PatAlgos.slimming.prunedGenParticles_cfi import *
+from DPGAnalysis.MuonTools.nano_phase2_muon_trig import *
 
 
 muDPGNanoProducerHLT = cms.Sequence(muLocalRecoProducers
                                     + prunedGenParticles
                                     + finalGenParticles
-                                    + genParticleTable)
+                                    + genParticleTable
+                                    + muTriggerProducers
+                                    )
 
 def muDPGNanoCustomize(process) :
 
