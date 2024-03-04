@@ -44,6 +44,8 @@ autoNANO = {
     'MUPOG' : {'sequence': '@PHYS',
                'customize' : '@PHYS+PhysicsTools/NanoAOD/custom_muon_cff.PrepMuonCustomNanoAOD'},
     # MUDPG flavours: use their own sequence
+    'MUHLT' : {'sequence': 'DPGAnalysis/MuonTools/muNtupleProducerHLT_cff.muDPGNanoProducerHLT',
+               'customize': 'DPGAnalysis/MuonTools/muNtupleProducerHLT_cff.muDPGNanoCustomize'},
     'MUDPG' : {'sequence': 'DPGAnalysis/MuonTools/muNtupleProducer_cff.muDPGNanoProducer',
                'customize': 'DPGAnalysis/MuonTools/muNtupleProducer_cff.muDPGNanoCustomize'},
     'MUDPGBKG' : {'sequence': 'DPGAnalysis/MuonTools/muNtupleProducerBkg_cff.muDPGNanoProducerBkg',
