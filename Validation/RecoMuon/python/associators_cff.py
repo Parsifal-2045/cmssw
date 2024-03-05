@@ -184,54 +184,76 @@ MABHhlt = SimMuon.MCTruth.MuonAssociatorByHits_cfi.muonAssociatorByHits.clone(
 ##############################################
 
 tpToL2MuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltL2Muons',
+    tracksTag = 'hltL2MuonsFromL1TkMuon',
     UseTracker = False,
     UseMuon = True
 )
-tpToL2UpdMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltL2Muons:UpdatedAtVtx',
+tpToL1TkMergedMuonAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
     UseTracker = False,
     UseMuon = True
 )
-tpToL3OITkMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIterL3OIMuonTrackSelectionHighPurity',
+tpToL3MuonMergedAssociation = MABHhlt.clone(
+    tracksTag = 'hltPhase2L3MuonMerged',
     UseTracker = True,
-    UseMuon = False
+    UseMuon = True
 )
 tpToL3TkMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIterL3MuonMerged',
+    tracksTag = 'hltPhase2L3MuonTracks',
     UseTracker = True,
     UseMuon = False
 )
-tpToL3FromL1TkMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIterL3MuonAndMuonFromL1Merged',
-    UseTracker = True,
-    UseMuon = False
-)
-tpToL0L3FromL1TkMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIter0IterL3FromL1MuonTrackSelectionHighPurity',
-    UseTracker = True,
-    UseMuon = False
-)
-tpToL3GlbMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIterL3GlbMuon',
+tpToL3OIMuonAssociation = MABHhlt.clone(
+    tracksTag = 'hltL3MuonsPhase2L3OI',
     UseTracker = True,
     UseMuon = True
 )
-tpToL3NoIDMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIterL3MuonsNoIDTracks',
-    UseTracker = True,
-    UseMuon = True,
-    rejectBadGlobal = False
-)
-tpToL3MuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIterL3MuonsTracks',
-    UseTracker = True,
-    UseMuon = True,
-    rejectBadGlobal = False
-)
 
 
+#tpToL2UpdMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltL2Muons:UpdatedAtVtx',
+#    UseTracker = False,
+#    UseMuon = True
+#)
+#tpToL3OITkMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIterL3OIMuonTrackSelectionHighPurity',
+#    UseTracker = True,
+#    UseMuon = False
+#)
+#tpToL3TkMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIterL3MuonMerged',
+#    UseTracker = True,
+#    UseMuon = False
+#)
+#tpToL3FromL1TkMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIterL3MuonAndMuonFromL1Merged',
+#    UseTracker = True,
+#    UseMuon = False
+#)
+#tpToL0L3FromL1TkMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIter0IterL3FromL1MuonTrackSelectionHighPurity',
+#    UseTracker = True,
+#    UseMuon = False
+#)
+#tpToL3GlbMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIterL3GlbMuon',
+#    UseTracker = True,
+#    UseMuon = True
+#)
+#tpToL3NoIDMuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIterL3MuonsNoIDTracks',
+#    UseTracker = True,
+#    UseMuon = True,
+#    rejectBadGlobal = False
+#)
+#tpToL3MuonAssociation = MABHhlt.clone(
+#    tracksTag = 'hltIterL3MuonsTracks',
+#    UseTracker = True,
+#    UseMuon = True,
+#    rejectBadGlobal = False
+#)
+
+'''
 #
 # COSMICS reco
 MABHcosmic = SimMuon.MCTruth.MuonAssociatorByHits_cfi.muonAssociatorByHits.clone(
@@ -342,3 +364,4 @@ fastSim.toModify(tpToL0L3FromL1TkMuonAssociation, DTrechitTag = _DTrechitTag)
 fastSim.toModify(tpToL3GlbMuonAssociation, DTrechitTag = _DTrechitTag)
 fastSim.toModify(tpToL3NoIDMuonAssociation, DTrechitTag = _DTrechitTag)
 fastSim.toModify(tpToL3MuonAssociation, DTrechitTag = _DTrechitTag)
+'''
