@@ -7,6 +7,8 @@ from PhysicsTools.NanoAOD.l1trig_cff import *
 
 from PhysicsTools.NanoAOD.simpleCandidateFlatTableProducer_cfi import simpleCandidateFlatTableProducer
 
+from Validation.RecoMuon.muonValidationHLT_cff import *
+
 
 l1TkMuTable = cms.EDProducer("SimpleTriggerL1TkMuonFlatTableProducer",
     src = cms.InputTag("l1tTkMuonsGmt"),
@@ -50,4 +52,5 @@ l2MuTable = cms.EDProducer("SimpleTriggerL2TkMuonFlatTableProducer",
 
 muTriggerProducers = cms.Sequence(l1TkMuTable
                                   + l2MuTable
+                                  + recoMuonValidationHLT_seq
                                 )
