@@ -183,31 +183,33 @@ MABHhlt = SimMuon.MCTruth.MuonAssociatorByHits_cfi.muonAssociatorByHits.clone(
 )
 ##############################################
 
+tpToL1TkMergedMuonAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
+    UseTracker = True,
+    UseMuon = False
+)
+
 tpToL2MuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltL2MuonsFromL1TkMuon',
+    tracksTag = 'hltL2MuonsFromL1TkMuon:UpdatedAtVtx',
     UseTracker = False,
     UseMuon = True
 )
-tpToL1TkMergedMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
+tpToL3OIMuonAssociation = MABHhlt.clone(
+    tracksTag = 'hltL3MuonsPhase2L3OI',
     UseTracker = False,
     UseMuon = True
 )
 tpToL3MuonMergedAssociation = MABHhlt.clone(
     tracksTag = 'hltPhase2L3MuonMerged',
     UseTracker = True,
-    UseMuon = True
+    UseMuon = False
 )
 tpToL3TkMuonAssociation = MABHhlt.clone(
     tracksTag = 'hltPhase2L3MuonTracks',
     UseTracker = True,
     UseMuon = False
 )
-tpToL3OIMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltL3MuonsPhase2L3OI',
-    UseTracker = True,
-    UseMuon = True
-)
+
 
 
 #tpToL2UpdMuonAssociation = MABHhlt.clone(
