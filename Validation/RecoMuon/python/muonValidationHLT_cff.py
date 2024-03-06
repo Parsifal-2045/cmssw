@@ -21,31 +21,32 @@ ignoremissingtrackcollection=True
 MTVhlt.muonTPSelector.src = ("TPmu")
 ################################################
 
-l2MuonMuTrackV = MTVhlt.clone(
-    associatormap = 'tpToL2MuonAssociation',
-    label = ('hltL2MuonsFromL1TkMuon',),
-    muonHistoParameters = trkMuonHistoParameters
-)
 l1TkMuonMergedMuTrackV = MTVhlt.clone(
     associatormap = 'tpToL1TkMergedMuonAssociation',
     label = ('hltIter2Phase2L3FromL1TkMuonMerged',),
     muonHistoParameters = trkMuonHistoParameters
 )
+l2MuonMuTrackV = MTVhlt.clone(
+    associatormap = 'tpToL2MuonAssociation',
+    label = ('hltL2MuonsFromL1TkMuon:UpdatedAtVtx',),
+    muonHistoParameters = staMuonHistoParameters
+)
+l3OIMuonV = MTVhlt.clone(
+    associatormap = 'tpToL3OIMuonAssociation',
+    label = ('hltL3MuonsPhase2L3OI',),
+    muonHistoParameters = glbMuonHistoParameters
+)
 l3MuonMergedV = MTVhlt.clone(
     associatormap = 'tpToL3MuonMergedAssociation',
     label = ('hltPhase2L3MuonMerged',),
-    muonHistoParameters = staMuonHistoParameters
+    muonHistoParameters = trkMuonHistoParameters
 )
 l3MuonMuTrackV = MTVhlt.clone(
     associatormap = 'tpToL3TkMuonAssociation',
     label = ('hltPhase2L3MuonTracks',),
     muonHistoParameters = trkMuonHistoParameters
 )
-l3OIMuonV = MTVhlt.clone(
-    associatormap = 'tpToL3OIMuonAssociation',
-    label = ('hltL3MuonsPhase2L3OI',),
-    muonHistoParameters = staMuonHistoParameters
-)
+
 
 
 #l2UpdMuonMuTrackV = MTVhlt.clone(
