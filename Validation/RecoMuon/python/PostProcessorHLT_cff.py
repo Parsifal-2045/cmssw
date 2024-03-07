@@ -24,5 +24,5 @@ postProcessorMuonTrackHLTComp = DQMEDHarvester(
 
 recoMuonPostProcessorsHLT = cms.Sequence(
     postProcessorMuonTrackHLT
-    *postProcessorMuonTrackHLTComp
+    #*postProcessorMuonTrackHLTComp
     )
