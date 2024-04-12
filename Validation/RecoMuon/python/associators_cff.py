@@ -174,8 +174,8 @@ MABHhlt = SimMuon.MCTruth.MuonAssociatorByHits_cfi.muonAssociatorByHits.clone(
 #    acceptOneStubMatchings = cms.bool(False),
 #    rejectBadGlobal = cms.bool(True),
 ##############################################
-    PurityCut_track = 0.75,
-    PurityCut_muon = 0.75,
+    PurityCut_track = cms.double(0.25),
+    PurityCut_muon = cms.double(0.25),
     DTrechitTag = 'hltDt1DRecHits',
     ignoreMissingTrackCollection = True,
     tpTag = ("TPmu"),
@@ -183,31 +183,62 @@ MABHhlt = SimMuon.MCTruth.MuonAssociatorByHits_cfi.muonAssociatorByHits.clone(
 )
 ##############################################
 
-tpToL1TkMergedMuonAssociation = MABHhlt.clone(
+# L3 IO inner tracks
+tpToL3IOTkAssociation = MABHhlt.clone(
     tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
     UseTracker = True,
     UseMuon = False
 )
 
+# L2 standalone muons
 tpToL2MuonAssociation = MABHhlt.clone(
     tracksTag = 'hltL2MuonsFromL1TkMuon:UpdatedAtVtx',
     UseTracker = False,
     UseMuon = True
 )
-tpToL3OIMuonAssociation = MABHhlt.clone(
-    tracksTag = 'hltL3MuonsPhase2L3OI',
-    UseTracker = False,
-    UseMuon = True
+
+# L3 OI inner tracks
+tpToL3OITkAssociation = MABHhlt.clone(
+    tracksTag = 'hltPhase2L3OIMuonTrackSelectionHighPurity',
+    UseTracker = True,
+    UseMuon = False
 )
-tpToL3MuonMergedAssociation = MABHhlt.clone(
+
+# L3 tracks merged
+tpToL3TkMergedAssociation = MABHhlt.clone(
     tracksTag = 'hltPhase2L3MuonMerged',
     UseTracker = True,
     UseMuon = False
 )
-tpToL3TkMuonAssociation = MABHhlt.clone(
+
+# L3 global muons
+tpToL3GlbMuonMergedAssociation = MABHhlt.clone(
+    tracksTag = 'hltPhase2L3GlbMuon',
+    UseTracker = True,
+    UseMuon = True
+)
+
+# L3 OI global muons
+tpToL3OIMuonAssociation = MABHhlt.clone(
+    tracksTag = 'hltL3MuonsPhase2L3OI',
+    UseTracker = True,
+    UseMuon = True
+)
+
+# L3 Muons no ID not tracks nor standalone nor global cannot extract as they are
+# tpToL3MuonNoIDAssociation = MABHhlt.clone(
+#     tracksTag = 'hltPhase2L3MuonsNoID',
+#     UseTracker = True,
+#     UseMuon = True,
+#     rejectBadGlobal = False
+# )
+
+# L3 Muons ID (tracks)
+tpToL3MuonIDAssociation = MABHhlt.clone(
     tracksTag = 'hltPhase2L3MuonTracks',
     UseTracker = True,
-    UseMuon = False
+    UseMuon = True,
+    rejectBadGlobal = False
 )
 
 
