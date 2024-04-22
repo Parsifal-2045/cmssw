@@ -30,6 +30,9 @@ from ..modules.hltL2MuonFromL1TkMuonCandidates_cfi import *
 from ..modules.hltL2MuonSeedsFromL1TkMuon_cfi import *
 from ..modules.hltL2MuonsFromL1TkMuon_cfi import *
 from ..modules.hltL2OfflineMuonSeeds_cfi import *
+from ..modules.hltL2CosmicMuonsFromL1Muon_cfi import *
+from ..modules.hltL2CosmicMuonSeedsFromL1Muon_cfi import *
+from ..modules.hltL2CosmicOfflineMuonSeeds_cfi import *
 from ..modules.hltL3MuonsPhase2L3Links_cfi import *
 from ..modules.hltL3MuonsPhase2L3OI_cfi import *
 from ..modules.hltMe0RecHits_cfi import *
@@ -100,6 +103,9 @@ HLT_Mu50_FromL1TkMuon = cms.Path(
         hltL2MuonSeedsFromL1TkMuon,
         hltL2MuonsFromL1TkMuon,
         hltL2OfflineMuonSeeds,
+        hltL2CosmicMuonSeedsFromL1Muon,
+        hltL2CosmicMuonsFromL1Muon,
+        hltL2CosmicOfflineMuonSeeds,
         hltL3MuonsPhase2L3Links,
         hltL3MuonsPhase2L3OI,
         hltMe0RecHits,
