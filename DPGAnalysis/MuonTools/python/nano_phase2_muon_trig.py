@@ -110,7 +110,6 @@ l2MuTable = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
                          )
 )
 
-# L2 standalone muons updated at vertex
 l2MuTableVtx = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
     src = cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
     cut = cms.string(""), 
