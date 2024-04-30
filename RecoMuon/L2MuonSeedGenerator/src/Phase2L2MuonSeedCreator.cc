@@ -16,6 +16,8 @@
 #include "TrackingTools/DetLayers/interface/DetLayer.h"
 
 #include "DataFormats/Common/interface/OwnVector.h"
+#include "DataFormats/CSCRecHit/interface/CSCSegmentCollection.h"
+#include "DataFormats/DTRecHit/interface/DTRecSegment4DCollection.h"
 #include "DataFormats/L1TMuonPhase2/interface/MuonStub.h"
 #include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
 #include "DataFormats/Math/interface/deltaR.h"
@@ -34,13 +36,18 @@
  * Constructor
  */
 Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
-    : source_(pset.getParameter<edm::InputTag>("InputObjects")),
-      muCollToken_(consumes(source_)),
+    : l1TkMuCollToken_{consumes(pset.getParameter<edm::InputTag>("InputObjects"))},
+      cscSegmentCollToken_{consumes(pset.getParameter<edm::InputTag>("CSCRecSegmentLabel"))},
+      dtSegmentCollToken_{consumes(pset.getParameter<edm::InputTag>("DTRecSegmentLabel"))},
+      cscGeometryToken_{esConsumes<CSCGeometry, MuonGeometryRecord>()},
+      dtGeometryToken_{esConsumes<DTGeometry, MuonGeometryRecord>()},
+      magneticFieldToken_{esConsumes<MagneticField, IdealMagneticFieldRecord>()},
+      muonLayersToken_{esConsumes<MuonDetLayerGeometry, MuonRecoGeometryRecord>()},
       minMomentum_{pset.getParameter<double>("minimumSeedPt")},
       maxMomentum_{pset.getParameter<double>("maximumSeedPt")},
       defaultMomentum_{pset.getParameter<double>("defaultSeedPt")},
-      debug{pset.getParameter<bool>("DebugMuonSeed")},
-      sysError{pset.getParameter<double>("SeedPtSystematics")},
+      debug_{pset.getParameter<bool>("DebugMuonSeed")},
+      sysError_{pset.getParameter<double>("SeedPtSystematics")},
       DT12{pset.getParameter<std::vector<double>>("DT_12")},
       DT13{pset.getParameter<std::vector<double>>("DT_13")},
       DT14{pset.getParameter<std::vector<double>>("DT_14")},
@@ -79,8 +86,26 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
   auto output = std::make_unique<L2MuonTrajectorySeedCollection>();
 
-  auto const muColl = iEvent.getHandle(muCollToken_);
-  LogDebug(metname) << "Number of muons " << muColl->size() << std::endl;
+  auto const l1TkMuColl = iEvent.getHandle(l1TkMuCollToken_);
+
+  auto cscSegments = iEvent.getHandle(cscSegmentCollToken_);
+  auto dtSegments = iEvent.getHandle(dtSegmentCollToken_);
+
+  cscGeometry_ = iSetup.getHandle(cscGeometryToken_);
+  dtGeometry_ = iSetup.getHandle(dtGeometryToken_);
+  magneticField_ = iSetup.getHandle(magneticFieldToken_);
+
+  double dRCone = 0.01;
+
+  LogDebug(metname) << "Number of muons " << l1TkMuColl->size() << std::endl;
+
+  //l1t::TrackerMuonRef::const_iterator it;
+  l1t::TrackerMuonRef::key_type l1TkMuIndex = 0;
+
+  for (; l1TkMuIndex != l1TkMuColl->size(); ++l1TkMuIndex) {
+    l1t::TrackerMuonRef l1TkMuRef(l1TkMuColl, l1TkMuIndex);
+    output->emplace_back(createSeed(*cscSegments, *dtSegments, l1TkMuRef, dRCone));
+  }
 
   iEvent.put(std::move(output));
 }
@@ -92,14 +117,14 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
  *           = 2 --> Overlap
  *           = 3 --> DT
  */
-L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(const int type,
-                                                         const SegmentContainer& seg,
-                                                         const l1t::TrackerMuon& l1TkMu,
+
+L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(CSCSegmentCollection cscSegments,
+                                                         DTRecSegment4DCollection dtSegments,
+                                                         l1t::TrackerMuonRef l1TkMuRef,
                                                          const double& dRCone) {
-  // The index of the station closest to the IP
-  double l1Pt = l1TkMu.phPt();
+  double l1Pt = l1TkMuRef->phPt();
   double sptmean = minMomentum_;
-  int charge = l1TkMu.phCharge();
+  int charge = l1TkMuRef->phCharge();
 
   if (l1Pt < minMomentum_) {
     l1Pt = minMomentum_;
@@ -109,87 +134,62 @@ L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(const int type,
     sptmean = maxMomentum_ * 0.25;
   }
 
-  l1t::MuonStubRefVector stubRefs = l1TkMu.stubs();
+  l1t::MuonStubRefVector stubRefs = l1TkMuRef->stubs();
 
   AlgebraicSymMatrix mat(5, 0);
   double p_err = 0;
 
-  int bestSeg = -1;
-
   edm::OwnVector<TrackingRecHit> container;
-
   L2MuonTrajectorySeed theSeed;
 
-  if (type == 1) {
-    // CSC
-  }
+  for (auto stub : stubRefs) {
+    double bestDr2 = dRCone * dRCone;
+    int bestSeg = -1;
+    for (size_t s = 0; s != dtSegments.size(); ++s) {
+      DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion());
+      DetId segId = dtSegments[s].chamberId();
+      if (!(stubId == segId)) {
+        continue;
+      }
 
-  if (type == 2) {
-    // Overlap
-  }
-  if (type == 3) {
-    // DT
-    // Cannot do get only available for DTRecSegmentCollection
-
-    // for (auto stub : stubRefs) {
-    // DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion());
-    // auto [it, end] = seg->get(stubId);
-    // Seg is MuonTransientTrackingRecHit
-    // size_t s = 0;
-    // for (; it != end; ++it, ++s) {
-    //  GlobalPoint segPos = (*it)->globalPosition();
-    //  // IMPLEMENT check best track matching (most number of hits)
-    //  double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
-    //  if (dr2 < dRCone * dRCone) {
-    //    bestSeg = s;
-    //    container.push_back(it->hit()->clone());
-    //    break;
-    //  }
-    //  continue;
-    //}
-    for (auto stub : stubRefs) {
-      for (size_t s = 0; s != seg.size(); ++s) {
-        DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion());
-        DetId segId = seg[s]->geographicalId();
-        if (!(stubId.rawId() == segId.rawId())) {
-          continue;
-        }
-
-        GlobalPoint segPos = seg[s]->globalPosition();
-        // IMPLEMENT check best track matching (most number of hits)
-        double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
-        if (dr2 < dRCone * dRCone) {
-          bestSeg = s;
-          container.push_back(seg[s]->hit()->clone());
-          break;
-        }
+      GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
+      // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+      double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+      if (dr2 < bestDr2) {
+        bestDr2 = dr2;
+        bestSeg = s;
       }
     }
+    for (auto const& recHit : dtSegments[bestSeg].recHits()) {
+      container.push_back(recHit);
+    }
+    DTChamberId segId = dtSegments[bestSeg].chamberId();
+    const GeomDet* geomDet = dtGeometry_->idToDet(segId);
+
     // Fill the local trajectory parameters
-    LocalPoint segPos = seg[bestSeg]->localPosition();
-    GlobalVector mom = seg[bestSeg]->globalPosition() - GlobalPoint();
+    LocalPoint segPos = dtSegments[bestSeg].localPosition();
+    LocalVector segDirFromPos = dtSegments[bestSeg].localDirection();
+    LocalTrajectoryParameters param(segPos, segDirFromPos, charge);
+
     // Get the global direction
-    GlobalVector polar(GlobalVector::Spherical(mom.theta(), seg[bestSeg]->globalDirection().phi(), 1.));
+    GlobalVector mom = geomDet->toGlobal(dtSegments[bestSeg].localPosition()) - GlobalPoint();
+
+    GlobalVector polar(
+        GlobalVector::Spherical(mom.theta(), geomDet->toGlobal(dtSegments[bestSeg].localDirection()).phi(), 1.));
     // Scale magnitude of total momentum
     polar *= fabs(l1Pt) / polar.perp();
-    // Trasfer into local direction
-    LocalVector segDirFromPos = seg[bestSeg]->det()->toLocal(polar);
-    LocalTrajectoryParameters param(segPos, segDirFromPos, charge);
     // Get error matrix
-    mat = seg[bestSeg]->parametersError().similarityT(seg[bestSeg]->projectionMatrix());
+    mat = dtSegments[bestSeg].parametersError().similarityT(dtSegments[bestSeg].projectionMatrix());
     p_err = (sptmean * sptmean) / (polar.mag() * polar.mag() * l1Pt * l1Pt);
     mat[0][0] = p_err;
     LocalTrajectoryError error(asSMatrix<5>(mat));
 
     // Create the TrajectoryStateOnSurface
-    TrajectoryStateOnSurface tsos(param, error, seg[bestSeg]->det()->surface(), &*BField);
+    TrajectoryStateOnSurface tsos(param, error, geomDet->surface(), &*magneticField_);
 
     // Transform it in a TrajectoryStateOnSurface
-    DetId segId = seg[bestSeg]->geographicalId();
     PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
-    auto dummyRef = edm::Ref<l1t::TrackerMuonCollection>();  // TrackerMuonRef is edm::Ref<TrackerMuonCollection>
-    // edm::Ref<l1t::TrackerMuonCollection> mRef = l1TkMu.trkPtr(); // no conversion from edm::Ptr to edm::Ref
-    theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, dummyRef);
+    theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef);
   }
   return theSeed;
 }
