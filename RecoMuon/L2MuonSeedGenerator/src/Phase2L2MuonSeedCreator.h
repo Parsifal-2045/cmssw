@@ -6,8 +6,8 @@
  *
  */
 
+#include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeed.h"
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateOnSurface.h"
-#include "DataFormats/TrajectorySeed/interface/TrajectorySeed.h"
 #include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
 #include "RecoMuon/TransientTrackingRecHit/interface/MuonTransientTrackingRecHit.h"
 
@@ -48,14 +48,14 @@ public:
   void setBField(const MagneticField* theField) { BField = theField; };
 
   /// Create a seed from set of segments
-  TrajectorySeed createSeed(int type, const SegmentContainer& seg, const l1t::TrackerMuon& l1TkMu, double const& dRCone);
+  L2MuonTrajectorySeed createSeed(int type,
+                                  const SegmentContainer& seg,
+                                  const l1t::TrackerMuon& l1TkMu,
+                                  double const& dRCone);
 
 private:
-  /// Compute pt from parameters
-  std::vector<double> getPt(const std::vector<double>& vParameters, double eta, double dPhi);
-
-  /// Scale the dPhi from segment position
-  double scaledPhi(double dphi, double t1);
+  edm::InputTag source_;
+  edm::EDGetTokenT<l1t::TrackerMuonCollection> muCollToken_;
 
   // Miminum and maximum pt momentum of a track
   double minMomentum_;

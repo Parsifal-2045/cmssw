@@ -22,6 +22,7 @@
 #include "DataFormats/MuonDetId/interface/DTChamberId.h"
 #include "DataFormats/MuonDetId/interface/CSCDetId.h"
 #include "DataFormats/MuonDetId/interface/RPCDetId.h"
+#include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
 #include "DataFormats/TrajectoryState/interface/PTrajectoryStateOnDet.h"
 #include "FWCore/Framework/interface/EventSetup.h"
 #include "FWCore/Framework/interface/ESHandle.h"
@@ -33,7 +34,9 @@
  * Constructor
  */
 Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
-    : minMomentum_{pset.getParameter<double>("minimumSeedPt")},
+    : source_(pset.getParameter<edm::InputTag>("InputObjects")),
+      muCollToken_(consumes(source_)),
+      minMomentum_{pset.getParameter<double>("minimumSeedPt")},
       maxMomentum_{pset.getParameter<double>("maximumSeedPt")},
       defaultMomentum_{pset.getParameter<double>("defaultSeedPt")},
       debug{pset.getParameter<bool>("DebugMuonSeed")},
@@ -70,7 +73,17 @@ void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& d
   descriptions.add("Phase2L2MuonSeedCreator", desc);
 }
 
-void Phase2L2MuonSeedCreator::produce(edm::Event&, const edm::EventSetup&) {}
+void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
+  const std::string metname = "Muon|RecoMuon|Phase2L2MuonSeedCreator";
+  MuonPatternRecoDumper debug;
+
+  auto output = std::make_unique<L2MuonTrajectorySeedCollection>();
+
+  auto const muColl = iEvent.getHandle(muCollToken_);
+  LogDebug(metname) << "Number of muons " << muColl->size() << std::endl;
+
+  iEvent.put(std::move(output));
+}
 
 /*
  * createSeed
@@ -79,10 +92,10 @@ void Phase2L2MuonSeedCreator::produce(edm::Event&, const edm::EventSetup&) {}
  *           = 2 --> Overlap
  *           = 3 --> DT
  */
-TrajectorySeed Phase2L2MuonSeedCreator::createSeed(const int type,
-                                                   const SegmentContainer& seg,
-                                                   const l1t::TrackerMuon& l1TkMu,
-                                                   const double& dRCone) {
+L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(const int type,
+                                                         const SegmentContainer& seg,
+                                                         const l1t::TrackerMuon& l1TkMu,
+                                                         const double& dRCone) {
   // The index of the station closest to the IP
   double l1Pt = l1TkMu.phPt();
   double sptmean = minMomentum_;
@@ -105,7 +118,7 @@ TrajectorySeed Phase2L2MuonSeedCreator::createSeed(const int type,
 
   edm::OwnVector<TrackingRecHit> container;
 
-  TrajectorySeed theSeed;
+  L2MuonTrajectorySeed theSeed;
 
   if (type == 1) {
     // CSC
@@ -174,21 +187,11 @@ TrajectorySeed Phase2L2MuonSeedCreator::createSeed(const int type,
     // Transform it in a TrajectoryStateOnSurface
     DetId segId = seg[bestSeg]->geographicalId();
     PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
-
-    theSeed = TrajectorySeed(seedTSOS, container, alongMomentum);
+    auto dummyRef = edm::Ref<l1t::TrackerMuonCollection>();  // TrackerMuonRef is edm::Ref<TrackerMuonCollection>
+    // edm::Ref<l1t::TrackerMuonCollection> mRef = l1TkMu.trkPtr(); // no conversion from edm::Ptr to edm::Ref
+    theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, dummyRef);
   }
   return theSeed;
-}
-
-double Phase2L2MuonSeedCreator::scaledPhi(double dphi, double t1) {
-  if (dphi != 0.) {
-    double oPhi = 1. / dphi;
-    dphi = dphi / (1. + t1 / (oPhi + 10.));
-    return dphi;
-
-  } else {
-    return dphi;
-  }
 }
 
 DEFINE_FWK_MODULE(Phase2L2MuonSeedCreator);
