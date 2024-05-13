@@ -63,8 +63,7 @@ public:
   L2MuonTrajectorySeed createSeed(Type muonType,
                                   CSCSegmentCollection cscSegments,
                                   DTRecSegment4DCollection dtSegments,
-                                  l1t::TrackerMuonRef l1TkMuRef,
-                                  const double& dRCone);
+                                  l1t::TrackerMuonRef l1TkMuRef);
 
 private:
   // Tokens
@@ -80,42 +79,14 @@ private:
   // Miminum and maximum pt momentum of a track
   double minMomentum_;
   double maxMomentum_;
-  double defaultMomentum_;
+  double dRCone_;
   double maxEtaBarrel_;   // barrel with |eta| < 0.7
   double maxEtaOverlap_;  // overlap with |eta| < 1.3, endcap after that
-
-  // Flag for internal debugging
-  bool debug_;
-
-  // Error on pt estimate which prevents weighted average from blowing up ( spt --> 0 )
-  double sysError_;
 
   // Handles
   edm::ESHandle<MagneticField> magneticField_;
   edm::ESHandle<MuonDetLayerGeometry> muonLayers_;
   edm::ESHandle<CSCGeometry> cscGeometry_;
   edm::ESHandle<DTGeometry> dtGeometry_;
-
-  // seed parameters vectors
-  std::vector<double> DT12;
-  std::vector<double> DT13;
-  std::vector<double> DT14;
-  std::vector<double> DT23;
-  std::vector<double> DT24;
-  std::vector<double> DT34;
-
-  // dphi scaling factors
-  std::vector<double> DT12_1;
-  std::vector<double> DT12_2;
-  std::vector<double> DT13_1;
-  std::vector<double> DT13_2;
-  std::vector<double> DT14_1;
-  std::vector<double> DT14_2;
-  std::vector<double> DT23_1;
-  std::vector<double> DT23_2;
-  std::vector<double> DT24_1;
-  std::vector<double> DT24_2;
-  std::vector<double> DT34_1;
-  std::vector<double> DT34_2;
 };
 #endif
