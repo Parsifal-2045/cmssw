@@ -46,6 +46,8 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
       minMomentum_{pset.getParameter<double>("minimumSeedPt")},
       maxMomentum_{pset.getParameter<double>("maximumSeedPt")},
       defaultMomentum_{pset.getParameter<double>("defaultSeedPt")},
+      maxEtaBarrel_{pset.getParameter<double>("maximumEtaBarrel")},
+      maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")},
       debug_{pset.getParameter<bool>("DebugMuonSeed")},
       sysError_{pset.getParameter<double>("SeedPtSystematics")},
       DT12{pset.getParameter<std::vector<double>>("DT_12")},
@@ -100,25 +102,27 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   LogDebug(metname) << "Number of muons " << l1TkMuColl->size() << std::endl;
 
   //l1t::TrackerMuonRef::const_iterator it;
-  l1t::TrackerMuonRef::key_type l1TkMuIndex = 0;
+  //l1t::TrackerMuonRef::key_type
+  size_t l1TkMuIndex = 0;
 
   for (; l1TkMuIndex != l1TkMuColl->size(); ++l1TkMuIndex) {
     l1t::TrackerMuonRef l1TkMuRef(l1TkMuColl, l1TkMuIndex);
-    output->emplace_back(createSeed(*cscSegments, *dtSegments, l1TkMuRef, dRCone));
+    Type muonType;
+    if (std::abs(l1TkMuRef->phEta()) < maxEtaBarrel_) {
+      muonType = barrel;
+    } else if (std::abs(l1TkMuRef->phEta()) > maxEtaOverlap_) {
+      muonType = endcap;
+    } else {
+      muonType = overlap;
+    }
+    output->emplace_back(createSeed(muonType, *cscSegments, *dtSegments, l1TkMuRef, dRCone));
   }
 
   iEvent.put(std::move(output));
 }
 
-/*
- * createSeed
- *
- * Note type = 1 --> CSC
- *           = 2 --> Overlap
- *           = 3 --> DT
- */
-
-L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(CSCSegmentCollection cscSegments,
+L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(Type muonType,  // barrel (0), overlap (1), endcap (2)
+                                                         CSCSegmentCollection cscSegments,
                                                          DTRecSegment4DCollection dtSegments,
                                                          l1t::TrackerMuonRef l1TkMuRef,
                                                          const double& dRCone) {
@@ -144,52 +148,118 @@ L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(CSCSegmentCollection cs
 
   for (auto stub : stubRefs) {
     double bestDr2 = dRCone * dRCone;
-    int bestSeg = -1;
-    for (size_t s = 0; s != dtSegments.size(); ++s) {
-      DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion());
-      DetId segId = dtSegments[s].chamberId();
-      if (!(stubId == segId)) {
-        continue;
-      }
+    int bestSegIndex = -1;
+    bool bestInCsc = false;
 
-      GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
-      // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
-      double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
-      if (dr2 < bestDr2) {
-        bestDr2 = dr2;
-        bestSeg = s;
+    if (muonType == barrel or muonType == overlap) {
+      for (size_t s = 0; s != dtSegments.size(); ++s) {
+        DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion());
+        DetId segId = dtSegments[s].chamberId();
+        if (!(stubId == segId)) {
+          continue;
+        }
+
+        GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
+        // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+        double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+        if (dr2 < bestDr2) {
+          bestDr2 = dr2;
+          bestSegIndex = s;
+        }
       }
     }
-    for (auto const& recHit : dtSegments[bestSeg].recHits()) {
-      container.push_back(recHit);
+
+    if (muonType == endcap or muonType == overlap) {
+      for (size_t s = 0; s != cscSegments.size(); ++s) {
+        int endcap = (l1TkMuRef->phEta() > 0) ? 1 : 2;  // endcap for CSC DetId (1 -> Forward, 2 -> Backward)
+        CSCDetId stubId = CSCDetId(endcap, stub->depthRegion(), stub->etaRegion(), stub->phiRegion());
+        CSCDetId segId = cscSegments[s].cscDetId();
+        if (!(stubId == segId)) {
+          continue;
+        }
+
+        GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(cscSegments[s].localPosition());
+        // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+        double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+        if (dr2 < bestDr2) {
+          bestDr2 = dr2;
+          bestSegIndex = s;
+          bestInCsc = true;
+        }
+      }
     }
-    DTChamberId segId = dtSegments[bestSeg].chamberId();
-    const GeomDet* geomDet = dtGeometry_->idToDet(segId);
 
-    // Fill the local trajectory parameters
-    LocalPoint segPos = dtSegments[bestSeg].localPosition();
-    LocalVector segDirFromPos = dtSegments[bestSeg].localDirection();
-    LocalTrajectoryParameters param(segPos, segDirFromPos, charge);
+    // auto bestSegment = (bestInCsc) ? cscSegments[bestSegIndex] : dtSegments[bestSegIndex];  // CSCSegment vs DTRecSegment4D
+    // auto segId = (bestInCsc) ? bestSegment->cscDetId() : bestSegment->chamberId();
+    // const GeomDet* geomDet = (bestInCsc) ? cscGeometry_->idToDet(*segId) : dtGeometry_->idToDet(*segId);
 
-    // Get the global direction
-    GlobalVector mom = geomDet->toGlobal(dtSegments[bestSeg].localPosition()) - GlobalPoint();
+    if (!bestInCsc) {
+      auto bestSegment = dtSegments[bestSegIndex];
+      auto segId = bestSegment.chamberId();
+      const GeomDet* geomDet = dtGeometry_->idToDet(segId);
 
-    GlobalVector polar(
-        GlobalVector::Spherical(mom.theta(), geomDet->toGlobal(dtSegments[bestSeg].localDirection()).phi(), 1.));
-    // Scale magnitude of total momentum
-    polar *= fabs(l1Pt) / polar.perp();
-    // Get error matrix
-    mat = dtSegments[bestSeg].parametersError().similarityT(dtSegments[bestSeg].projectionMatrix());
-    p_err = (sptmean * sptmean) / (polar.mag() * polar.mag() * l1Pt * l1Pt);
-    mat[0][0] = p_err;
-    LocalTrajectoryError error(asSMatrix<5>(mat));
+      for (auto const& recHit : bestSegment.recHits()) {
+        container.push_back(recHit);
+      }
 
-    // Create the TrajectoryStateOnSurface
-    TrajectoryStateOnSurface tsos(param, error, geomDet->surface(), &*magneticField_);
+      // Fill the local trajectory parameters
+      LocalPoint segPos = bestSegment.localPosition();
+      LocalVector segDirFromPos = bestSegment.localDirection();
+      LocalTrajectoryParameters param(segPos, segDirFromPos, charge);
 
-    // Transform it in a TrajectoryStateOnSurface
-    PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
-    theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef);
+      // Get the global direction
+      GlobalVector mom = geomDet->toGlobal(bestSegment.localPosition()) - GlobalPoint();
+
+      GlobalVector polar(
+          GlobalVector::Spherical(mom.theta(), geomDet->toGlobal(bestSegment.localDirection()).phi(), 1.));
+      // Scale magnitude of total momentum
+      polar *= fabs(l1Pt) / polar.perp();
+      // Get error matrix
+      mat = bestSegment.parametersError().similarityT(bestSegment.projectionMatrix());
+      p_err = (sptmean * sptmean) / (polar.mag() * polar.mag() * l1Pt * l1Pt);
+      mat[0][0] = p_err;
+      LocalTrajectoryError error(asSMatrix<5>(mat));
+
+      // Create the TrajectoryStateOnSurface
+      TrajectoryStateOnSurface tsos(param, error, geomDet->surface(), &*magneticField_);
+
+      // Transform it in a TrajectoryStateOnSurface
+      PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
+      theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef);
+    } else {
+      auto bestSegment = cscSegments[bestSegIndex];
+      auto segId = bestSegment.cscDetId();
+      const GeomDet* geomDet = dtGeometry_->idToDet(segId);
+
+      for (auto const& recHit : bestSegment.recHits()) {
+        container.push_back(recHit);
+      }
+
+      // Fill the local trajectory parameters
+      LocalPoint segPos = bestSegment.localPosition();
+      LocalVector segDirFromPos = bestSegment.localDirection();
+      LocalTrajectoryParameters param(segPos, segDirFromPos, charge);
+
+      // Get the global direction
+      GlobalVector mom = geomDet->toGlobal(bestSegment.localPosition()) - GlobalPoint();
+
+      GlobalVector polar(
+          GlobalVector::Spherical(mom.theta(), geomDet->toGlobal(bestSegment.localDirection()).phi(), 1.));
+      // Scale magnitude of total momentum
+      polar *= fabs(l1Pt) / polar.perp();
+      // Get error matrix
+      mat = bestSegment.parametersError().similarityT(bestSegment.projectionMatrix());
+      p_err = (sptmean * sptmean) / (polar.mag() * polar.mag() * l1Pt * l1Pt);
+      mat[0][0] = p_err;
+      LocalTrajectoryError error(asSMatrix<5>(mat));
+
+      // Create the TrajectoryStateOnSurface
+      TrajectoryStateOnSurface tsos(param, error, geomDet->surface(), &*magneticField_);
+
+      // Transform it in a TrajectoryStateOnSurface
+      PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
+      theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef);
+    }
   }
   return theSeed;
 }
