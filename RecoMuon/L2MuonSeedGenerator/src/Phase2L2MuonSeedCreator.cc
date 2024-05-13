@@ -43,42 +43,22 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
       dtGeometryToken_{esConsumes<DTGeometry, MuonGeometryRecord>()},
       magneticFieldToken_{esConsumes<MagneticField, IdealMagneticFieldRecord>()},
       muonLayersToken_{esConsumes<MuonDetLayerGeometry, MuonRecoGeometryRecord>()},
-      minMomentum_{pset.getParameter<double>("minimumSeedPt")},
-      maxMomentum_{pset.getParameter<double>("maximumSeedPt")},
-      defaultMomentum_{pset.getParameter<double>("defaultSeedPt")},
+      minMomentum_{pset.getParameter<double>("MinPL1Tk")},
+      maxMomentum_{pset.getParameter<double>("MaxPL1Tk")},
+      dRCone_{pset.getParameter<double>("StubMatchDR")},
       maxEtaBarrel_{pset.getParameter<double>("maximumEtaBarrel")},
-      maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")},
-      debug_{pset.getParameter<bool>("DebugMuonSeed")},
-      sysError_{pset.getParameter<double>("SeedPtSystematics")},
-      DT12{pset.getParameter<std::vector<double>>("DT_12")},
-      DT13{pset.getParameter<std::vector<double>>("DT_13")},
-      DT14{pset.getParameter<std::vector<double>>("DT_14")},
-      DT23{pset.getParameter<std::vector<double>>("DT_23")},
-      DT24{pset.getParameter<std::vector<double>>("DT_24")},
-      DT34{pset.getParameter<std::vector<double>>("DT_34")},
-      DT12_1{pset.getParameter<std::vector<double>>("DT_12_1_scale")},
-      DT12_2{pset.getParameter<std::vector<double>>("DT_12_2_scale")},
-      DT13_1{pset.getParameter<std::vector<double>>("DT_13_1_scale")},
-      DT13_2{pset.getParameter<std::vector<double>>("DT_13_2_scale")},
-      DT14_1{pset.getParameter<std::vector<double>>("DT_14_1_scale")},
-      DT14_2{pset.getParameter<std::vector<double>>("DT_14_2_scale")},
-      DT23_1{pset.getParameter<std::vector<double>>("DT_23_1_scale")},
-      DT23_2{pset.getParameter<std::vector<double>>("DT_23_2_scale")},
-      DT24_1{pset.getParameter<std::vector<double>>("DT_24_1_scale")},
-      DT24_2{pset.getParameter<std::vector<double>>("DT_24_2_scale")},
-      DT34_1{pset.getParameter<std::vector<double>>("DT_34_1_scale")},
-      DT34_2{pset.getParameter<std::vector<double>>("DT_34_2_scale")} {}
-
-/*
- * Destructor
- */
-// Phase2L2MuonSeedCreator::~Phase2L2MuonSeedCreator() {}
+      maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")}{}
 
 void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
   desc.add<edm::InputTag>("InputObjects", edm::InputTag("hltGmtStage2Digis"));
+  desc.add<edm::InputTag>("CSCRecSegmentLabel", edm::InputTag("hltCscSegments"));
+  desc.add<edm::InputTag>("DTRecSegmentLabel", edm::InputTag("hltDt4DSegments"));
   desc.add<double>("MinPL1Tk", 3.5);
   desc.add<double>("MaxPL1Tk", 200);
+  desc.add<double>("StubMatchDR", 0.25);
+  desc.add<double>("maximumEtaBarrel", 0.7);
+  desc.add<double>("maximumEtaOverlap", 1.3);
   descriptions.add("Phase2L2MuonSeedCreator", desc);
 }
 
@@ -97,8 +77,6 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   dtGeometry_ = iSetup.getHandle(dtGeometryToken_);
   magneticField_ = iSetup.getHandle(magneticFieldToken_);
 
-  double dRCone = 0.01;
-
   LogDebug(metname) << "Number of muons " << l1TkMuColl->size() << std::endl;
 
   //l1t::TrackerMuonRef::const_iterator it;
@@ -115,7 +93,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     } else {
       muonType = overlap;
     }
-    output->emplace_back(createSeed(muonType, *cscSegments, *dtSegments, l1TkMuRef, dRCone));
+    output->emplace_back(createSeed(muonType, *cscSegments, *dtSegments, l1TkMuRef));
   }
 
   iEvent.put(std::move(output));
@@ -124,8 +102,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(Type muonType,  // barrel (0), overlap (1), endcap (2)
                                                          CSCSegmentCollection cscSegments,
                                                          DTRecSegment4DCollection dtSegments,
-                                                         l1t::TrackerMuonRef l1TkMuRef,
-                                                         const double& dRCone) {
+                                                         l1t::TrackerMuonRef l1TkMuRef) {
   double l1Pt = l1TkMuRef->phPt();
   double sptmean = minMomentum_;
   int charge = l1TkMuRef->phCharge();
@@ -147,7 +124,7 @@ L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(Type muonType,  // barr
   L2MuonTrajectorySeed theSeed;
 
   for (auto stub : stubRefs) {
-    double bestDr2 = dRCone * dRCone;
+    double bestDr2 = dRCone_ * dRCone_;
     int bestSegIndex = -1;
     bool bestInCsc = false;
 
