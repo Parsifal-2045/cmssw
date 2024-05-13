@@ -43,6 +43,8 @@ class GeomDet;
 class MagneticField;
 class MuonTransientTrackingRecHit;
 
+enum Type { barrel, overlap, endcap };
+
 class Phase2L2MuonSeedCreator : public edm::stream::EDProducer<> {
 public:
   typedef MuonTransientTrackingRecHit::MuonRecHitContainer SegmentContainer;
@@ -58,7 +60,8 @@ public:
   void produce(edm::Event&, const edm::EventSetup&) override;
 
   /// Create a seed from set of segments
-  L2MuonTrajectorySeed createSeed(CSCSegmentCollection cscSegments,
+  L2MuonTrajectorySeed createSeed(Type muonType,
+                                  CSCSegmentCollection cscSegments,
                                   DTRecSegment4DCollection dtSegments,
                                   l1t::TrackerMuonRef l1TkMuRef,
                                   const double& dRCone);
@@ -78,6 +81,8 @@ private:
   double minMomentum_;
   double maxMomentum_;
   double defaultMomentum_;
+  double maxEtaBarrel_;   // barrel with |eta| < 0.7
+  double maxEtaOverlap_;  // overlap with |eta| < 1.3, endcap after that
 
   // Flag for internal debugging
   bool debug_;
