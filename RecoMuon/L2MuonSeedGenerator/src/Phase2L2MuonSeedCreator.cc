@@ -47,16 +47,18 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
       maxMomentum_{pset.getParameter<double>("MaxPL1Tk")},
       dRCone_{pset.getParameter<double>("StubMatchDR")},
       maxEtaBarrel_{pset.getParameter<double>("maximumEtaBarrel")},
-      maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")}{}
+      maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")} {
+  produces<L2MuonTrajectorySeedCollection>();
+}
 
 void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
-  desc.add<edm::InputTag>("InputObjects", edm::InputTag("hltGmtStage2Digis"));
+  desc.add<edm::InputTag>("InputObjects", edm::InputTag("l1tTkMuonsGmt"));
   desc.add<edm::InputTag>("CSCRecSegmentLabel", edm::InputTag("hltCscSegments"));
   desc.add<edm::InputTag>("DTRecSegmentLabel", edm::InputTag("hltDt4DSegments"));
   desc.add<double>("MinPL1Tk", 3.5);
   desc.add<double>("MaxPL1Tk", 200);
-  desc.add<double>("StubMatchDR", 0.25);
+  desc.add<double>("StubMatchDR", 0.1);
   desc.add<double>("maximumEtaBarrel", 0.7);
   desc.add<double>("maximumEtaOverlap", 1.3);
   descriptions.add("Phase2L2MuonSeedCreator", desc);
@@ -77,7 +79,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   dtGeometry_ = iSetup.getHandle(dtGeometryToken_);
   magneticField_ = iSetup.getHandle(magneticFieldToken_);
 
-  LogDebug(metname) << "Number of muons " << l1TkMuColl->size() << std::endl;
+  std::cout << "Number of muons " << l1TkMuColl->size() << std::endl;
 
   //l1t::TrackerMuonRef::const_iterator it;
   //l1t::TrackerMuonRef::key_type
@@ -85,13 +87,12 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
   for (; l1TkMuIndex != l1TkMuColl->size(); ++l1TkMuIndex) {
     l1t::TrackerMuonRef l1TkMuRef(l1TkMuColl, l1TkMuIndex);
-    Type muonType;
+    std::cout << "phEta: " << l1TkMuRef->phEta() << ", " << "phPhi: " << l1TkMuRef->phPhi() << std::endl;
+    Type muonType = overlap;
     if (std::abs(l1TkMuRef->phEta()) < maxEtaBarrel_) {
       muonType = barrel;
     } else if (std::abs(l1TkMuRef->phEta()) > maxEtaOverlap_) {
       muonType = endcap;
-    } else {
-      muonType = overlap;
     }
     output->emplace_back(createSeed(muonType, *cscSegments, *dtSegments, l1TkMuRef));
   }
@@ -99,77 +100,165 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   iEvent.put(std::move(output));
 }
 
-L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(Type muonType,  // barrel (0), overlap (1), endcap (2)
+L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(const Type muonType,  // barrel (0), overlap (1), endcap (2)
                                                          CSCSegmentCollection cscSegments,
                                                          DTRecSegment4DCollection dtSegments,
                                                          l1t::TrackerMuonRef l1TkMuRef) {
   double l1Pt = l1TkMuRef->phPt();
-  double sptmean = minMomentum_;
-  int charge = l1TkMuRef->phCharge();
-
-  if (l1Pt < minMomentum_) {
-    l1Pt = minMomentum_;
-    sptmean = minMomentum_;
-  } else if (l1Pt > maxMomentum_) {
-    l1Pt = maxMomentum_;
-    sptmean = maxMomentum_ * 0.25;
-  }
+  //double sptmean = minMomentum_;
+  //int charge = l1TkMuRef->phCharge();
+  //
+  //if (l1Pt < minMomentum_) {
+  //  l1Pt = minMomentum_;
+  //  sptmean = minMomentum_;
+  //} else if (l1Pt > maxMomentum_) {
+  //  l1Pt = maxMomentum_;
+  //  sptmean = maxMomentum_ * 0.25;
+  //}
 
   l1t::MuonStubRefVector stubRefs = l1TkMuRef->stubs();
 
-  AlgebraicSymMatrix mat(5, 0);
-  double p_err = 0;
+  std::cout << "Number of stubs per L1TkMu: " << stubRefs.size() << '\n';
+  std::cout << "Number of DT segments in event: " << dtSegments.size() << '\n';
+  std::cout << "Number of CSC segments in event: " << cscSegments.size() << '\n';
+
+  //AlgebraicSymMatrix mat(5, 0);
+  //double p_err = 0;
 
   edm::OwnVector<TrackingRecHit> container;
   L2MuonTrajectorySeed theSeed;
 
   for (auto stub : stubRefs) {
+    stub->print();
     double bestDr2 = dRCone_ * dRCone_;
     int bestSegIndex = -1;
     bool bestInCsc = false;
 
-    if (muonType == barrel or muonType == overlap) {
-      for (size_t s = 0; s != dtSegments.size(); ++s) {
-        DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion());
-        DetId segId = dtSegments[s].chamberId();
-        if (!(stubId == segId)) {
+    switch (muonType) {
+      case barrel:
+        if (!stub->isBarrel()) {
           continue;
         }
 
-        GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
-        // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
-        double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
-        if (dr2 < bestDr2) {
-          bestDr2 = dr2;
-          bestSegIndex = s;
-        }
-      }
-    }
+        std::cout << "BARREL checking " << dtSegments.size() << " DT segments" << '\n';
+        for (size_t s = 0; s != dtSegments.size(); ++s) {
+          // wheel->eta station->depth sector->phi
+          DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion() + 1); // converting online sectors to offline
+          DTChamberId segId = dtSegments[s].chamberId();
+          std::cout << "stubId: " << stubId << ", RAW: " << stubId.rawId() << "\n"
+                    << "segId: " << segId << ", RAW: " << segId.rawId() << '\n';
 
-    if (muonType == endcap or muonType == overlap) {
-      for (size_t s = 0; s != cscSegments.size(); ++s) {
-        int endcap = (l1TkMuRef->phEta() > 0) ? 1 : 2;  // endcap for CSC DetId (1 -> Forward, 2 -> Backward)
-        CSCDetId stubId = CSCDetId(endcap, stub->depthRegion(), stub->etaRegion(), stub->phiRegion());
-        CSCDetId segId = cscSegments[s].cscDetId();
-        if (!(stubId == segId)) {
+          if (!(stubId == segId)) {
+            continue;
+          }
+          std::cout << "BARREL found match dtdetID" << '\n';
+
+          GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
+          // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+          double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+          if (dr2 <= bestDr2) {
+            std::cout << "BARREL found match dR" << '\n';
+            bestDr2 = dr2;
+            bestSegIndex = s;
+          }
+        }
+        std::cout << "BARREL best segment: " << bestSegIndex << " found in csc? " << bestInCsc << '\n';
+        break;
+
+      case endcap:
+        if (!stub->isEndcap()) {
           continue;
         }
 
-        GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(cscSegments[s].localPosition());
-        // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
-        double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
-        if (dr2 < bestDr2) {
-          bestDr2 = dr2;
-          bestSegIndex = s;
-          bestInCsc = true;
+        std::cout << "ENDCAP checking " << cscSegments.size() << " CSC segments" << '\n';
+        for (size_t s = 0; s != cscSegments.size(); ++s) {
+          int endcap = (l1TkMuRef->phEta() > 0) ? 1 : 2;  // endcap for CSC DetId (1 -> Forward, 2 -> Backward)
+          CSCDetId stubId = CSCDetId(endcap, stub->depthRegion(), 6 - stub->etaRegion(), stub->phiRegion()); // 6 - etaRegion mapping stub ring with csc ring
+          CSCDetId segId = cscSegments[s].cscDetId();
+          std::cout << "stubId: " << stubId << ", RAW: " << stubId.rawId() << "\n"
+                    << "segId: " << segId << ", RAW: " << segId.rawId() << '\n';
+
+          if (!(stubId == segId)) {
+            continue;
+          }
+          std::cout << "ENDCAP found match cscdetID" << '\n';
+
+          GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(cscSegments[s].localPosition());
+          // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+          double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+          if (dr2 <= bestDr2) {
+            std::cout << "ENDCAP found match dR" << '\n';
+            bestDr2 = dr2;
+            bestSegIndex = s;
+            bestInCsc = true;
+          }
         }
-      }
+        std::cout << "ENDCAP best segment: " << bestSegIndex << " found in csc? " << bestInCsc << '\n';
+        break;
+
+      case overlap:
+        std::cout << "OVERLAP checking " << dtSegments.size() << " DT segments" << '\n';
+        for (size_t s = 0; s != dtSegments.size(); ++s) {
+          if (!stub->isBarrel()) {
+            continue;
+          }
+          DTChamberId stubId = DTChamberId(stub->etaRegion(), stub->depthRegion(), stub->phiRegion() + 1);
+          DTChamberId segId = dtSegments[s].chamberId();
+          std::cout << "stubId: " << stubId << ", RAW: " << stubId.rawId() << "\n"
+                    << "segId: " << segId << ", RAW: " << segId.rawId() << '\n';
+          if (!(stubId == segId)) {
+            continue;
+          }
+          std::cout << "OVERLAP found match dtDetID" << '\n';
+
+          GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
+          // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+          double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+          if (dr2 <= bestDr2) {
+            std::cout << "OVERLAP found match dR in DT" << '\n';
+            bestDr2 = dr2;
+            bestSegIndex = s;
+          }
+        }
+
+        std::cout << "OVERLAP checking also " << cscSegments.size() << " CSC segments" << '\n';
+        for (size_t s = 0; s != cscSegments.size(); ++s) {
+          if (!stub->isEndcap()) {
+            continue;
+          }
+          int endcap = (l1TkMuRef->phEta() > 0) ? 1 : 2;  // endcap for CSC DetId (1 -> Forward, 2 -> Backward)
+          CSCDetId stubId = CSCDetId(endcap, stub->depthRegion(), 6 - stub->etaRegion(), stub->phiRegion());
+          CSCDetId segId = cscSegments[s].cscDetId();
+          std::cout << "stubId: " << stubId << ", RAW: " << stubId.rawId() << "\n"
+                    << "segId: " << segId << ", RAW: " << segId.rawId() << '\n';
+
+          if (!(stubId == segId)) {
+            continue;
+          }
+          std::cout << "OVERLAP found match cscDetID" << '\n';
+
+          GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(cscSegments[s].localPosition());
+          // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+          double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
+          if (dr2 <= bestDr2) {
+            std::cout << "OVERLAP found match dR in CSC" << '\n';
+            bestDr2 = dr2;
+            bestSegIndex = s;
+            bestInCsc = true;
+          }
+        }
+        std::cout << "OVERLAP best segment: " << bestSegIndex << " found in csc? " << bestInCsc << '\n';
+        break;
+
+      default:
+        std::cout << "L1TkMu must be either barrel, endcap or overlap" << std::endl;
+        break;
     }
 
     // auto bestSegment = (bestInCsc) ? cscSegments[bestSegIndex] : dtSegments[bestSegIndex];  // CSCSegment vs DTRecSegment4D
     // auto segId = (bestInCsc) ? bestSegment->cscDetId() : bestSegment->chamberId();
     // const GeomDet* geomDet = (bestInCsc) ? cscGeometry_->idToDet(*segId) : dtGeometry_->idToDet(*segId);
-
+    /*
     if (!bestInCsc) {
       auto bestSegment = dtSegments[bestSegIndex];
       auto segId = bestSegment.chamberId();
@@ -204,7 +293,9 @@ L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(Type muonType,  // barr
       PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
       theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef);
     } else {
+      std::cout << "best in CSC " << bestSegIndex << '\n';
       auto bestSegment = cscSegments[bestSegIndex];
+      std::cout << "best segment initialised" << '\n';
       auto segId = bestSegment.cscDetId();
       const GeomDet* geomDet = dtGeometry_->idToDet(segId);
 
@@ -237,6 +328,8 @@ L2MuonTrajectorySeed Phase2L2MuonSeedCreator::createSeed(Type muonType,  // barr
       PTrajectoryStateOnDet seedTSOS = trajectoryStateTransform::persistentState(tsos, segId.rawId());
       theSeed = L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef);
     }
+    */
+    theSeed = L2MuonTrajectorySeed();
   }
   return theSeed;
 }
