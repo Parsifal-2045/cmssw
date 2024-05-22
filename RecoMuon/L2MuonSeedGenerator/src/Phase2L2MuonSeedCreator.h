@@ -59,12 +59,6 @@ public:
   static void fillDescriptions(edm::ConfigurationDescriptions& descriptions);
   void produce(edm::Event&, const edm::EventSetup&) override;
 
-  /// Create a seed from set of segments
-  L2MuonTrajectorySeed createSeed(Type muonType,
-                                  CSCSegmentCollection cscSegments,
-                                  DTRecSegment4DCollection dtSegments,
-                                  l1t::TrackerMuonRef l1TkMuRef);
-
 private:
   // Tokens
   edm::EDGetTokenT<l1t::TrackerMuonCollection> l1TkMuCollToken_;
@@ -88,5 +82,19 @@ private:
   edm::ESHandle<MuonDetLayerGeometry> muonLayers_;
   edm::ESHandle<CSCGeometry> cscGeometry_;
   edm::ESHandle<DTGeometry> dtGeometry_;
+
+  // Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
+  // Chambers are split due to material requirements, online doesn't have the split
+  bool matchingDtIds(DTChamberId const& stubId, DTChamberId const& segId) {
+    if (stubId.sector() == 4 or stubId.sector() == 10) {
+      if (stubId.sector() == 4 and (segId.sector() == 4 or segId.sector() == 13)) {
+        return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
+      }
+      if (stubId.sector() == 10 and (segId.sector() == 10 or segId.sector() == 14)) {
+        return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
+      }
+    }
+    return stubId == segId;
+  }
 };
 #endif
