@@ -9,5 +9,11 @@ Phase2hltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
   StubMatchDR = cms.double(0.25),
   maximumEtaBarrel = cms.double(0.7),
   maximumEtaOverlap = cms.double(1.3),
+  Propagator = cms.string('SteppingHelixPropagatorAny'),
+  ServiceParameters = cms.PSet(
+      Propagators = cms.untracked.vstring('SteppingHelixPropagatorAny'),
+      RPCLayers = cms.bool(True),
+      UseMuonNavigation = cms.untracked.bool(True)
+  ),
   mightGet = cms.optional.untracked.vstring
 )
