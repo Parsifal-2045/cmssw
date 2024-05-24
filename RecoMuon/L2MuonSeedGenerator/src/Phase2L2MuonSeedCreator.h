@@ -33,6 +33,8 @@
 #include "MagneticField/Engine/interface/MagneticField.h"
 #include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
 
+#include "RecoMuon/TrackingTools/interface/MuonServiceProxy.h"
+
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateOnSurface.h"
 
 #include <vector>
@@ -82,6 +84,9 @@ private:
   edm::ESHandle<MuonDetLayerGeometry> muonLayers_;
   edm::ESHandle<CSCGeometry> cscGeometry_;
   edm::ESHandle<DTGeometry> dtGeometry_;
+  
+  std::unique_ptr<MuonServiceProxy> service_;
+  std::string propagatorName_;
 
   // Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
   // Chambers are split due to material requirements, online doesn't have the split
