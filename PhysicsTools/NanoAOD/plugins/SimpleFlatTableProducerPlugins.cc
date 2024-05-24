@@ -63,6 +63,9 @@ typedef SimpleFlatTableProducer<l1t::TrackerMuon> SimpleTriggerL1TkMuonFlatTable
 #include "DataFormats/TrackReco/interface/Track.h"
 typedef SimpleFlatTableProducer<TrajectorySeed> SimpleTrajectorySeedFlatTableProducer;
 
+#include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeed.h"
+typedef SimpleFlatTableProducer<L2MuonTrajectorySeed> SimpleL2MuonTrajectorySeedFlatTableProducer;
+
 #include "DataFormats/TrajectorySeed/interface/TrajectorySeed.h"
 typedef SimpleFlatTableProducer<reco::Track> SimpleTriggerTrackFlatTableProducer;
 
@@ -105,6 +108,7 @@ DEFINE_FWK_MODULE(SimpleTriggerL1JetFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1MuonFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1TkMuonFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTrajectorySeedFlatTableProducer);
+DEFINE_FWK_MODULE(SimpleL2MuonTrajectorySeedFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerTrackFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1TauFlatTableProducer);
 DEFINE_FWK_MODULE(SimpleTriggerL1EtSumFlatTableProducer);
