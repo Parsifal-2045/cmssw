@@ -22,8 +22,14 @@
 #include "FWCore/Utilities/interface/ESGetToken.h"
 #include "FWCore/Utilities/interface/InputTag.h"
 
-#include "Geometry/DTGeometry/interface/DTGeometry.h"
+#include "DataFormats/L1TMuonPhase2/interface/MuonStub.h"
+#include "DataFormats/CSCRecHit/interface/CSCSegment.h"
+#include "DataFormats/DTRecHit/interface/DTRecSegment4D.h"
+#include "DataFormats/MuonDetId/interface/DTChamberId.h"
+#include "DataFormats/MuonDetId/interface/CSCDetId.h"
+
 #include "Geometry/CSCGeometry/interface/CSCGeometry.h"
+#include "Geometry/DTGeometry/interface/DTGeometry.h"
 #include "Geometry/Records/interface/MuonGeometryRecord.h"
 
 #include "RecoMuon/TransientTrackingRecHit/interface/MuonTransientTrackingRecHit.h"
@@ -38,6 +44,7 @@
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateOnSurface.h"
 
 #include <vector>
+#include <optional>
 
 class RecHit;
 class Plane;
@@ -75,7 +82,11 @@ private:
   // Miminum and maximum pt momentum of a track
   double minMomentum_;
   double maxMomentum_;
-  double dRCone_;
+
+  // Parameters to match L1 stubs to DT/CSC segments
+  double matchingPhiWindow_;
+  double matchingThetaWindow_;
+
   double maxEtaBarrel_;   // barrel with |eta| < 0.7
   double maxEtaOverlap_;  // overlap with |eta| < 1.3, endcap after that
 
@@ -84,22 +95,23 @@ private:
   edm::ESHandle<MuonDetLayerGeometry> muonLayers_;
   edm::ESHandle<CSCGeometry> cscGeometry_;
   edm::ESHandle<DTGeometry> dtGeometry_;
-  
+
   std::unique_ptr<MuonServiceProxy> service_;
   std::string propagatorName_;
 
   // Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
   // Chambers are split due to material requirements, online doesn't have the split
-  bool matchingDtIds(DTChamberId const& stubId, DTChamberId const& segId) {
-    if (stubId.sector() == 4 or stubId.sector() == 10) {
-      if (stubId.sector() == 4 and (segId.sector() == 4 or segId.sector() == 13)) {
-        return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
-      }
-      if (stubId.sector() == 10 and (segId.sector() == 10 or segId.sector() == 14)) {
-        return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
-      }
-    }
-    return stubId == segId;
-  }
+  const bool matchingDtIds(DTChamberId const& stubId, DTChamberId const& segId) const;
+
+  // Logic to match L1 stubs to DT segments
+  const int matchingStubSegment(DTChamberId const& stubId,
+                                l1t::MuonStubRef stub,
+                                DTRecSegment4DCollection const& segments) const;
+
+  // Logic to match L1 stubs to CSC segments
+
+  const int matchingStubSegment(CSCDetId const& stubId,
+                                l1t::MuonStubRef stub,
+                                CSCSegmentCollection const& segments) const;
 };
 #endif
