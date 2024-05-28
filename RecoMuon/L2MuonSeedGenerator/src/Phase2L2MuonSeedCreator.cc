@@ -19,12 +19,8 @@
 #include "DataFormats/CSCRecHit/interface/CSCSegmentCollection.h"
 #include "DataFormats/DTRecHit/interface/DTRecSegment4DCollection.h"
 #include "DataFormats/GeometrySurface/interface/BoundCylinder.h"
-#include "DataFormats/L1TMuonPhase2/interface/MuonStub.h"
 #include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
 #include "DataFormats/Math/interface/deltaR.h"
-#include "DataFormats/MuonDetId/interface/DTChamberId.h"
-#include "DataFormats/MuonDetId/interface/CSCDetId.h"
-#include "DataFormats/MuonDetId/interface/RPCDetId.h"
 #include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeed.h"
 #include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
 #include "DataFormats/TrajectoryState/interface/LocalTrajectoryParameters.h"
@@ -48,7 +44,8 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
       muonLayersToken_{esConsumes<MuonDetLayerGeometry, MuonRecoGeometryRecord>()},
       minMomentum_{pset.getParameter<double>("MinPL1Tk")},
       maxMomentum_{pset.getParameter<double>("MaxPL1Tk")},
-      dRCone_{pset.getParameter<double>("StubMatchDR")},
+      matchingPhiWindow_{pset.getParameter<double>("stubMatchDPhi")},
+      matchingThetaWindow_{pset.getParameter<double>("stubMatchDTheta")},
       maxEtaBarrel_{pset.getParameter<double>("maximumEtaBarrel")},
       maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")},
       propagatorName_{pset.getParameter<string>("Propagator")} {
@@ -66,7 +63,8 @@ void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& d
   desc.add<edm::InputTag>("DTRecSegmentLabel", edm::InputTag("hltDt4DSegments"));
   desc.add<double>("MinPL1Tk", 3.5);
   desc.add<double>("MaxPL1Tk", 200);
-  desc.add<double>("StubMatchDR", 0.1);
+  desc.add<double>("stubMatchDPhi", 0.05);
+  desc.add<double>("stubMatchDTheta", 0.1);
   desc.add<double>("maximumEtaBarrel", 0.7);
   desc.add<double>("maximumEtaOverlap", 1.3);
   desc.add<string>("Propagator", "SteppingHelixPropagatorAny");
@@ -130,7 +128,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     //std::cout << "Number of DT segments in event: " << dtSegments.size() << '\n';
     //std::cout << "Number of CSC segments in event: " << cscSegments.size() << '\n';
 
-    double bestDr2 = dRCone_ * dRCone_;
+    double bestDr2 = 0.1 * 0.1;
     int bestSegIndex = -1;
     bool bestInCsc = false;
 
@@ -140,55 +138,38 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
       // Separate barrel, endcap and overlap cases
       switch (muonType) {
-        case barrel:
+        case barrel: {
           if (!stub->isBarrel()) {
             continue;  // skip all non-barrel stubs
           }
 
-          //std::cout << "BARREL checking " << dtSegments.size() << " DT segments" << '\n';
-          for (size_t s = 0; s != dtSegments.size(); ++s) {
-            // Check for stubs and segments with same detID
-            // wheel->eta, station->depth, sector->phi
-            DTChamberId stubId = DTChamberId(stub->etaRegion(),
-                                             stub->depthRegion(),
-                                             stub->phiRegion() + 1);  // converting online sectors to offline
-            DTChamberId segId = dtSegments[s].chamberId();
+          // Create detId for stub
+          DTChamberId stubId = DTChamberId(stub->etaRegion(),       // wheel
+                                           stub->depthRegion(),     // station
+                                           stub->phiRegion() + 1);  // sector, online to offline
 
-            //std::cout << "stubId: " << stubId << ", RAW: " << stubId.rawId() << "\n"
-            //<< "segId: " << segId << ", RAW: " << segId.rawId() << '\n';
+          bestSegIndex = matchingStubSegment(stubId, stub, dtSegments);
 
-            if (!matchingDtIds(stubId, segId)) {
-              continue;  // skip segments with different detID
-            }
-            //std::cout << "BARREL found match dtdetID" << '\n';
-
-            // Match stub with DT segment
-            GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(dtSegments[s].localPosition());
-            // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
-            double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
-            if (dr2 <= bestDr2) {
-              //std::cout << "BARREL found match dR" << '\n';
-              bestDr2 = dr2;
-              bestSegIndex = s;
-            }
-          }
           //std::cout << "BARREL best segment: " << bestSegIndex << " found in csc? " << bestInCsc << '\n';
           break;
+        }  // End barrel
 
-        case endcap:
+        case endcap: {
           if (!stub->isEndcap()) {
             continue;  // skip all non-endcap stubs
           }
+          // Create detId for stub
+          int endcap = (eta > 0) ? 1 : 2;  // CSC DetId endcap (1 -> Forward, 2 -> Backwards)
+          CSCDetId stubId = CSCDetId(endcap,
+                                     stub->depthRegion(),    // station
+                                     6 - stub->etaRegion(),  // ring, online to offline
+                                     stub->phiRegion());     // chamber
 
-          //std::cout << "ENDCAP checking " << cscSegments.size() << " CSC segments" << '\n';
+          // FIXME_ implement new matching logic in the endcap
+
           for (size_t s = 0; s != cscSegments.size(); ++s) {
             // Check for stubs and segments with same detID
-            // Endcap for CSC DetId (1 -> Forward, 2 -> Backward)
-            int endcap = (eta > 0) ? 1 : 2;
-            CSCDetId stubId = CSCDetId(endcap,
-                                       stub->depthRegion(),
-                                       6 - stub->etaRegion(),  //  mapping stub ring with csc ring
-                                       stub->phiRegion());
+
             CSCDetId segId = cscSegments[s].cscDetId();
 
             //std::cout << "stubId: " << stubId << ", RAW: " << stubId.rawId() << "\n"
@@ -201,7 +182,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
             // Match stub with CSC segment
             GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(cscSegments[s].localPosition());
-            // IMPLEMENT check using phi (all hits have it), refine with z (if present) keep segment with most number of hits (closer in dR if ambiguous)
+
             double dr2 = reco::deltaR2(segPos.eta(), segPos.phi(), stub->offline_eta1(), stub->offline_coord1());
             if (dr2 <= bestDr2) {
               //std::cout << "ENDCAP found match dR" << '\n';
@@ -212,8 +193,10 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           }
           //std::cout << "ENDCAP best segment: " << bestSegIndex << " found in csc? " << bestInCsc << '\n';
           break;
+        }  // End endcap
 
-        case overlap:
+        case overlap: {
+          // FIXME_ implement new matching logic in the overlap region
           // Overlap runs both DT and CSC and picks the best match
 
           // Check DTs
@@ -272,6 +255,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           }
           //std::cout << "OVERLAP best segment: " << bestSegIndex << " found in csc? " << bestInCsc << '\n';
           break;
+        }  // End overlap
 
         default:
           std::cout << "L1TkMu must be either barrel, endcap or overlap" << std::endl;
@@ -352,6 +336,63 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   }  // End loop on L1TkMu
   //std::cout << "All L1TkMu in event processed" << '\n';
   iEvent.put(std::move(output));
+}
+
+const bool Phase2L2MuonSeedCreator::matchingDtIds(DTChamberId const& stubId, DTChamberId const& segId) const {
+  if (stubId.sector() == 4 or stubId.sector() == 10) {
+    if (stubId.sector() == 4 and (segId.sector() == 4 or segId.sector() == 13)) {
+      return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
+    }
+    if (stubId.sector() == 10 and (segId.sector() == 10 or segId.sector() == 14)) {
+      return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
+    }
+  }
+  return stubId == segId;
+}
+
+const int Phase2L2MuonSeedCreator::matchingStubSegment(DTChamberId const& stubId,
+                                                       l1t::MuonStubRef stub,
+                                                       DTRecSegment4DCollection const& segments) const {
+  int bestSegIndex = -1;
+  unsigned int nHitsPhiBest = 0;
+  unsigned int nHitsThetaBest = 0;
+
+  for (DTRecSegment4DCollection::const_iterator segment = segments.begin(), last = segments.end(); segment != last;
+       ++segment) {
+    DTChamberId segId = segment->chamberId();
+    if (!matchingDtIds(stubId, segId)) {
+      continue;  // skip segments with different detIds
+    }
+
+    // Global position of the segment
+    GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
+
+    // Check delta phi
+    double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
+    if (deltaPhi > matchingPhiWindow_) {
+      continue;
+    }
+    // Inside phi window -> check hit multiplicity (phi)
+    unsigned int nHitsPhi = (segment->hasPhi() ? segment->phiSegment()->recHits().size() : 0);
+
+    if (nHitsPhi == nHitsPhiBest) {
+      // Same phi hit multiplicity -> check delta theta
+      double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-stub->offline_eta1())));
+      if (deltaTheta > matchingThetaWindow_) {
+        continue;
+      }
+      // Inside theta window -> check hit multiplicity (theta)
+      unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
+      if (nHitsTheta > nHitsThetaBest) {
+        nHitsThetaBest = nHitsTheta;
+        bestSegIndex = std::distance(segments.begin(), segment);
+      }
+    } else if (nHitsPhi > nHitsPhiBest) {
+      nHitsPhiBest = nHitsPhi;
+      bestSegIndex = std::distance(segments.begin(), segment);
+    }
+  }  // End loop on segments
+  return bestSegIndex;
 }
 
 DEFINE_FWK_MODULE(Phase2L2MuonSeedCreator);
