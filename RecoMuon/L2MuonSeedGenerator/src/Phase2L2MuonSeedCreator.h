@@ -44,7 +44,7 @@
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateOnSurface.h"
 
 #include <vector>
-#include <optional>
+#include <utility>
 
 class RecHit;
 class Plane;
@@ -101,17 +101,18 @@ private:
 
   // Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
   // Chambers are split due to material requirements, online doesn't have the split
-  const bool matchingDtIds(DTChamberId const& stubId, DTChamberId const& segId) const;
+  const bool matchingDtIds(const DTChamberId& stubId, const DTChamberId& segId) const;
 
   // Logic to match L1 stubs to DT segments
-  const int matchingStubSegment(DTChamberId const& stubId,
-                                l1t::MuonStubRef stub,
-                                DTRecSegment4DCollection const& segments) const;
+  const std::pair<int, int> matchingStubSegment(const DTChamberId& stubId,
+                                                const l1t::MuonStubRef stub,
+                                                const DTRecSegment4DCollection& segments,
+                                                const l1t::TrackerMuonRef l1TkMuRef) const;
 
   // Logic to match L1 stubs to CSC segments
-
-  const int matchingStubSegment(CSCDetId const& stubId,
-                                l1t::MuonStubRef stub,
-                                CSCSegmentCollection const& segments) const;
+  const std::pair<int, int> matchingStubSegment(const CSCDetId& stubId,
+                                                const l1t::MuonStubRef stub,
+                                                const CSCSegmentCollection& segments,
+                                                const l1t::TrackerMuonRef l1TkMuRef) const;
 };
 #endif
