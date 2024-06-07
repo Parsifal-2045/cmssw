@@ -148,10 +148,19 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     LOG("Number of DT segments in event: " << dtSegments.size());
     LOG("Number of CSC segments in event: " << cscSegments.size());
 
-    std::pair<int, int> bestSeg = {-1, -1};
-    bool bestInCsc = false;
-    std::pair<int, int> bestDt{-1, -1};
-    std::pair<int, int> bestCsc{-1, -1};
+    // Pairs segIndex, segQuality for matches in Barrel/Overlap/Endcap
+    std::pair<int, int> matchesInBarrel[4] = {
+        std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1)};
+    std::pair<int, int> matchesInEndcap[4] = {
+        std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1)};
+    bool atLeastOneMatch = false;
+    bool bestInDt = false;
+
+    // Variables for matches in Overlap
+    int totalBarrelQuality = 0;
+    int totalEndcapQuality = 0;
+    unsigned int nDtHits = 0;
+    unsigned int nCscHits = 0;
 
     // Loop on L1TkMu stubs to find best association to DT/CSC segments
     for (auto stub : stubRefs) {
@@ -164,17 +173,24 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           if (!stub->isBarrel()) {
             continue;  // skip all non-barrel stubs
           }
-
           // Create detId for stub
           DTChamberId stubId = DTChamberId(stub->etaRegion(),       // wheel
                                            stub->depthRegion(),     // station
                                            stub->phiRegion() + 1);  // sector, online to offline
 
-          bestSeg = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
-          bestInCsc = (bestSeg.first != -1) ? false : true;
-
-          LOG("BARREL best segment: " << bestSeg.first << ", quality: " << bestSeg.second << " found in csc? "
-                                      << bestInCsc);
+          // FIXME_ currently only considers the last stub per each station
+          // could be not the best match if multiple stubs are found in the same station
+          matchesInBarrel[stubId.station() - 1] = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+          if (matchesInBarrel[stubId.station() - 1].first != -1) {
+            atLeastOneMatch = true;
+            bestInDt = true;
+          }
+#ifdef MY_LOG_DEBUG
+          LOG("BARREL best segments:");
+          for (int i = 0; i != 4; ++i) {
+            LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second << ")");
+          }
+#endif
           break;
         }  // End barrel
 
@@ -190,11 +206,18 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                        6 - std::abs(stub->etaRegion()),  // ring, online to offline FIXME_ shouldn't need abs
                        stub->phiRegion());               // chamber
 
-          bestSeg = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
-          bestInCsc = (bestSeg.first != -1) ? true : false;
-
-          LOG("ENDCAP best segment: " << bestSeg.first << ", quality: " << bestSeg.second << " found in csc? "
-                                      << bestInCsc);
+          // FIXME_ currently only considers the last stub per each station
+          // could be not the best match if multiple stubs are found in the same station
+          matchesInEndcap[stubId.station() - 1] = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+          if (matchesInEndcap[stubId.station() - 1].first != -1) {
+            atLeastOneMatch = true;
+          }
+#ifdef MY_LOG_DEBUG
+          LOG("ENDCAP best segments:");
+          for (int i = 0; i != 4; ++i) {
+            LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second << ")");
+          }
+#endif
           break;
         }  // End endcap
 
@@ -202,50 +225,89 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           // Overlap runs on both DTs and CSCs and picks the best overall match
           if (stub->isBarrel()) {
             // Check DTs
-            LOG("OVERLAP stub in barrel, checking " << dtSegments.size() << " DT segments");
-            DTChamberId dtStubId = DTChamberId(stub->etaRegion(),       // wheel
-                                               stub->depthRegion(),     // station
-                                               stub->phiRegion() + 1);  // sector, online to offline
-
-            bestDt = matchingStubSegment(dtStubId, stub, dtSegments, l1TkMuRef);
-            LOG("OVERLAP best match in barrel " << bestDt.first << " with quality " << bestDt.second);
+            LOG("OVERLAP stub in DTs, checking " << dtSegments.size() << " DT segments");
+            // Create detId for stub
+            DTChamberId stubId = DTChamberId(stub->etaRegion(),       // wheel
+                                             stub->depthRegion(),     // station
+                                             stub->phiRegion() + 1);  // sector, online to offline
+            // FIXME_ currently only considers the last stub per each station
+            // could be not the best match if multiple stubs are found in the same station
+            matchesInBarrel[stubId.station() - 1] = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+            totalBarrelQuality += matchesInBarrel[stubId.station() - 1].second;
+            auto tmpBestSegIndex = matchesInBarrel[stubId.station() - 1].first;
+            if (tmpBestSegIndex != -1) {
+              atLeastOneMatch = true;
+              auto dtSegment = dtSegments.begin() + tmpBestSegIndex;
+              nDtHits += (dtSegment->hasPhi() ? dtSegment->phiSegment()->recHits().size() : 0);
+              nDtHits += (dtSegment->hasZed() ? dtSegment->zSegment()->recHits().size() : 0);
+            }
+#ifdef MY_LOG_DEBUG
+            LOG("OVERLAP best segments in DTs:");
+            for (int i = 0; i != 4; ++i) {
+              LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second << ")");
+            }
+#endif
           } else if (stub->isEndcap()) {
             // Check CSCs
-            LOG("OVERLAP stub in endcap, checking " << cscSegments.size() << " CSC segments");
+            LOG("OVERLAP stub in CSCs, checking " << cscSegments.size() << " CSC segments");
             int endcap = (eta > 0) ? 1 : 2;  // CSC DetId endcap (1 -> Forward, 2 -> Backwards)
-            CSCDetId cscStubId =
+            CSCDetId stubId =
                 CSCDetId(endcap,
                          stub->depthRegion(),              // station
                          6 - std::abs(stub->etaRegion()),  // ring, online to offline FIXME_ shouldn't need abs
                          stub->phiRegion());               // chamber
 
-            bestCsc = matchingStubSegment(cscStubId, stub, cscSegments, l1TkMuRef);
-            LOG("OVERLAP best match in endcap " << bestCsc.first << " with quality " << bestCsc.second);
+            // FIXME_ currently only considers the last stub per each station
+            // could be not the best match if multiple stubs are found in the same station
+            matchesInEndcap[stubId.station() - 1] = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+            totalEndcapQuality += matchesInEndcap[stubId.station() - 1].second;
+            auto tmpBestSegIndex = matchesInEndcap[stubId.station() - 1].first;
+            if (tmpBestSegIndex != -1) {
+              atLeastOneMatch = true;
+              auto cscSegment = cscSegments.begin() + tmpBestSegIndex;
+              nCscHits += cscSegment->nRecHits();
+            }
+#ifdef MY_LOG_DEBUG
+            LOG("OVERLAP best segments in CSCs:");
+            for (int i = 0; i != 4; ++i) {
+              LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second << ")");
+            }
+#endif
           }
 
-          LOG("OVERLAP comparing qualities: best DT " << bestDt.second << " best CSC " << bestCsc.second);
+          LOG("OVERLAP comparing total qualities. DT: " << totalBarrelQuality << ", CSC: " << totalEndcapQuality);
 
-          // Pick segment with better quality
-          bestSeg = (bestDt.second > bestCsc.second) ? bestDt : bestCsc;
-          bestInCsc = (bestDt.second > bestCsc.second) ? false : true;
+          // Pick segment(s) with better quality
+          bestInDt = (totalBarrelQuality > totalEndcapQuality) ? true : false;
 
           // Same qualities, pick higher number of hits
-          if (bestDt.second == bestCsc.second and bestDt.second != -1) {
-            LOG("Same quality " << bestDt.second << ". Checking total number of hits");
-            auto dtSegment = dtSegments.begin() + bestDt.first;
-            unsigned int nDtHits = (dtSegment->hasPhi() ? dtSegment->phiSegment()->recHits().size() : 0);
-            nDtHits += (dtSegment->hasZed() ? dtSegment->zSegment()->recHits().size() : 0);
-            auto cscSegment = cscSegments.begin() + bestCsc.first;
-            unsigned int nCscHits = cscSegment->nRecHits();
-
-            bestSeg = (nDtHits >= nCscHits) ? bestDt : bestCsc;
-            bestInCsc = (nDtHits >= nCscHits) ? false : true;
+          if (totalBarrelQuality == totalEndcapQuality and totalBarrelQuality > -1) {
+            LOG("Same quality " << totalBarrelQuality << ". Checking total number of hits");
             LOG("DT hits: " << nDtHits << ", CSC hits: " << nCscHits);
             LOG((nDtHits > nCscHits ? "More hits in DT segment" : "More hits in CSC segment"));
+            bestInDt = (nDtHits >= nCscHits) ? true : false;
           }
 
-          LOG("OVERLAP best segment: " << bestSeg.first << ", quality: " << bestSeg.second << " found in csc? "
-                                       << bestInCsc);
+#ifdef MY_LOG_DEBUG
+          LOG("OVERLAP best segments:");
+          if (bestInDt) {
+            LOG("OVERLAP best match in DTs:");
+            for (int i = 0; i != 4; ++i) {
+              if (matchesInBarrel[i].first != -1) {
+                LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second
+                               << ")");
+              }
+            }
+          } else if (!bestInDt) {
+            LOG("OVERLAP best match in CSCs:");
+            for (int i = 0; i != 4; ++i) {
+              if (matchesInEndcap[i].first != -1) {
+                LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second
+                               << ")");
+              }
+            }
+          }
+#endif
           break;
         }  // End overlap
 
@@ -256,7 +318,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     }  // End loop on stubs
 
     // Emplace seeds in output
-    if (bestSeg.first == -1) {
+    if (!atLeastOneMatch) {
       LOG("No matching stub found, skipping seed");
       continue;  // skip unmatched L1TkMu
     } else {
@@ -272,9 +334,9 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
       DetId propagateToId;
 
       edm::OwnVector<TrackingRecHit> container;
-      if (!bestInCsc) {
-        // Found a matching segment in DT -> propagate to MB2
-        LOG("Found a matching segment in DTs, propagating to MB2 to seed");
+      if (bestInDt) {
+        // Found at least one matching segment in DT -> propagate to MB2
+        LOG("Found matching segment(s) in DTs, propagating L1TkMu info to MB2 to seed");
         // MB2
         propagateToId = DTChamberId(0, 2, 0);
         detLayer = service_->detLayerGeometry()->idToLayer(propagateToId);
@@ -283,19 +345,27 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         radius = std::abs(bc->radius() / sin(theta));
 
         // Fill seed with matched segment(s)
-        auto bestSegment = dtSegments[bestSeg.first];
-        container.push_back(bestSegment);
-      } else if (bestInCsc) {
+        for (int i = 0; i != 4; ++i) {
+          if (matchesInBarrel[i].first != -1) {
+            LOG("Adding matched DT segment in station " << i + 1 << " to the seed");
+            container.push_back(dtSegments[matchesInBarrel[i].first]);
+          }
+        }
+      } else if (!bestInDt) {
         // Found a matching segment in CSC -> propagate to ME2
-        LOG("Found a matching segment in CSCs, propagating to ME2 to seed");
+        LOG("Found matching segment(s) in CSCs, propagating L1TkMu info to ME2 to seed");
         // ME2
         propagateToId = eta > 0 ? CSCDetId(1, 2, 0, 0, 0) : CSCDetId(2, 2, 0, 0, 0);
         detLayer = service_->detLayerGeometry()->idToLayer(propagateToId);
         radius = std::abs(detLayer->position().z() / cos(theta));
 
         // Fill seed with matched segment(s)
-        auto bestSegment = cscSegments[bestSeg.first];
-        container.push_back(bestSegment);
+        for (int i = 0; i != 4; ++i) {
+          if (matchesInEndcap[i].first != -1) {
+            LOG("Adding matched CSC segment in station " << i + 1 << " to the seed");
+            container.push_back(cscSegments[matchesInEndcap[i].first]);
+          }
+        }
       }
       vec.setMag(radius);
       // Get Global point and direction
@@ -306,11 +376,11 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
       AlgebraicSymMatrix55 mat;
 
-      mat[0][0] = bestInCsc ? (0.4 / pt) * (0.4 / pt) : (0.25 / pt) * (0.25 / pt);  // sigma^2(charge/abs_momentum)
-      mat[1][1] = 0.05 * 0.05;                                                      // sigma^2(lambda)
-      mat[2][2] = 0.2 * 0.2;                                                        // sigma^2(phi)
-      mat[3][3] = 20. * 20.;                                                        // sigma^2(x_transverse)
-      mat[4][4] = 20. * 20.;                                                        // sigma^2(y_transverse)
+      mat[0][0] = bestInDt ? (0.25 / pt) * (0.25 / pt) : (0.4 / pt) * (0.4 / pt);  // sigma^2(charge/abs_momentum)
+      mat[1][1] = 0.05 * 0.05;                                                     // sigma^2(lambda)
+      mat[2][2] = 0.2 * 0.2;                                                       // sigma^2(phi)
+      mat[3][3] = 20. * 20.;                                                       // sigma^2(x_transverse)
+      mat[4][4] = 20. * 20.;                                                       // sigma^2(y_transverse)
 
       CurvilinearTrajectoryError error(mat);
 
