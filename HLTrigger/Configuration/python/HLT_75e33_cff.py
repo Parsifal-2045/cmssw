@@ -341,35 +341,47 @@ fragment.load("HLTrigger/Configuration/HLT_75e33/services/FastTimerService_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/services/MessageLogger_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/services/ThroughputService_cfi")
 
+fragment.load("HLTrigger/Configuration/HLT_75e33/sequences/Phase2HLTL2MuonsFromL1TkSequence_cfi")
+fragment.load("HLTrigger/Configuration/HLT_75e33/sequences/Phase2HLTMuonsSequence_cfi")
+
+fragment.load('L1Trigger.Configuration.GTemulator_cff')
+fragment.l1tGTProducer.GMTTkMuons = cms.InputTag("l1tTkMuonsGmt")
+#fragment.l1tGTProducer.CL2Jets = cms.InputTag("l1tSCPFL1PuppiCorrectedEmulator")
+#fragment.l1tGTProducer.CL2HtSum = cms.InputTag("l1tSCPFL1PuppiCorrectedEmulatorMHT")
+fragment.GTemulatorTask = cms.Task(fragment.l1tGTProducer, fragment.l1tGTAlgoBlockProducer)
+fragment.GTemulation_step = cms.Path(cms.Sequence(fragment.GTemulatorTask))
+fragment.load('L1Trigger.Phase2L1GT.l1tGTMenu_cff')
+from L1Trigger.Phase2L1GT.l1tGTAlgoBlockProducer_cff import collectAlgorithmPaths
+
 fragment.schedule = cms.Schedule(*[
 
     fragment.L1T_SinglePFPuppiJet230off,
     fragment.L1T_PFPuppiHT450off,
     fragment.L1T_PFPuppiMET220off,
 
-    fragment.HLT_AK4PFPuppiJet520,
-    fragment.HLT_PFPuppiHT1070,
-    fragment.HLT_PFPuppiMETTypeOne140_PFPuppiMHT140,
+    #fragment.HLT_AK4PFPuppiJet520,
+    #fragment.HLT_PFPuppiHT1070,
+    #fragment.HLT_PFPuppiMETTypeOne140_PFPuppiMHT140,
 
-    fragment.L1T_PFHT400PT30_QuadPFPuppiJet_70_55_40_40_2p4,
-    fragment.L1T_DoublePFPuppiJets112_2p4_DEta1p6,
+    #fragment.L1T_PFHT400PT30_QuadPFPuppiJet_70_55_40_40_2p4,
+    #fragment.L1T_DoublePFPuppiJets112_2p4_DEta1p6,
 
-    fragment.HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepCSV_2p4,
-    fragment.HLT_PFHT200PT30_QuadPFPuppiJet_70_40_30_30_TriplePFPuppiBTagDeepCSV_2p4,
-    fragment.HLT_DoublePFPuppiJets128_DoublePFPuppiBTagDeepCSV_2p4,
-    fragment.HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepFlavour_2p4,
-    fragment.HLT_PFHT200PT30_QuadPFPuppiJet_70_40_30_30_TriplePFPuppiBTagDeepFlavour_2p4,
-    fragment.HLT_DoublePFPuppiJets128_DoublePFPuppiBTagDeepFlavour_2p4,
+    #fragment.HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepCSV_2p4,
+    #fragment.HLT_PFHT200PT30_QuadPFPuppiJet_70_40_30_30_TriplePFPuppiBTagDeepCSV_2p4,
+    #fragment.HLT_DoublePFPuppiJets128_DoublePFPuppiBTagDeepCSV_2p4,
+    #fragment.HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepFlavour_2p4,
+    #fragment.HLT_PFHT200PT30_QuadPFPuppiJet_70_40_30_30_TriplePFPuppiBTagDeepFlavour_2p4,
+    #fragment.HLT_DoublePFPuppiJets128_DoublePFPuppiBTagDeepFlavour_2p4,
 
     fragment.L1T_SingleTkMuon_22,
     fragment.L1T_DoubleTkMuon_15_7,
     fragment.L1T_TripleTkMuon_5_3_3,
 
     fragment.HLT_Mu50_FromL1TkMuon,
-    fragment.HLT_IsoMu24_FromL1TkMuon,
-    fragment.HLT_Mu37_Mu27_FromL1TkMuon,
-    fragment.HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_FromL1TkMuon,
-    fragment.HLT_TriMu_10_5_5_DZ_FromL1TkMuon,
+    #fragment.HLT_IsoMu24_FromL1TkMuon,
+    #fragment.HLT_Mu37_Mu27_FromL1TkMuon,
+    #fragment.HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_FromL1TkMuon,
+    #fragment.HLT_TriMu_10_5_5_DZ_FromL1TkMuon,
 
     fragment.L1T_TkEm51,
     fragment.L1T_TkEle36,
@@ -395,15 +407,15 @@ fragment.schedule = cms.Schedule(*[
     fragment.HLT_DoubleEle23_12_Iso_L1Seeded,
     fragment.HLT_Diphoton30_23_IsoCaloId_L1Seeded,
 
-    fragment.HLT_DoubleMediumChargedIsoPFTauHPS40_eta2p1,
-    fragment.HLT_DoubleMediumDeepTauPFTauHPS35_eta2p1,
+    #fragment.HLT_DoubleMediumChargedIsoPFTauHPS40_eta2p1,
+    #fragment.HLT_DoubleMediumDeepTauPFTauHPS35_eta2p1,
 
     ### Removed temporarily until final decision on L1T tau Phase-2
     #fragment.L1T_DoubleNNTau52,
     #fragment.L1T_SingleNNTau150,
 
-    fragment.MC_JME,
-    fragment.MC_BTV,
+    #fragment.MC_JME,
+    #fragment.MC_BTV,
     fragment.MC_Ele5_Open_Unseeded,
     fragment.MC_Ele5_Open_L1Seeded,
 
