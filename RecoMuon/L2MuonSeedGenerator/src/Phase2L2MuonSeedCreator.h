@@ -107,12 +107,14 @@ private:
   const std::pair<int, int> matchingStubSegment(const DTChamberId& stubId,
                                                 const l1t::MuonStubRef stub,
                                                 const DTRecSegment4DCollection& segments,
-                                                const l1t::TrackerMuonRef l1TkMuRef) const;
+                                                const l1t::TrackerMuonRef l1TkMuRef,
+                                                const std::pair<int, int>& previousMatch) const;
 
   // Logic to match L1 stubs to CSC segments
   const std::pair<int, int> matchingStubSegment(const CSCDetId& stubId,
                                                 const l1t::MuonStubRef stub,
                                                 const CSCSegmentCollection& segments,
-                                                const l1t::TrackerMuonRef l1TkMuRef) const;
+                                                const l1t::TrackerMuonRef l1TkMuRef,
+                                                const std::pair<int, int>& previousMatch) const;
 };
 #endif
