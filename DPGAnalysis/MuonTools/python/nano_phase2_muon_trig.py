@@ -123,6 +123,49 @@ l2MuTableVtx = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
                          )
 )
 
+# L2 cosmic offline seeds
+l2CosmicSeedTable = cms.EDProducer("SimpleTrajectorySeedFlatTableProducer",
+    src = cms.InputTag("hltL2CosmicOfflineMuonSeeds"),
+    cut = cms.string(""), 
+    name= cms.string("l2_cosmic_seed"),
+    doc = cms.string(""),
+    extension = cms.bool(False), 
+    variables = cms.PSet(pt = Var("startingState().pt()", "float", doc="p_T (GeV)"),
+                         nHits = Var("nHits()", "int16", doc="")
+                         )
+)
+
+# L2 cosmic seeds from L1 Muons
+l2CosmicSeedFromL1MuonTable = cms.EDProducer("SimpleTrajectorySeedFlatTableProducer",
+    src = cms.InputTag("hltL2CosmicMuonSeedsFromL1Muon"),
+    cut = cms.string(""), 
+    name= cms.string("l2_cosmic_seed_froml1"),
+    doc = cms.string(""),
+    extension = cms.bool(False), 
+    variables = cms.PSet(pt = Var("startingState().pt()", "float", doc="p_T (GeV)"),
+                         nHits = Var("nHits()", "int16", doc="")
+                         )
+)
+
+# L2 cosmic standalone muons
+l2CosmicMuTable = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
+    src = cms.InputTag("hltL2CosmicMuonsFromL1Muon"),
+    cut = cms.string(""), 
+    name= cms.string("l2_cosmic_mu"),
+    doc = cms.string(""),
+    extension = cms.bool(False), 
+    variables = cms.PSet(pt = Var("pt()", "float", doc="p_T (GeV)"),
+                         eta = Var("eta()", "float", doc="#eta"),
+                         phi = Var("phi()", "float", doc="#phi (rad)"),
+                         dXY = Var("dxy()", "float", doc="dXY (cm)"),
+                         dZ = Var("dz()", "float", doc="dZ (cm)"),
+                         t0 = Var("t0()", "float", doc="t0 (ns)"),
+                         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc=""),
+                         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc=""),
+                         nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc="")
+                         )
+)
+
 # L3 OI inner tracks
 l3TkOITable = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
     src = cms.InputTag("hltPhase2L3OIMuonTrackSelectionHighPurity"),
@@ -221,6 +264,9 @@ if (not PHASE2_TAG):
     muTriggerProducers = cms.Sequence(l1TkMuTable
                                   + l2SeedTable
                                   + l2SeedFromL1TkMuonTable
+                                  + l2CosmicSeedTable
+                                  + l2CosmicSeedFromL1MuonTable
+                                  + l2CosmicMuTable
                                   + l3TkIOTable
                                   + l2MuTable
                                   + l2MuTableVtx
@@ -235,6 +281,9 @@ if (not PHASE2_TAG):
 if (PHASE2_TAG):
         muTriggerProducers = cms.Sequence(l1TkMuTable
                                   + phase2L2SeedFromL1TkMuonTable
+                                  + l2CosmicSeedTable
+                                  + l2CosmicSeedFromL1MuonTable
+                                  + l2CosmicMuTable
                                   + l3TkIOTable
                                   + l2MuTable
                                   + l2MuTableVtx

@@ -13,6 +13,8 @@ from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.HLTItLocalRecoSequence_cfi import *
 from ..sequences.HLTMuonlocalrecoSequence_cfi import *
 from ..sequences.HLTOtLocalRecoSequence_cfi import *
+from ..sequences.Phase2HLTL2CosmicMuonsSequence_cfi import *
+
 
 if(PHASE2_TAG):
     HLT_Mu50_FromL1TkMuon = cms.Path(HLTBeginSequence
@@ -23,6 +25,7 @@ if(PHASE2_TAG):
         +hltPhase2PixelFitterByHelixProjections
         +hltPhase2PixelTrackFilterByKinematics
         +Phase2HLTMuonsSequence
+#        +Phase2HLTL2CosmicMuonsSequence # not working yet 
         +hltPhase2L3MuonCandidates
         +hltL3fL1TkSingleMu22L3Filtered50Q
         +HLTEndSequence)
