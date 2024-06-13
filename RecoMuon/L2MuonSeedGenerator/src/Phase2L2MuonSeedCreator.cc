@@ -121,9 +121,9 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
     // Physical info of L1TkMu
     float pt = l1TkMuRef->phPt();
-    //if (pt < minMomentum_) {
-    //  continue;
-    //}
+    if (pt < minMomentum_) {
+      continue;
+    }
     float eta = l1TkMuRef->phEta();
     float theta = 2 * std::atan(std::exp(-eta));
     float phi = l1TkMuRef->phPhi();
@@ -153,6 +153,8 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1)};
     std::pair<int, int> matchesInEndcap[4] = {
         std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1)};
+
+    // Matching info
     bool atLeastOneMatch = false;
     bool bestInDt = false;
 
@@ -177,10 +179,14 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           DTChamberId stubId = DTChamberId(stub->etaRegion(),       // wheel
                                            stub->depthRegion(),     // station
                                            stub->phiRegion() + 1);  // sector, online to offline
+          LOG("Stub DT detId: " << stubId << ". RawId: " << stubId.rawId());
 
-          // FIXME_ currently only considers the last stub per each station
-          // could be not the best match if multiple stubs are found in the same station
-          matchesInBarrel[stubId.station() - 1] = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+          // Find best match considering previous one (if present)
+          auto& previousMatch = matchesInBarrel[stubId.station() - 1];
+          matchesInBarrel[stubId.station() - 1] =
+              matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef, previousMatch);
+
+          // Found a match -> update matching info
           if (matchesInBarrel[stubId.station() - 1].first != -1) {
             atLeastOneMatch = true;
             bestInDt = true;
@@ -205,10 +211,14 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                        stub->depthRegion(),              // station
                        6 - std::abs(stub->etaRegion()),  // ring, online to offline FIXME_ shouldn't need abs
                        stub->phiRegion());               // chamber
+          LOG("Stub CSC detId: " << stubId << ". RawId: " << stubId.rawId());
 
-          // FIXME_ currently only considers the last stub per each station
-          // could be not the best match if multiple stubs are found in the same station
-          matchesInEndcap[stubId.station() - 1] = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+          // Find best match considering previous one (if present)
+          auto& previousMatch = matchesInEndcap[stubId.station() - 1];
+          matchesInEndcap[stubId.station() - 1] =
+              matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef, previousMatch);
+
+          // Found match -> update matching info
           if (matchesInEndcap[stubId.station() - 1].first != -1) {
             atLeastOneMatch = true;
           }
@@ -230,11 +240,18 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
             DTChamberId stubId = DTChamberId(stub->etaRegion(),       // wheel
                                              stub->depthRegion(),     // station
                                              stub->phiRegion() + 1);  // sector, online to offline
-            // FIXME_ currently only considers the last stub per each station
-            // could be not the best match if multiple stubs are found in the same station
-            matchesInBarrel[stubId.station() - 1] = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+            LOG("Stub DT detId: " << stubId << ". RawId: " << stubId.rawId());
+
+            // Find best match considering previous best (if present)
+            auto& previousMatch = matchesInBarrel[stubId.station() - 1];
+            matchesInBarrel[stubId.station() - 1] =
+                matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef, previousMatch);
+
+            // Update total barrel quality and bestSegIndex with match
             totalBarrelQuality += matchesInBarrel[stubId.station() - 1].second;
             auto tmpBestSegIndex = matchesInBarrel[stubId.station() - 1].first;
+
+            // Found a match -> update matching info
             if (tmpBestSegIndex != -1) {
               atLeastOneMatch = true;
               auto dtSegment = dtSegments.begin() + tmpBestSegIndex;
@@ -256,12 +273,18 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                          stub->depthRegion(),              // station
                          6 - std::abs(stub->etaRegion()),  // ring, online to offline FIXME_ shouldn't need abs
                          stub->phiRegion());               // chamber
+            LOG("Stub CSC detId: " << stubId << ". RawId: " << stubId.rawId());
 
-            // FIXME_ currently only considers the last stub per each station
-            // could be not the best match if multiple stubs are found in the same station
-            matchesInEndcap[stubId.station() - 1] = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+            // Find best match considering previous best (if present)
+            auto& previousMatch = matchesInEndcap[stubId.station() - 1];
+            matchesInEndcap[stubId.station() - 1] =
+                matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef, previousMatch);
+
+            // Update total endcap quality and bestSegIndex with match
             totalEndcapQuality += matchesInEndcap[stubId.station() - 1].second;
             auto tmpBestSegIndex = matchesInEndcap[stubId.station() - 1].first;
+
+            // Found match -> update matching info
             if (tmpBestSegIndex != -1) {
               atLeastOneMatch = true;
               auto cscSegment = cscSegments.begin() + tmpBestSegIndex;
@@ -277,7 +300,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
           LOG("OVERLAP comparing total qualities. DT: " << totalBarrelQuality << ", CSC: " << totalEndcapQuality);
 
-          // Pick segment(s) with better quality
+          // Pick segments in DTs / CSCs based on quality
           bestInDt = (totalBarrelQuality > totalEndcapQuality) ? true : false;
 
           // Same qualities, pick higher number of hits
@@ -287,7 +310,6 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
             LOG((nDtHits > nCscHits ? "More hits in DT segment" : "More hits in CSC segment"));
             bestInDt = (nDtHits >= nCscHits) ? true : false;
           }
-
 #ifdef MY_LOG_DEBUG
           LOG("OVERLAP best segments:");
           if (bestInDt) {
@@ -419,21 +441,29 @@ const bool Phase2L2MuonSeedCreator::matchingDtIds(const DTChamberId& stubId, con
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTChamberId& stubId,
                                                                        const l1t::MuonStubRef stub,
                                                                        const DTRecSegment4DCollection& segments,
-                                                                       const l1t::TrackerMuonRef l1TkMuRef) const {
+                                                                       const l1t::TrackerMuonRef l1TkMuRef,
+                                                                       const std::pair<int, int>& previousMatch) const {
   int bestSegIndex = -1;
-  unsigned int nHitsPhiBest = 0;
-  unsigned int nHitsThetaBest = 0;
   int quality = -1;
+  auto previousBest = (previousMatch.first != -1) ? segments.begin() + previousMatch.first : segments.end() + 1;
+  const unsigned int nHitsPhiPrevious =
+      (previousMatch.first != -1) ? (previousBest->hasPhi() ? previousBest->phiSegment()->recHits().size() : 0) : 0;
+  const unsigned int nHitsThetaPrevious =
+      (previousMatch.first != -1) ? (previousBest->hasZed() ? previousBest->zSegment()->recHits().size() : 0) : 0;
+  unsigned int nHitsPhiBest = nHitsPhiPrevious;
+  unsigned int nHitsThetaBest = nHitsThetaPrevious;
 
   LOG("Matching stub with DT segment");
   int matchingIds = 0;
   for (DTRecSegment4DCollection::const_iterator segment = segments.begin(), last = segments.end(); segment != last;
        ++segment) {
     DTChamberId segId = segment->chamberId();
+    LOG("Segment DT detId: " << segId << ". RawId: " << segId.rawId());
     if (!matchingDtIds(stubId, segId)) {
       continue;  // skip segments with different detIds
     }
     ++matchingIds;
+
     // Global position of the segment
     GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
 
@@ -443,51 +473,81 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
     if (deltaPhi > matchingPhiWindow_) {
       continue;
     }
-    quality = 1;
+
     // Inside phi window -> check hit multiplicity (phi)
     unsigned int nHitsPhi = (segment->hasPhi() ? segment->phiSegment()->recHits().size() : 0);
+    LOG("DT found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
+                                       << " hits in phi");
     if (nHitsPhi == nHitsPhiBest) {
       // Same phi hit multiplicity -> check delta theta
+      LOG("DT found segment with same hits in phi as previous best (" << nHitsPhiBest << "), checking theta window");
       double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
       LOG("deltaTheta: " << deltaTheta);
+
       if (deltaTheta > matchingThetaWindow_) {
-        continue;
+        continue;  // skip segments outside theta window
       }
-      quality = 2;
+
       // Inside theta window -> check hit multiplicity (theta)
       unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
+      LOG("DT found match in deltaTheta: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
+                                           << " hits in phi and " << nHitsTheta << " hits in theta");
       if (nHitsTheta > nHitsThetaBest) {
-        nHitsThetaBest = nHitsTheta;
+        // More hits in theta -> update bestSegment and quality
+        LOG("DT found segment with more hits in theta than previous best");
         bestSegIndex = std::distance(segments.begin(), segment);
-        quality = 4;
+        quality = 2;
+        LOG("DT updating bestSegIndex (nHitsTheta): " << bestSegIndex << " with " << nHitsPhi + nHitsTheta << ">"
+                                                      << nHitsPhiBest + nHitsThetaBest << " total hits and quality "
+                                                      << quality);
+        nHitsThetaBest = nHitsTheta;
       }
     } else if (nHitsPhi > nHitsPhiBest) {
-      nHitsPhiBest = nHitsPhi;
+      // More hits in phi -> update bestSegment and quality
+      LOG("DT found segment with more hits in phi than previous best");
       bestSegIndex = std::distance(segments.begin(), segment);
-      quality = 3;
+      quality = 1;
+      LOG("DT updating bestSegIndex (nHitsPhi): " << bestSegIndex << " with " << nHitsPhi << ">" << nHitsPhiBest
+                                                  << " hits and quality " << quality);
+      nHitsPhiBest = nHitsPhi;
     }
   }  // End loop on segments
+
   LOG("Looped over " << matchingIds << (matchingIds > 1 ? " segments" : " segment") << " with same DT detId as stub");
-  LOG("Best DT segment: " << bestSegIndex << " with " << nHitsPhiBest + nHitsThetaBest << " hits and quality "
-                          << quality);
-  return std::make_pair(bestSegIndex, quality);
+
+  if (quality < previousMatch.second) {
+    LOG("DT proposed match: " << bestSegIndex << " with quality " << quality);
+    LOG("DT already found better match: " << previousMatch.first << " with " << nHitsPhiPrevious + nHitsThetaPrevious
+                                          << " hits and quality " << previousMatch.second);
+    return previousMatch;
+  } else {
+    LOG("Found better DT segment match");
+    LOG("Previous DT match: " << previousMatch.first << " with " << nHitsPhiPrevious + nHitsThetaPrevious
+                              << " hits and quality " << previousMatch.second);
+    LOG("New best DT segment: " << bestSegIndex << " with " << nHitsPhiBest + (quality == 3 ? nHitsThetaBest : 0)
+                                << " hits and quality " << quality);
+    return std::make_pair(bestSegIndex, quality);
+  }
 }
 
 // Pair bestSegIndex, quality for CSC segments matching
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSCDetId& stubId,
                                                                        const l1t::MuonStubRef stub,
                                                                        const CSCSegmentCollection& segments,
-                                                                       const l1t::TrackerMuonRef l1TkMuRef) const {
+                                                                       const l1t::TrackerMuonRef l1TkMuRef,
+                                                                       const std::pair<int, int>& previousMatch) const {
   int bestSegIndex = -1;
-  unsigned int nHitsBest = 0;
   int quality = -1;
-  int matchingIds = 0;
+  auto previousBest = (previousMatch.first != -1) ? segments.begin() + previousMatch.first : segments.end() + 1;
+  const unsigned int previousHits = (previousMatch.first != -1) ? previousBest->nRecHits() : 0;
+  unsigned int nHitsBest = previousHits;
 
   LOG("Matching stub with CSC segment");
-
+  int matchingIds = 0;
   for (CSCSegmentCollection::const_iterator segment = segments.begin(), last = segments.end(); segment != last;
        ++segment) {
     CSCDetId segId = segment->cscDetId();
+    LOG("Segment CSC detId: " << segId << ". RawId: " << segId.rawId());
     if (stubId != segId) {
       continue;  // skip segments with different detIds
     }
@@ -500,30 +560,46 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
     double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
     LOG("deltaPhi: " << deltaPhi);
     if (deltaPhi > matchingPhiWindow_) {
-      continue;
+      continue;  // skip segments outside phi window
     }
-    quality = 1;
-    // Inside phi window -> check hit multiplicity (phi)
+
+    // Inside phi window -> check hit multiplicity
     unsigned int nHits = segment->nRecHits();
+    LOG("CSC found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHits << " hits");
     if (nHits == nHitsBest) {
-      // Same phi hit multiplicity -> check delta theta
+      // Same hit multiplicity -> check delta theta
+      LOG("Found CSC segment with same hits (" << nHitsBest << ") as previous best, checking theta window");
       double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
       LOG("deltaTheta: " << deltaTheta);
       if (deltaTheta > matchingThetaWindow_) {
-        continue;
+        continue;  // skip segments outside theta window
       }
-      // Inside theta window -> update bestSegment
+      // Inside theta window -> update bestSegment and quality
       bestSegIndex = std::distance(segments.begin(), segment);
-      quality = 3;
+      quality = 1;
+      LOG("CSC found match in deltaTheta: " << bestSegIndex << " with " << nHits << " hits and quality " << quality);
     } else if (nHits > nHitsBest) {
-      nHitsBest = nHits;
+      // More hits -> update bestSegment and quality
       bestSegIndex = std::distance(segments.begin(), segment);
-      quality = 4;
+      quality = 2;
+      LOG("Found CSC segment with more hits. Index: " << bestSegIndex << " with " << nHits << ">" << nHitsBest
+                                                      << " hits and quality " << quality);
+      nHitsBest = nHits;
     }
   }  // End loop on segments
-  LOG("Looped over " << matchingIds << (matchingIds > 1 ? " segments" : " segment") << " with same CSC detId as stub");
-  LOG("Best CSC segment: " << bestSegIndex << " with " << nHitsBest << " hits and quality " << quality);
-  return std::make_pair(bestSegIndex, quality);
+  LOG("Looped over " << matchingIds << (matchingIds != 1 ? " segments" : " segment") << " with same CSC detId as stub");
+  if (quality < previousMatch.second) {
+    LOG("CSC proposed match: " << bestSegIndex << " with quality " << quality);
+    LOG("CSC already found better match: " << previousMatch.first << " with " << previousHits << " hits and quality "
+                                           << previousMatch.second);
+    return previousMatch;
+  } else {
+    LOG("Found better CSC segment match");
+    LOG("Previous CSC match: " << previousMatch.first << " with " << previousHits << " hits and quality "
+                               << previousMatch.second);
+    LOG("New best CSC segment: " << bestSegIndex << " with " << nHitsBest << " hits and quality " << quality);
+    return std::make_pair(bestSegIndex, quality);
+  }
 }
 
 DEFINE_FWK_MODULE(Phase2L2MuonSeedCreator);
