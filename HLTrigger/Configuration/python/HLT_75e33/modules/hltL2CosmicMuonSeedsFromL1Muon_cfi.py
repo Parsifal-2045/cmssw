@@ -2,7 +2,7 @@ import FWCore.ParameterSet.Config as cms
 
 hltL2CosmicMuonSeedsFromL1Muon = cms.EDProducer( "L2MuonSeedGeneratorFromL1T",
     GMTReadoutCollection = cms.InputTag( "" ),
-    InputObjects = cms.InputTag( 'hltGmtStage2Digis','Muon' ),
+    InputObjects = cms.InputTag( 'simGmtStage2Digis' ),#'hltGmtStage2Digis','Muon' ),
     Propagator = cms.string( "SteppingHelixPropagatorAny" ),
     L1MinPt = cms.double( 0.0 ),
     L1MaxEta = cms.double( 2.5 ),
