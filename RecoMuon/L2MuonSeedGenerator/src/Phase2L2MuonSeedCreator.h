@@ -87,6 +87,10 @@ private:
   double matchingPhiWindow_;
   double matchingThetaWindow_;
 
+  // Parameters to extrapolate matches in nearby stations
+  double extrapolationDeltaPhiClose_;
+  double extrapolationDeltaPhiFar_;
+
   double maxEtaBarrel_;   // barrel with |eta| < 0.7
   double maxEtaOverlap_;  // overlap with |eta| < 1.3, endcap after that
 
@@ -116,5 +120,15 @@ private:
                                                 const CSCSegmentCollection& segments,
                                                 const l1t::TrackerMuonRef l1TkMuRef,
                                                 const std::pair<int, int>& previousMatch) const;
+
+  // Logic to extrapolate from nearby stations in the barrel
+  const std::pair<int, int> extrapolateToNearbyStation(const int stationIndex,
+                                                       const std::pair<int, int> (&matchesInBarrel)[4],
+                                                       const DTRecSegment4DCollection& segments) const;
+
+  const std::pair<int, int> extrapolateMatch(const int startingStation,
+                                             const int endingStation,
+                                             const std::pair<int, int> (&matchesInBarrel)[4],
+                                             const DTRecSegment4DCollection& segments) const;
 };
 #endif
