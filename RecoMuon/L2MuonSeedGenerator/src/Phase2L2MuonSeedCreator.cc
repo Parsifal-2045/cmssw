@@ -62,6 +62,8 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
       maxMomentum_{pset.getParameter<double>("MaxPL1Tk")},
       matchingPhiWindow_{pset.getParameter<double>("stubMatchDPhi")},
       matchingThetaWindow_{pset.getParameter<double>("stubMatchDTheta")},
+      extrapolationDeltaPhiClose_{pset.getParameter<double>("extrapolationWindowClose")},
+      extrapolationDeltaPhiFar_{pset.getParameter<double>("extrapolationWindowFar")},
       maxEtaBarrel_{pset.getParameter<double>("maximumEtaBarrel")},
       maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")},
       propagatorName_{pset.getParameter<string>("Propagator")} {
@@ -82,6 +84,8 @@ void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& d
   desc.add<double>("MaxPL1Tk", 200);
   desc.add<double>("stubMatchDPhi", 0.05);
   desc.add<double>("stubMatchDTheta", 0.1);
+  desc.add<double>("extrapolationWindowClose", 0.1);
+  desc.add<double>("extrapolationWindowFar", 0.05);
   desc.add<double>("maximumEtaBarrel", 0.7);
   desc.add<double>("maximumEtaOverlap", 1.3);
   desc.add<string>("Propagator", "SteppingHelixPropagatorAny");
@@ -113,7 +117,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   dtGeometry_ = iSetup.getHandle(dtGeometryToken_);
   magneticField_ = iSetup.getHandle(magneticFieldToken_);
 
-  LOG("Number of muons in Event: " << l1TkMuColl->size());
+  LOG("Number of tracker muons in the Event: " << l1TkMuColl->size());
 
   // Loop on all L1TkMu in event
   for (size_t l1TkMuIndex = 0; l1TkMuIndex != l1TkMuColl->size(); ++l1TkMuIndex) {
@@ -129,7 +133,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     float phi = l1TkMuRef->phPhi();
     int charge = l1TkMuRef->phCharge();
 
-    LOG("phEta: " << eta << ", " << "phPhi: " << phi);
+    LOG("L1TKMu pT: " << pt << ", eta: " << eta << ", phi: " << phi);
     Type muonType = overlap;
     if (std::abs(eta) < maxEtaBarrel_) {
       muonType = barrel;
@@ -366,11 +370,22 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         const BoundCylinder* bc = dynamic_cast<const BoundCylinder*>(sur);
         radius = std::abs(bc->radius() / sin(theta));
 
-        // Fill seed with matched segment(s)
-        for (int i = 0; i != 4; ++i) {
-          if (matchesInBarrel[i].first != -1) {
-            LOG("Adding matched DT segment in station " << i + 1 << " to the seed");
-            container.push_back(dtSegments[matchesInBarrel[i].first]);
+        // Propagate matched segments to the seed and try to extrapolate in unmatched chambers
+        for (int station = 1; station != 5; ++station) {
+          if (matchesInBarrel[station - 1].first != -1) {
+            // Add matched segments to the seed
+            LOG("Adding matched DT segment in station " << station << " to the seed");
+            container.push_back(dtSegments[matchesInBarrel[station - 1].first]);
+          } else {
+            // Try to extrapolate from stations with a match to the ones without
+            LOG("No matching DT segment found in station " << station);
+            matchesInBarrel[station - 1] = extrapolateToNearbyStation(station, matchesInBarrel, dtSegments);
+            if (matchesInBarrel[station - 1].first != -1) {
+              LOG("Adding extrapolated DT segment " << matchesInBarrel[station - 1].first << " with quality "
+                                                    << matchesInBarrel[station - 1].second << " found in station "
+                                                    << station << " to the seed");
+              container.push_back(dtSegments[matchesInBarrel[station - 1].first]);
+            }
           }
         }
       } else if (!bestInDt) {
@@ -474,11 +489,13 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
       continue;
     }
 
-    // Inside phi window -> check hit multiplicity (phi)
+    // Inside phi window -> check hit multiplicity
     unsigned int nHitsPhi = (segment->hasPhi() ? segment->phiSegment()->recHits().size() : 0);
+    unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
     LOG("DT found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
-                                       << " hits in phi");
-    if (nHitsPhi == nHitsPhiBest) {
+                                       << " hits in phi and " << nHitsTheta << " hits in theta");
+
+    if (nHitsPhi == nHitsPhiBest and segment->hasZed()) {
       // Same phi hit multiplicity -> check delta theta
       LOG("DT found segment with same hits in phi as previous best (" << nHitsPhiBest << "), checking theta window");
       double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
@@ -488,10 +505,10 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
         continue;  // skip segments outside theta window
       }
 
-      // Inside theta window -> check hit multiplicity (theta)
-      unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
       LOG("DT found match in deltaTheta: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
                                            << " hits in phi and " << nHitsTheta << " hits in theta");
+
+      // Inside theta window -> check hit multiplicity (theta)
       if (nHitsTheta > nHitsThetaBest) {
         // More hits in theta -> update bestSegment and quality
         LOG("DT found segment with more hits in theta than previous best");
@@ -508,24 +525,27 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
       bestSegIndex = std::distance(segments.begin(), segment);
       quality = 1;
       LOG("DT updating bestSegIndex (nHitsPhi): " << bestSegIndex << " with " << nHitsPhi << ">" << nHitsPhiBest
-                                                  << " hits and quality " << quality);
+                                                  << " hits in phi, " << nHitsTheta << " hits in theta and quality "
+                                                  << quality);
       nHitsPhiBest = nHitsPhi;
+      nHitsThetaBest = nHitsTheta;
     }
   }  // End loop on segments
 
-  LOG("Looped over " << matchingIds << (matchingIds > 1 ? " segments" : " segment") << " with same DT detId as stub");
+  LOG("DT looped over " << matchingIds << (matchingIds > 1 ? " segments" : " segment")
+                        << " with same DT detId as stub");
 
   if (quality < previousMatch.second) {
     LOG("DT proposed match: " << bestSegIndex << " with quality " << quality);
     LOG("DT already found better match: " << previousMatch.first << " with " << nHitsPhiPrevious + nHitsThetaPrevious
-                                          << " hits and quality " << previousMatch.second);
+                                          << " total hits and quality " << previousMatch.second);
     return previousMatch;
   } else {
     LOG("Found better DT segment match");
     LOG("Previous DT match: " << previousMatch.first << " with " << nHitsPhiPrevious + nHitsThetaPrevious
-                              << " hits and quality " << previousMatch.second);
-    LOG("New best DT segment: " << bestSegIndex << " with " << nHitsPhiBest + (quality == 3 ? nHitsThetaBest : 0)
-                                << " hits and quality " << quality);
+                              << " total hits and quality " << previousMatch.second);
+    LOG("New best DT segment: " << bestSegIndex << " with " << nHitsPhiBest + nHitsThetaBest
+                                << " total hits and quality " << quality);
     return std::make_pair(bestSegIndex, quality);
   }
 }
@@ -566,14 +586,17 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
     // Inside phi window -> check hit multiplicity
     unsigned int nHits = segment->nRecHits();
     LOG("CSC found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHits << " hits");
+
     if (nHits == nHitsBest) {
       // Same hit multiplicity -> check delta theta
       LOG("Found CSC segment with same hits (" << nHitsBest << ") as previous best, checking theta window");
       double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
       LOG("deltaTheta: " << deltaTheta);
+
       if (deltaTheta > matchingThetaWindow_) {
         continue;  // skip segments outside theta window
       }
+
       // Inside theta window -> update bestSegment and quality
       bestSegIndex = std::distance(segments.begin(), segment);
       quality = 1;
@@ -587,7 +610,10 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
       nHitsBest = nHits;
     }
   }  // End loop on segments
-  LOG("Looped over " << matchingIds << (matchingIds != 1 ? " segments" : " segment") << " with same CSC detId as stub");
+
+  LOG("CSC looped over " << matchingIds << (matchingIds != 1 ? " segments" : " segment")
+                         << " with same CSC detId as stub");
+
   if (quality < previousMatch.second) {
     LOG("CSC proposed match: " << bestSegIndex << " with quality " << quality);
     LOG("CSC already found better match: " << previousMatch.first << " with " << previousHits << " hits and quality "
@@ -600,6 +626,168 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
     LOG("New best CSC segment: " << bestSegIndex << " with " << nHitsBest << " hits and quality " << quality);
     return std::make_pair(bestSegIndex, quality);
   }
+}
+
+const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateToNearbyStation(
+    const int endingStation,
+    const std::pair<int, int> (&matchesInBarrel)[4],
+    const DTRecSegment4DCollection& segments) const {
+  std::pair<int, int> extrapolatedMatch = std::make_pair(-1, -1);
+
+  switch (endingStation) {
+    case 1: {
+      // Station 1. Extrapolate 2->1 or 3->1 (4->1)
+      int startingStation = 2;
+      while (startingStation < 5) {
+        if (matchesInBarrel[startingStation - 1].first != -1) {
+          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
+          if (extrapolatedMatch.first != -1) {
+            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+            break;
+          }
+        }
+        ++startingStation;
+      }
+      break;
+    }
+    case 2: {
+      // Station 2. Extrapolate 1->2 or 3->2 (4->2)
+      int startingStation = 1;
+      while (startingStation < 5) {
+        if (matchesInBarrel[startingStation - 1].first != -1) {
+          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
+          if (extrapolatedMatch.first != -1) {
+            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+            break;
+          }
+        }
+        startingStation = startingStation == 1 ? startingStation + 2 : startingStation + 1;
+      }
+      break;
+    }
+    case 3: {
+      // Station 3. Extrapolate 2->3 or 4->3 (1->3)
+      int startingStation = 2;
+      while (startingStation > 0) {
+        if (matchesInBarrel[startingStation - 1].first != -1) {
+          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
+          if (extrapolatedMatch.first != -1) {
+            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+            break;
+          }
+        }
+        startingStation = startingStation == 2 ? startingStation + 2 : startingStation - 3;
+      }
+      break;
+    }
+    case 4: {
+      // Station 4. Extrapolate 2->4 or 3->4 (1->4)
+      int startingStation = 2;
+      while (startingStation > 0) {
+        if (matchesInBarrel[startingStation - 1].first != -1) {
+          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
+          if (extrapolatedMatch.first != -1) {
+            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+            break;
+          }
+        }
+        startingStation = startingStation == 2 ? startingStation + 1 : startingStation - 2;
+      }
+      break;
+    }
+    default:
+      std::cerr << "Muon stations only go from 1 to 4" << std::endl;
+      break;
+  }  // end endingStation switch
+  return extrapolatedMatch;
+}
+
+const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int startingStation,
+                                                                    const int endingStation,
+                                                                    const std::pair<int, int> (&matchesInBarrel)[4],
+                                                                    const DTRecSegment4DCollection& segments) const {
+  const auto& matchInStartingStation = matchesInBarrel[startingStation - 1].first != -1
+                                           ? segments.begin() + matchesInBarrel[startingStation - 1].first
+                                           : segments.end() + 1;
+  auto matchId = matchInStartingStation->chamberId();
+  GlobalPoint matchPos = dtGeometry_->idToDet(matchId)->toGlobal(matchInStartingStation->localPosition());
+
+  int bestSegIndex = -1;
+  int quality = -1;
+  unsigned int nHitsPhiBest = 0;
+  unsigned int nHitsThetaBest = 0;
+
+  // Find possible extrapolation from startingStation to endingStation
+  for (DTRecSegment4DCollection::const_iterator segment = segments.begin(), last = segments.end(); segment != last;
+       ++segment) {
+    auto segId = segment->chamberId();
+
+    if (segId.station() != endingStation) {
+      continue;  // skip segments outside of endingStation
+    }
+
+    // Global positions of the segment
+    GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
+
+    double deltaPhi = std::abs(segPos.phi() - matchPos.phi());
+    LOG("Extrapolation deltaPhi: " << deltaPhi);
+
+    double matchingDeltaPhi =
+        std::abs(startingStation - endingStation) == 1 ? extrapolationDeltaPhiClose_ : extrapolationDeltaPhiFar_;
+
+    if (deltaPhi > matchingDeltaPhi) {
+      continue;
+    }
+
+    // Inside phi window -> check hit multiplicity
+    unsigned int nHitsPhi = (segment->hasPhi() ? segment->phiSegment()->recHits().size() : 0);
+    unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
+    LOG("Extrapolation found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
+                                                  << " hits in phi and " << nHitsTheta << " hits in theta");
+
+    if (nHitsPhi == nHitsPhiBest and segment->hasZed()) {
+      // Same phi hit multiplicity -> check delta theta
+      LOG("Extrapolation found segment with same hits in phi as previous best (" << nHitsPhiBest
+                                                                                 << "), checking theta window");
+      double deltaTheta = std::abs(segPos.theta() - matchPos.theta());
+      LOG("Extrapolation deltaTheta: " << deltaTheta);
+
+      if (deltaTheta > matchingThetaWindow_) {
+        continue;  // skip segments outside theta window
+      }
+
+      LOG("Extrapolation found match in deltaTheta: " << std::distance(segments.begin(), segment) << " with "
+                                                      << nHitsPhi << " hits in phi and " << nHitsTheta
+                                                      << " hits in theta");
+
+      // Inside theta window -> check hit multiplicity (theta)
+      if (nHitsTheta > nHitsThetaBest) {
+        // More hits in theta -> update bestSegment and quality
+        LOG("Extrapolation found segment with more hits in theta than previous best");
+        bestSegIndex = std::distance(segments.begin(), segment);
+        quality = 2;
+        LOG("Extrapolation updating bestSegIndex (nHitsTheta): " << bestSegIndex << " with " << nHitsPhi + nHitsTheta
+                                                                 << ">" << nHitsPhiBest + nHitsThetaBest
+                                                                 << " total hits and quality " << quality);
+        nHitsThetaBest = nHitsTheta;
+      }
+    } else if (nHitsPhi > nHitsPhiBest) {
+      // More hits in phi -> update bestSegment and quality
+      LOG("Extrapolation found segment with more hits in phi than previous best");
+      bestSegIndex = std::distance(segments.begin(), segment);
+      quality = 1;
+      LOG("Extrapolation updating bestSegIndex (nHitsPhi): " << bestSegIndex << " with " << nHitsPhi << ">"
+                                                             << nHitsPhiBest << " hits in phi, " << nHitsTheta
+                                                             << " hits in theta and quality " << quality);
+      nHitsPhiBest = nHitsPhi;
+      nHitsThetaBest = nHitsTheta;
+    }
+  }  // end loop on segments
+  return std::make_pair(bestSegIndex, quality);
 }
 
 DEFINE_FWK_MODULE(Phase2L2MuonSeedCreator);
