@@ -58,10 +58,10 @@ class Phase2L2MuonSeedCreator : public edm::stream::EDProducer<> {
 public:
   typedef MuonTransientTrackingRecHit::MuonRecHitContainer SegmentContainer;
 
-  /// Constructor
+  // Constructor
   explicit Phase2L2MuonSeedCreator(const edm::ParameterSet& pset);
 
-  /// Destructor
+  // Destructor
   ~Phase2L2MuonSeedCreator() override = default;
 
   // Operations

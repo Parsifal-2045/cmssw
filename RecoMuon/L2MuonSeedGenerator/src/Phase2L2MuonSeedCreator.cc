@@ -32,9 +32,9 @@
 
 #include "CLHEP/Vector/ThreeVector.h"
 
-//#define MY_LOG_DEBUG
+//#define SEED_CREATOR_DEBUG
 
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
 std::mutex myMutex;
 #define LOG(s)                                         \
   do {                                                 \
@@ -170,7 +170,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
     // Loop on L1TkMu stubs to find best association to DT/CSC segments
     for (auto stub : stubRefs) {
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
       stub->print();
 #endif
       // Separate barrel, endcap and overlap cases
@@ -195,7 +195,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
             atLeastOneMatch = true;
             bestInDt = true;
           }
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
           LOG("BARREL best segments:");
           for (int i = 0; i != 4; ++i) {
             LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second << ")");
@@ -226,7 +226,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           if (matchesInEndcap[stubId.station() - 1].first != -1) {
             atLeastOneMatch = true;
           }
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
           LOG("ENDCAP best segments:");
           for (int i = 0; i != 4; ++i) {
             LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second << ")");
@@ -262,7 +262,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
               nDtHits += (dtSegment->hasPhi() ? dtSegment->phiSegment()->recHits().size() : 0);
               nDtHits += (dtSegment->hasZed() ? dtSegment->zSegment()->recHits().size() : 0);
             }
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
             LOG("OVERLAP best segments in DTs:");
             for (int i = 0; i != 4; ++i) {
               LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second << ")");
@@ -294,7 +294,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
               auto cscSegment = cscSegments.begin() + tmpBestSegIndex;
               nCscHits += cscSegment->nRecHits();
             }
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
             LOG("OVERLAP best segments in CSCs:");
             for (int i = 0; i != 4; ++i) {
               LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second << ")");
@@ -314,7 +314,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
             LOG((nDtHits > nCscHits ? "More hits in DT segment" : "More hits in CSC segment"));
             bestInDt = (nDtHits >= nCscHits) ? true : false;
           }
-#ifdef MY_LOG_DEBUG
+#ifdef SEED_CREATOR_DEBUG
           LOG("OVERLAP best segments:");
           if (bestInDt) {
             LOG("OVERLAP best match in DTs:");
@@ -736,10 +736,14 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int st
     double deltaPhi = std::abs(segPos.phi() - matchPos.phi());
     LOG("Extrapolation deltaPhi: " << deltaPhi);
 
+    double deltaTheta = std::abs(segPos.theta() - matchPos.theta());
+    LOG("Extrapolation deltaTheta: " << deltaTheta);
+
+
     double matchingDeltaPhi =
         std::abs(startingStation - endingStation) == 1 ? extrapolationDeltaPhiClose_ : extrapolationDeltaPhiFar_;
 
-    if (deltaPhi > matchingDeltaPhi) {
+    if (deltaPhi > matchingDeltaPhi or deltaTheta > 0.4) {
       continue;
     }
 
@@ -789,5 +793,7 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int st
   }  // end loop on segments
   return std::make_pair(bestSegIndex, quality);
 }
+
+#undef SEED_CREATOR_DEBUG
 
 DEFINE_FWK_MODULE(Phase2L2MuonSeedCreator);
