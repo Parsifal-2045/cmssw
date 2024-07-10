@@ -126,6 +126,23 @@ l2MuTableVtx = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
                          )
 )
 
+# L2 muons to be redone (IO/OI first)
+l2MuToReuseTable = cms.EDProducer("SimpleTriggerTrackFlatTableProducer",
+    src = cms.InputTag("phase2L2MuonTracksToReuse"),
+    cut = cms.string(""), 
+    name= cms.string("l2_mu_to_reuse"),
+    doc = cms.string(""),
+    extension = cms.bool(False), 
+    variables = cms.PSet(pt = Var("pt()", "float", doc="p_T (GeV)"),
+                         eta = Var("eta()", "float", doc="#eta"),
+                         phi = Var("phi()", "float", doc="#phi (rad)"),
+                         dXY = Var("dxy()", "float", doc="dXY (cm)"),
+                         dZ = Var("dz()", "float", doc="dZ (cm)"),
+                         t0 = Var("t0()", "float", doc="t0 (ns)"),
+                         nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc="")
+                         )
+)
+
 # L2 cosmic offline seeds
 l2CosmicSeedTable = cms.EDProducer("SimpleTrajectorySeedFlatTableProducer",
     src = cms.InputTag("hltL2CosmicOfflineMuonSeeds"),
@@ -290,6 +307,7 @@ if (PHASE2_TAG):
                                   + l3TkIOTable
                                   + l2MuTable
                                   + l2MuTableVtx
+                                  + l2MuToReuseTable
                                   + l3TkOITable
                                   + l3TkMergedTable
                                   + l3GlbMuTable
