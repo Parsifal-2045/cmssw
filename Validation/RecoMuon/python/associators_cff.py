@@ -197,6 +197,13 @@ tpToL2MuonAssociation = MABHhlt.clone(
     UseMuon = True
 )
 
+# L2 muons to reuse (in workflow where IO is done first and OI as a second pass)
+tpToL2MuonToReuseAssociation = MABHhlt.clone(
+    tracksTag = 'phase2L2MuonTracksToReuse',
+    UseTracker = False,
+    UseMuon = True
+)
+
 # L3 OI inner tracks
 tpToL3OITkAssociation = MABHhlt.clone(
     tracksTag = 'hltPhase2L3OIMuonTrackSelectionHighPurity',
