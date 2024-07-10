@@ -1,5 +1,7 @@
 import FWCore.ParameterSet.Config as cms
 
+from ..modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST # imported from HLTrigger/Configuration/python/HLT_75e33/modules/Phase2HLTMuonSelectorForL3_cfi.py
+
 hltPhase2L3OISeedsFromL2Muons = cms.EDProducer("TSGForOIFromL2",
     MeasurementTrackerEvent = cms.InputTag("MeasurementTrackerEvent"),
     SF1 = cms.double(3.0),
@@ -35,7 +37,7 @@ hltPhase2L3OISeedsFromL2Muons = cms.EDProducer("TSGForOIFromL2",
     pT2 = cms.double(30.0),
     pT3 = cms.double(70.0),
     propagatorName = cms.string('PropagatorWithMaterialParabolicMf'),
-    src = cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
+    src = cms.InputTag("phase2L2MuonTracksToReuse") if L3IOFIRST else cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
     tsosDiff1 = cms.double(0.2),
     tsosDiff2 = cms.double(0.02)
 )

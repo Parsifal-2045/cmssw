@@ -35,6 +35,13 @@ l2MuV = MTVhlt.clone(
     muonHistoParameters = staMuonHistoParameters
 )
 
+# L2 muons to reuse (in workflow where IO is done first and OI as a second pass)
+l2MuToReuseV = MTVhlt.clone(
+    associatormap = 'tpToL2MuonToReuseAssociation',
+    label = ('phase2L2MuonTracksToReuse',),
+    muonHistoParameters = staMuonHistoParameters
+)
+
 # L3 OI inner tracks
 l3OITkV = MTVhlt.clone(
     associatormap = 'tpToL3OITkAssociation',
@@ -123,6 +130,7 @@ l3MuIDTrackV = MTVhlt.clone(
 muonValidationHLT_seq = cms.Sequence(
     tpToL3IOTkAssociation + l3IOTkV
     +tpToL2MuonAssociation + l2MuV
+    +tpToL2MuonToReuseAssociation + l2MuToReuseV
     +tpToL3OITkAssociation + l3OITkV
     +tpToL3TkMergedAssociation + l3TkMergedV
     +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
