@@ -61,8 +61,11 @@ if (PHASE2_TAG):
         doc = cms.string(""),
         extension = cms.bool(False), 
         variables = cms.PSet(pt = Var("startingState().pt()", "float", doc="p_T (GeV)"),
-                             nHits = Var("nHits()", "int16", doc=""),
-                             eta = Var("l1TkMu().phEta()", "float", doc="associated L1TkMu #eta")
+                             nHits = Var("nHits()", "int16", doc="number of DT/CSC segments propagated to the seed"),
+                             eta = Var("l1TkMu().phEta()", "float", doc="associated L1TkMu #eta"),
+                             phi = Var("l1TkMu().phPhi()", "float", doc="associated L1TkMu #phi"),
+                             localX = Var("startingState().parameters().position().x()", "float", doc="local x of the seed"),
+                             localY = Var("startingState().parameters().position().y()", "float", doc="local y of the seed")
                              )
     )
 
