@@ -20,17 +20,12 @@
 #include "FWCore/Utilities/interface/ESGetToken.h"
 #include "FWCore/Utilities/interface/InputTag.h"
 
+#include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
+#include "DataFormats/MuonReco/interface/MuonFwd.h"
+#include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
-#include "DataFormats/MuonReco/interface/MuonFwd.h"
 
-#include "TrackingTools/PatternTools/interface/TrajTrackAssociation.h"
-
-#include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
-#include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
-
-
-#include <optional>
 
 namespace edm {
   class ParameterSet;
@@ -49,27 +44,22 @@ public:
   // Default values
   static void fillDescriptions(edm::ConfigurationDescriptions& descriptions);
 
-  // Select muons
+  // Select objects to be reused
   void produce(edm::Event&, const edm::EventSetup&) override;
 
 private:
-  const edm::EDGetTokenT<std::vector<Trajectory>> l2MuTrajectoriesToken_;
+  const edm::EDGetTokenT<l1t::TrackerMuonCollection> l1TkMuCollToken_;
   const edm::EDGetTokenT<reco::TrackCollection> l2MuCollectionToken_;
-  const edm::EDGetTokenT<TrajTrackAssociationCollection> trajToL2MuAssociationMapToken_;
   const edm::EDGetTokenT<reco::TrackCollection> l3TrackCollectionToken_;
-  
-  //const edm::EDGetTokenT<reco::TrackCollection> l3IOTrackCollectionToken_;
-  //const edm::EDGetTokenT<reco::TrackCollection> l3OITrackCollectionToken_;
+
   const bool IOFirst_;
   const double matchingDr_;
   const bool applyL3Filters_;
   const double maxNormalizedChi2_, maxPtDifference_;
-  const int minNhits_, minNHitsMuons_;
+  const int minNhits_, minNhitsMuons_, minNhitsPixel_, minNhitsTracker_;
 
-  const std::optional<l1t::TrackerMuonRef> extractL1TkMu(
-      reco::TrackRef l2MuRef,
-      const std::vector<Trajectory>& trajectories,
-      const TrajTrackAssociationCollection& TrajToTrackAssociationMap) const;
+  // Check L3 inner track quality parameters
+  const bool rejectL3Track(l1t::TrackerMuonRef l1TkMuRef, reco::TrackRef l3TrackRef) const;
 };
 
 #endif
