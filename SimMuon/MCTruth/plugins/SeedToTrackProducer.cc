@@ -28,7 +28,7 @@
 //
 SeedToTrackProducer::SeedToTrackProducer(const edm::ParameterSet &iConfig)
     : theMGFieldToken(esConsumes()), theTrackingGeometryToken(esConsumes()), theTopoToken(esConsumes()) {
-  L2seedsTagT_ = consumes<TrajectorySeedCollection>(iConfig.getParameter<edm::InputTag>("L2seedsCollection"));
+  L2seedsTagT_ = consumes<L2MuonTrajectorySeedCollection>(iConfig.getParameter<edm::InputTag>("L2seedsCollection"));
   L2seedsTagS_ = consumes<edm::View<TrajectorySeed>>(iConfig.getParameter<edm::InputTag>("L2seedsCollection"));
 
   produces<reco::TrackCollection>();
@@ -63,9 +63,9 @@ void SeedToTrackProducer::produce(edm::StreamID, edm::Event &iEvent, const edm::
   const TrackerTopology &ttopo = iSetup.getData(theTopoToken);
 
   // now read the L2 seeds collection :
-  edm::Handle<TrajectorySeedCollection> L2seedsCollection;
+  edm::Handle<L2MuonTrajectorySeedCollection> L2seedsCollection;
   iEvent.getByToken(L2seedsTagT_, L2seedsCollection);
-  const std::vector<TrajectorySeed> *L2seeds = nullptr;
+  const std::vector<L2MuonTrajectorySeed> *L2seeds = nullptr;
   if (L2seedsCollection.isValid())
     L2seeds = L2seedsCollection.product();
   else
@@ -145,7 +145,7 @@ void SeedToTrackProducer::produce(edm::StreamID, edm::Event &iEvent, const edm::
   iEvent.put(std::move(selectedTrackHits));
 }
 
-TrajectoryStateOnSurface SeedToTrackProducer::seedTransientState(const TrajectorySeed &tmpSeed,
+TrajectoryStateOnSurface SeedToTrackProducer::seedTransientState(const L2MuonTrajectorySeed &tmpSeed,
                                                                  const MagneticField &mgField,
                                                                  const GlobalTrackingGeometry &trackingGeometry) const {
   PTrajectoryStateOnDet tmpTSOD = tmpSeed.startingState();
