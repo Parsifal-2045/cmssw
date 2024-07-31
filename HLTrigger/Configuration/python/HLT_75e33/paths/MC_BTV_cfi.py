@@ -11,4 +11,28 @@ from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.HLTLocalrecoSequence_cfi import *
 from ..sequences.HLTRawToDigiSequence_cfi import *
 
-MC_BTV = cms.Path(HLTBeginSequence+HLTRawToDigiSequence+HLTHgcalLocalRecoSequence+HLTLocalrecoSequence+HLTTrackingV61Sequence+HLTMuonsSequence+HLTParticleFlowSequence+HLTAK4PFPuppiJetsReconstruction+HLTBtagDeepCSVSequencePFPuppi+HLTBtagDeepFlavourSequencePFPuppi)
+from ..modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
+from ..sequences.Phase2HLTMuonsSequence_cfi import *
+
+if PHASE2_TAG:
+    MC_BTV = cms.Path(HLTBeginSequence
+                     +HLTRawToDigiSequence
+                     +HLTHgcalLocalRecoSequence
+                     +HLTLocalrecoSequence
+                     +HLTTrackingV61Sequence
+                     +Phase2HLTMuonsSequence
+                     +HLTParticleFlowSequence
+                     +HLTAK4PFPuppiJetsReconstruction
+                     +HLTBtagDeepCSVSequencePFPuppi
+                     +HLTBtagDeepFlavourSequencePFPuppi)
+else:
+    MC_BTV = cms.Path(HLTBeginSequence
+                     +HLTRawToDigiSequence
+                     +HLTHgcalLocalRecoSequence
+                     +HLTLocalrecoSequence
+                     +HLTTrackingV61Sequence
+                     +HLTMuonsSequence
+                     +HLTParticleFlowSequence
+                     +HLTAK4PFPuppiJetsReconstruction
+                     +HLTBtagDeepCSVSequencePFPuppi
+                     +HLTBtagDeepFlavourSequencePFPuppi)

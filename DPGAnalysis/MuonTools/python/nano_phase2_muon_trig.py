@@ -9,7 +9,7 @@ from PhysicsTools.NanoAOD.simpleCandidateFlatTableProducer_cfi import simpleCand
 
 from Validation.RecoMuon.muonValidationHLT_cff import *
 
-from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonsFromL1TkMuon_cfi import PHASE2_TAG
+from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
 
 from HLTrigger.Configuration.HLT_75e33.modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST
 
@@ -70,7 +70,7 @@ if (not PHASE2_TAG):
 if (PHASE2_TAG):
     # Phase2 L2 seeds from L1TkMu
     phase2L2SeedFromL1TkMuonTable = cms.EDProducer("SimpleL2MuonTrajectorySeedFlatTableProducer",
-        src = cms.InputTag("Phase2hltL2MuonSeedsFromL1TkMuon"),
+        src = cms.InputTag("hltL2MuonSeedsFromL1TkMuon"),
         cut = cms.string(""), 
         name= cms.string("phase2_l2_seed"),
         doc = cms.string(""),

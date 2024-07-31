@@ -1,10 +1,8 @@
 import FWCore.ParameterSet.Config as cms
 
-PHASE2_TAG = True
-
 hltL2MuonsFromL1TkMuon = cms.EDProducer("L2MuonProducer",
     DoSeedRefit = cms.bool(False),
-    InputObjects = cms.InputTag("Phase2hltL2MuonSeedsFromL1TkMuon") if PHASE2_TAG else cms.InputTag("hltL2MuonSeedsFromL1TkMuon"),
+    InputObjects = cms.InputTag("hltL2MuonSeedsFromL1TkMuon"),
     L2TrajBuilderParameters = cms.PSet(
         BWFilterParameters = cms.PSet(
             BWSeedType = cms.string('fromGenerator'),

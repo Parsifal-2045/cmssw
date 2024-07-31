@@ -2,7 +2,7 @@ import FWCore.ParameterSet.Config as cms
 
 from ..modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST
 
-from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonsFromL1TkMuon_cfi import PHASE2_TAG
+from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
 
 
 if PHASE2_TAG:
