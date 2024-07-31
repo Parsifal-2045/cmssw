@@ -32,6 +32,8 @@
 
 #include "CLHEP/Vector/ThreeVector.h"
 
+#include <vector>
+
 //#define SEED_CREATOR_DEBUG
 
 #ifdef SEED_CREATOR_DEBUG
@@ -57,7 +59,6 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
       cscGeometryToken_{esConsumes<CSCGeometry, MuonGeometryRecord>()},
       dtGeometryToken_{esConsumes<DTGeometry, MuonGeometryRecord>()},
       magneticFieldToken_{esConsumes<MagneticField, IdealMagneticFieldRecord>()},
-      muonLayersToken_{esConsumes<MuonDetLayerGeometry, MuonRecoGeometryRecord>()},
       minMomentum_{pset.getParameter<double>("MinPL1Tk")},
       maxMomentum_{pset.getParameter<double>("MaxPL1Tk")},
       matchingPhiWindow_{pset.getParameter<double>("stubMatchDPhi")},
@@ -153,10 +154,8 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     LOG("Number of CSC segments in event: " << cscSegments.size());
 
     // Pairs segIndex, segQuality for matches in Barrel/Overlap/Endcap
-    std::pair<int, int> matchesInBarrel[4] = {
-        std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1)};
-    std::pair<int, int> matchesInEndcap[4] = {
-        std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1), std::make_pair(-1, -1)};
+    std::map<DTChamberId, std::pair<int, int>> matchesInBarrel;
+    std::map<CSCDetId, std::pair<int, int>> matchesInEndcap;
 
     // Matching info
     bool atLeastOneMatch = false;
@@ -185,20 +184,19 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                                            stub->phiRegion() + 1);  // sector, online to offline
           LOG("Stub DT detId: " << stubId << ". RawId: " << stubId.rawId());
 
-          // Find best match considering previous one (if present)
-          auto& previousMatch = matchesInBarrel[stubId.station() - 1];
-          matchesInBarrel[stubId.station() - 1] =
-              matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef, previousMatch);
+          auto& tmpMatch = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
 
           // Found a match -> update matching info
-          if (matchesInBarrel[stubId.station() - 1].first != -1) {
+          if (tmpMatch.first != -1) {
+            matchesInBarrel.emplace(stubId, tmpMatch);
             atLeastOneMatch = true;
             bestInDt = true;
           }
+
 #ifdef SEED_CREATOR_DEBUG
           LOG("BARREL best segments:");
-          for (int i = 0; i != 4; ++i) {
-            LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second << ")");
+          for (auto& [detId, matchingPair] : matchesInBarrel) {
+            LOG("Station " << detId.station() << " (" << matchingPair.first << ", " << matchingPair.second << ")");
           }
 #endif
           break;
@@ -217,19 +215,18 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                        stub->phiRegion());               // chamber
           LOG("Stub CSC detId: " << stubId << ". RawId: " << stubId.rawId());
 
-          // Find best match considering previous one (if present)
-          auto& previousMatch = matchesInEndcap[stubId.station() - 1];
-          matchesInEndcap[stubId.station() - 1] =
-              matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef, previousMatch);
+          auto& tmpMatch = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
 
-          // Found match -> update matching info
-          if (matchesInEndcap[stubId.station() - 1].first != -1) {
+          // Found a match -> update matching info
+          if (tmpMatch.first != -1) {
+            matchesInEndcap.emplace(stubId, tmpMatch);
             atLeastOneMatch = true;
           }
+
 #ifdef SEED_CREATOR_DEBUG
           LOG("ENDCAP best segments:");
-          for (int i = 0; i != 4; ++i) {
-            LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second << ")");
+          for (auto& [detId, matchingPair] : matchesInEndcap) {
+            LOG("Station " << detId.station() << " (" << matchingPair.first << ", " << matchingPair.second << ")");
           }
 #endif
           break;
@@ -246,26 +243,22 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                                              stub->phiRegion() + 1);  // sector, online to offline
             LOG("Stub DT detId: " << stubId << ". RawId: " << stubId.rawId());
 
-            // Find best match considering previous best (if present)
-            auto& previousMatch = matchesInBarrel[stubId.station() - 1];
-            matchesInBarrel[stubId.station() - 1] =
-                matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef, previousMatch);
-
-            // Update total barrel quality and bestSegIndex with match
-            totalBarrelQuality += matchesInBarrel[stubId.station() - 1].second;
-            auto tmpBestSegIndex = matchesInBarrel[stubId.station() - 1].first;
+            auto& tmpMatch = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+            totalBarrelQuality += tmpMatch.second;
 
             // Found a match -> update matching info
-            if (tmpBestSegIndex != -1) {
+            if (tmpMatch.first != -1) {
+              matchesInBarrel.emplace(stubId, tmpMatch);
               atLeastOneMatch = true;
-              auto dtSegment = dtSegments.begin() + tmpBestSegIndex;
+              auto dtSegment = dtSegments.begin() + tmpMatch.first;
               nDtHits += (dtSegment->hasPhi() ? dtSegment->phiSegment()->recHits().size() : 0);
               nDtHits += (dtSegment->hasZed() ? dtSegment->zSegment()->recHits().size() : 0);
             }
+
 #ifdef SEED_CREATOR_DEBUG
             LOG("OVERLAP best segments in DTs:");
-            for (int i = 0; i != 4; ++i) {
-              LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second << ")");
+            for (auto& [detId, matchingPair] : matchesInBarrel) {
+              LOG("Station " << detId.station() << " (" << matchingPair.first << ", " << matchingPair.second << ")");
             }
 #endif
           } else if (stub->isEndcap()) {
@@ -279,25 +272,21 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                          stub->phiRegion());               // chamber
             LOG("Stub CSC detId: " << stubId << ". RawId: " << stubId.rawId());
 
-            // Find best match considering previous best (if present)
-            auto& previousMatch = matchesInEndcap[stubId.station() - 1];
-            matchesInEndcap[stubId.station() - 1] =
-                matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef, previousMatch);
+            auto& tmpMatch = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+            totalEndcapQuality += tmpMatch.second;
 
-            // Update total endcap quality and bestSegIndex with match
-            totalEndcapQuality += matchesInEndcap[stubId.station() - 1].second;
-            auto tmpBestSegIndex = matchesInEndcap[stubId.station() - 1].first;
-
-            // Found match -> update matching info
-            if (tmpBestSegIndex != -1) {
+            // Found a match -> update matching info
+            if (tmpMatch.first != -1) {
+              matchesInEndcap.emplace(stubId, tmpMatch);
               atLeastOneMatch = true;
-              auto cscSegment = cscSegments.begin() + tmpBestSegIndex;
+              auto cscSegment = cscSegments.begin() + tmpMatch.first;
               nCscHits += cscSegment->nRecHits();
             }
+
 #ifdef SEED_CREATOR_DEBUG
             LOG("OVERLAP best segments in CSCs:");
-            for (int i = 0; i != 4; ++i) {
-              LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second << ")");
+            for (auto& [detId, matchingPair] : matchesInEndcap) {
+              LOG("Station " << detId.station() << " (" << matchingPair.first << ", " << matchingPair.second << ")");
             }
 #endif
           }
@@ -318,19 +307,13 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           LOG("OVERLAP best segments:");
           if (bestInDt) {
             LOG("OVERLAP best match in DTs:");
-            for (int i = 0; i != 4; ++i) {
-              if (matchesInBarrel[i].first != -1) {
-                LOG("Station " << i + 1 << " (" << matchesInBarrel[i].first << ", " << matchesInBarrel[i].second
-                               << ")");
-              }
+            for (auto& [detId, matchingPair] : matchesInBarrel) {
+              LOG("Station " << detId.station() << " (" << matchingPair.first << ", " << matchingPair.second << ")");
             }
           } else if (!bestInDt) {
             LOG("OVERLAP best match in CSCs:");
-            for (int i = 0; i != 4; ++i) {
-              if (matchesInEndcap[i].first != -1) {
-                LOG("Station " << i + 1 << " (" << matchesInEndcap[i].first << ", " << matchesInEndcap[i].second
-                               << ")");
-              }
+            for (auto& [detId, matchingPair] : matchesInEndcap) {
+              LOG("Station " << detId.station() << " (" << matchingPair.first << ", " << matchingPair.second << ")");
             }
           }
 #endif
@@ -371,20 +354,24 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         radius = std::abs(bc->radius() / sin(theta));
 
         // Propagate matched segments to the seed and try to extrapolate in unmatched chambers
+        std::vector<int> matchedStations;
+        matchedStations.reserve(4);
+        for (auto& [detId, matchingPair] : matchesInBarrel) {
+          // Add matched segments to the seed
+          LOG("Adding matched DT segment in station " << detId.station() << " to the seed");
+          container.push_back(dtSegments[matchingPair.first]);
+          matchedStations.push_back(detId.station());
+        }
         for (int station = 1; station != 5; ++station) {
-          if (matchesInBarrel[station - 1].first != -1) {
-            // Add matched segments to the seed
-            LOG("Adding matched DT segment in station " << station << " to the seed");
-            container.push_back(dtSegments[matchesInBarrel[station - 1].first]);
-          } else {
+          if (std::find(matchedStations.begin(), matchedStations.end(), station) == matchedStations.end()) {
             // Try to extrapolate from stations with a match to the ones without
             LOG("No matching DT segment found in station " << station);
-            matchesInBarrel[station - 1] = extrapolateToNearbyStation(station, matchesInBarrel, dtSegments);
-            if (matchesInBarrel[station - 1].first != -1) {
-              LOG("Adding extrapolated DT segment " << matchesInBarrel[station - 1].first << " with quality "
-                                                    << matchesInBarrel[station - 1].second << " found in station "
-                                                    << station << " to the seed");
-              container.push_back(dtSegments[matchesInBarrel[station - 1].first]);
+            auto extrapolatedMatch = extrapolateToNearbyStation(station, matchesInBarrel, dtSegments);
+            if (extrapolatedMatch.first != -1) {
+              LOG("Adding extrapolated DT segment " << extrapolatedMatch.first << " with quality "
+                                                    << extrapolatedMatch.second << " found in station " << station
+                                                    << " to the seed");
+              container.push_back(dtSegments[extrapolatedMatch.first]);
             }
           }
         }
@@ -397,11 +384,9 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         radius = std::abs(detLayer->position().z() / cos(theta));
 
         // Fill seed with matched segment(s)
-        for (int i = 0; i != 4; ++i) {
-          if (matchesInEndcap[i].first != -1) {
-            LOG("Adding matched CSC segment in station " << i + 1 << " to the seed");
-            container.push_back(cscSegments[matchesInEndcap[i].first]);
-          }
+        for (auto& [detId, matchingPair] : matchesInEndcap) {
+          LOG("Adding matched CSC segment in station " << detId.station() << " to the seed");
+          container.push_back(cscSegments[matchingPair.first]);
         }
       }
       vec.setMag(radius);
@@ -456,17 +441,11 @@ const bool Phase2L2MuonSeedCreator::matchingDtIds(const DTChamberId& stubId, con
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTChamberId& stubId,
                                                                        const l1t::MuonStubRef stub,
                                                                        const DTRecSegment4DCollection& segments,
-                                                                       const l1t::TrackerMuonRef l1TkMuRef,
-                                                                       const std::pair<int, int>& previousMatch) const {
+                                                                       const l1t::TrackerMuonRef l1TkMuRef) const {
   int bestSegIndex = -1;
   int quality = -1;
-  auto previousBest = (previousMatch.first != -1) ? segments.begin() + previousMatch.first : segments.end() + 1;
-  const unsigned int nHitsPhiPrevious =
-      (previousMatch.first != -1) ? (previousBest->hasPhi() ? previousBest->phiSegment()->recHits().size() : 0) : 0;
-  const unsigned int nHitsThetaPrevious =
-      (previousMatch.first != -1) ? (previousBest->hasZed() ? previousBest->zSegment()->recHits().size() : 0) : 0;
-  unsigned int nHitsPhiBest = nHitsPhiPrevious;
-  unsigned int nHitsThetaBest = nHitsThetaPrevious;
+  unsigned int nHitsPhiBest = 0;
+  unsigned int nHitsThetaBest = 0;
 
   LOG("Matching stub with DT segment");
   int matchingIds = 0;
@@ -535,17 +514,13 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
   LOG("DT looped over " << matchingIds << (matchingIds > 1 ? " segments" : " segment")
                         << " with same DT detId as stub");
 
-  if (quality < previousMatch.second) {
-    LOG("DT proposed match: " << bestSegIndex << " with quality " << quality);
-    LOG("DT already found better match: " << previousMatch.first << " with " << nHitsPhiPrevious + nHitsThetaPrevious
-                                          << " total hits and quality " << previousMatch.second);
-    return previousMatch;
+  if (quality < 0) {
+    LOG("DT proposed match: " << bestSegIndex << " with quality " << quality << ". Not good enough!");
+    return std::make_pair(-1, -1);
   } else {
-    LOG("Found better DT segment match");
-    LOG("Previous DT match: " << previousMatch.first << " with " << nHitsPhiPrevious + nHitsThetaPrevious
-                              << " total hits and quality " << previousMatch.second);
-    LOG("New best DT segment: " << bestSegIndex << " with " << nHitsPhiBest + nHitsThetaBest
-                                << " total hits and quality " << quality);
+    LOG("Found DT segment match");
+    LOG("New DT segment: " << bestSegIndex << " with " << nHitsPhiBest + nHitsThetaBest << " total hits and quality "
+                           << quality);
     return std::make_pair(bestSegIndex, quality);
   }
 }
@@ -554,13 +529,10 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSCDetId& stubId,
                                                                        const l1t::MuonStubRef stub,
                                                                        const CSCSegmentCollection& segments,
-                                                                       const l1t::TrackerMuonRef l1TkMuRef,
-                                                                       const std::pair<int, int>& previousMatch) const {
+                                                                       const l1t::TrackerMuonRef l1TkMuRef) const {
   int bestSegIndex = -1;
   int quality = -1;
-  auto previousBest = (previousMatch.first != -1) ? segments.begin() + previousMatch.first : segments.end() + 1;
-  const unsigned int previousHits = (previousMatch.first != -1) ? previousBest->nRecHits() : 0;
-  unsigned int nHitsBest = previousHits;
+  unsigned int nHitsBest = 0;
 
   LOG("Matching stub with CSC segment");
   int matchingIds = 0;
@@ -614,38 +586,41 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
   LOG("CSC looped over " << matchingIds << (matchingIds != 1 ? " segments" : " segment")
                          << " with same CSC detId as stub");
 
-  if (quality < previousMatch.second) {
-    LOG("CSC proposed match: " << bestSegIndex << " with quality " << quality);
-    LOG("CSC already found better match: " << previousMatch.first << " with " << previousHits << " hits and quality "
-                                           << previousMatch.second);
-    return previousMatch;
+  if (quality < 0) {
+    LOG("CSC proposed match: " << bestSegIndex << " with quality " << quality << ". Not good enough!");
+    return std::make_pair(-1, -1);
   } else {
-    LOG("Found better CSC segment match");
-    LOG("Previous CSC match: " << previousMatch.first << " with " << previousHits << " hits and quality "
-                               << previousMatch.second);
-    LOG("New best CSC segment: " << bestSegIndex << " with " << nHitsBest << " hits and quality " << quality);
+    LOG("Found CSC segment match");
+    LOG("New CSC segment: " << bestSegIndex << " with " << nHitsBest << " hits and quality " << quality);
     return std::make_pair(bestSegIndex, quality);
   }
 }
 
 const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateToNearbyStation(
     const int endingStation,
-    const std::pair<int, int> (&matchesInBarrel)[4],
+    const std::map<DTChamberId, std::pair<int, int>>& matchesInBarrel,
     const DTRecSegment4DCollection& segments) const {
   std::pair<int, int> extrapolatedMatch = std::make_pair(-1, -1);
+  bool foundExtrapolatedMatch = false;
 
   switch (endingStation) {
     case 1: {
       // Station 1. Extrapolate 2->1 or 3->1 (4->1)
       int startingStation = 2;
       while (startingStation < 5) {
-        if (matchesInBarrel[startingStation - 1].first != -1) {
-          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
-          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
-          if (extrapolatedMatch.first != -1) {
-            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
-            break;
+        for (auto& [detId, matchingPair] : matchesInBarrel) {
+          if (detId.station() == startingStation) {
+            LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+            extrapolatedMatch = extrapolateMatch(matchingPair.first, endingStation, segments);
+            if (extrapolatedMatch.first != -1) {
+              LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+              foundExtrapolatedMatch = true;
+              break;
+            }
           }
+        }
+        if (foundExtrapolatedMatch) {
+          break;
         }
         ++startingStation;
       }
@@ -655,13 +630,19 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateToNearbyStation(
       // Station 2. Extrapolate 1->2 or 3->2 (4->2)
       int startingStation = 1;
       while (startingStation < 5) {
-        if (matchesInBarrel[startingStation - 1].first != -1) {
-          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
-          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
-          if (extrapolatedMatch.first != -1) {
-            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
-            break;
+        for (auto& [detId, matchingPair] : matchesInBarrel) {
+          if (detId.station() == startingStation) {
+            LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+            extrapolatedMatch = extrapolateMatch(matchingPair.first, endingStation, segments);
+            if (extrapolatedMatch.first != -1) {
+              LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+              foundExtrapolatedMatch = true;
+              break;
+            }
           }
+        }
+        if (foundExtrapolatedMatch) {
+          break;
         }
         startingStation = startingStation == 1 ? startingStation + 2 : startingStation + 1;
       }
@@ -671,13 +652,19 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateToNearbyStation(
       // Station 3. Extrapolate 2->3 or 4->3 (1->3)
       int startingStation = 2;
       while (startingStation > 0) {
-        if (matchesInBarrel[startingStation - 1].first != -1) {
-          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
-          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
-          if (extrapolatedMatch.first != -1) {
-            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
-            break;
+        for (auto& [detId, matchingPair] : matchesInBarrel) {
+          if (detId.station() == startingStation) {
+            LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+            extrapolatedMatch = extrapolateMatch(matchingPair.first, endingStation, segments);
+            if (extrapolatedMatch.first != -1) {
+              LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+              foundExtrapolatedMatch = true;
+              break;
+            }
           }
+        }
+        if (foundExtrapolatedMatch) {
+          break;
         }
         startingStation = startingStation == 2 ? startingStation + 2 : startingStation - 3;
       }
@@ -687,13 +674,19 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateToNearbyStation(
       // Station 4. Extrapolate 2->4 or 3->4 (1->4)
       int startingStation = 2;
       while (startingStation > 0) {
-        if (matchesInBarrel[startingStation - 1].first != -1) {
-          LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
-          extrapolatedMatch = extrapolateMatch(startingStation, endingStation, matchesInBarrel, segments);
-          if (extrapolatedMatch.first != -1) {
-            LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
-            break;
+        for (auto& [detId, matchingPair] : matchesInBarrel) {
+          if (detId.station() == startingStation) {
+            LOG("Extrapolating from station " << startingStation << " to station " << endingStation);
+            extrapolatedMatch = extrapolateMatch(matchingPair.first, endingStation, segments);
+            if (extrapolatedMatch.first != -1) {
+              LOG("Found extrapolated match in station " << endingStation << " from station " << startingStation);
+              foundExtrapolatedMatch = true;
+              break;
+            }
           }
+        }
+        if (foundExtrapolatedMatch) {
+          break;
         }
         startingStation = startingStation == 2 ? startingStation + 1 : startingStation - 2;
       }
@@ -706,15 +699,12 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateToNearbyStation(
   return extrapolatedMatch;
 }
 
-const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int startingStation,
+const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int bestStartingSegIndex,
                                                                     const int endingStation,
-                                                                    const std::pair<int, int> (&matchesInBarrel)[4],
                                                                     const DTRecSegment4DCollection& segments) const {
-  const auto& matchInStartingStation = matchesInBarrel[startingStation - 1].first != -1
-                                           ? segments.begin() + matchesInBarrel[startingStation - 1].first
-                                           : segments.end() + 1;
-  auto matchId = matchInStartingStation->chamberId();
-  GlobalPoint matchPos = dtGeometry_->idToDet(matchId)->toGlobal(matchInStartingStation->localPosition());
+  const auto& segmentInStartingStation = segments.begin() + bestStartingSegIndex;
+  auto matchId = segmentInStartingStation->chamberId();
+  GlobalPoint matchPos = dtGeometry_->idToDet(matchId)->toGlobal(segmentInStartingStation->localPosition());
 
   int bestSegIndex = -1;
   int quality = -1;
@@ -739,9 +729,8 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int st
     double deltaTheta = std::abs(segPos.theta() - matchPos.theta());
     LOG("Extrapolation deltaTheta: " << deltaTheta);
 
-
     double matchingDeltaPhi =
-        std::abs(startingStation - endingStation) == 1 ? extrapolationDeltaPhiClose_ : extrapolationDeltaPhiFar_;
+        std::abs(matchId.station() - endingStation) == 1 ? extrapolationDeltaPhiClose_ : extrapolationDeltaPhiFar_;
 
     if (deltaPhi > matchingDeltaPhi or deltaTheta > 0.4) {
       continue;
