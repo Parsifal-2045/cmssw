@@ -30,34 +30,61 @@ from ..modules.hltPhase2L3MuonsHcalIsodR0p3dRVeto0p000_cfi import *
 from ..modules.hltPhase2L3MuonsHgcalLCIsodR0p2dRVetoEM0p00dRVetoHad0p02minEEM0p00minEHad0p00_cfi import *
 from ..modules.hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20ChisqInfPtMin0p0Cut0p07_cfi import *
 
+from ..sequences.Phase2HLTMuonsSequence_cfi import * # includes PHASE2_TAG from HLTrigger/Configuration/python/HLT_75e33/modules/hltL2MuonSeedsFromL1TkMuon_cfi.py
 
+if PHASE2_TAG :
+    HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
+        +RawToDigiSequence
+        +itLocalRecoSequence
+        +otLocalRecoSequence
+        +hltPhase2PixelFitterByHelixProjections
+        +hltPhase2PixelTrackFilterByKinematics
+        +Phase2HLTMuonsSequence
+        +hltL3fL1TkSingleMu22L3Filtered24Q
+        +hgcalLocalRecoSequence
+        +HLTDoLocalHcalSequence
+        +HLTDoFullUnpackingEgammaEcalSequence
+        +HLTFastJetForEgammaSequence
+        +pfClusteringHBHEHFSequence
+        +HLTPFClusteringForEgammaUnseededSequence
+        +hltPhase2L3MuonsEcalIsodR0p3dRVeto0p000
+        +hltPhase2L3MuonsHcalIsodR0p3dRVeto0p000
+        +hltPhase2L3MuonsHgcalLCIsodR0p2dRVetoEM0p00dRVetoHad0p02minEEM0p00minEHad0p00
+        +hltL3crIsoL1TkSingleMu22L3f24QL3pfecalIsoFiltered0p41
+        +hltL3crIsoL1TkSingleMu22L3f24QL3pfhcalIsoFiltered0p40
+        +hltL3crIsoL1TkSingleMu22L3f24QL3pfhgcalIsoFiltered4p70
+        +HLTPhase2L3MuonGeneralTracksSequence
+        +hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20ChisqInfPtMin0p0Cut0p07
+        +hltL3crIsoL1TkSingleMu22L3f24QL3trkIsoRegionalNewFiltered0p07EcalHcalHgcalTrk
+        +HLTEndSequence)
 
-HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
-    +RawToDigiSequence
-    +itLocalRecoSequence
-    +otLocalRecoSequence
-    +HLTL2MuonsFromL1TkSequence
-    +HLTPhase2L3OISequence
-    +hltPhase2PixelFitterByHelixProjections
-    +hltPhase2PixelTrackFilterByKinematics
-    +HLTPhase2L3FromL1TkSequence
-    +HLTIter0Phase2L3FromL1TkSequence
-    +HLTIter2Phase2L3FromL1TkSequence
-    +HLTPhase2L3MuonsSequence
-    +hltL3fL1TkSingleMu22L3Filtered24Q
-    +hgcalLocalRecoSequence
-    +HLTDoLocalHcalSequence
-    +HLTDoFullUnpackingEgammaEcalSequence
-    +HLTFastJetForEgammaSequence
-    +pfClusteringHBHEHFSequence
-    +HLTPFClusteringForEgammaUnseededSequence
-    +hltPhase2L3MuonsEcalIsodR0p3dRVeto0p000
-    +hltPhase2L3MuonsHcalIsodR0p3dRVeto0p000
-    +hltPhase2L3MuonsHgcalLCIsodR0p2dRVetoEM0p00dRVetoHad0p02minEEM0p00minEHad0p00
-    +hltL3crIsoL1TkSingleMu22L3f24QL3pfecalIsoFiltered0p41
-    +hltL3crIsoL1TkSingleMu22L3f24QL3pfhcalIsoFiltered0p40
-    +hltL3crIsoL1TkSingleMu22L3f24QL3pfhgcalIsoFiltered4p70
-    +HLTPhase2L3MuonGeneralTracksSequence
-    +hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20ChisqInfPtMin0p0Cut0p07
-    +hltL3crIsoL1TkSingleMu22L3f24QL3trkIsoRegionalNewFiltered0p07EcalHcalHgcalTrk
-    +HLTEndSequence)
+else :   
+    HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
+        +RawToDigiSequence
+        +itLocalRecoSequence
+        +otLocalRecoSequence
+        +HLTL2MuonsFromL1TkSequence
+        +HLTPhase2L3OISequence
+        +hltPhase2PixelFitterByHelixProjections
+        +hltPhase2PixelTrackFilterByKinematics
+        +HLTPhase2L3FromL1TkSequence
+        +HLTIter0Phase2L3FromL1TkSequence
+        +HLTIter2Phase2L3FromL1TkSequence
+        +HLTPhase2L3MuonsSequence
+        +hltL3fL1TkSingleMu22L3Filtered24Q
+        +hgcalLocalRecoSequence
+        +HLTDoLocalHcalSequence
+        +HLTDoFullUnpackingEgammaEcalSequence
+        +HLTFastJetForEgammaSequence
+        +pfClusteringHBHEHFSequence
+        +HLTPFClusteringForEgammaUnseededSequence
+        +hltPhase2L3MuonsEcalIsodR0p3dRVeto0p000
+        +hltPhase2L3MuonsHcalIsodR0p3dRVeto0p000
+        +hltPhase2L3MuonsHgcalLCIsodR0p2dRVetoEM0p00dRVetoHad0p02minEEM0p00minEHad0p00
+        +hltL3crIsoL1TkSingleMu22L3f24QL3pfecalIsoFiltered0p41
+        +hltL3crIsoL1TkSingleMu22L3f24QL3pfhcalIsoFiltered0p40
+        +hltL3crIsoL1TkSingleMu22L3f24QL3pfhgcalIsoFiltered4p70
+        +HLTPhase2L3MuonGeneralTracksSequence
+        +hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20ChisqInfPtMin0p0Cut0p07
+        +hltL3crIsoL1TkSingleMu22L3f24QL3trkIsoRegionalNewFiltered0p07EcalHcalHgcalTrk
+        +HLTEndSequence)

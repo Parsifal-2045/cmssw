@@ -7,18 +7,32 @@ from ..modules.hltPhase2PixelTrackFilterByKinematics_cfi import *
 from ..sequences.HLTBeginSequence_cfi import *
 from ..sequences.HLTEndSequence_cfi import *
 from ..sequences.HLTMuonsSequence_cfi import *
-from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.itLocalRecoSequence_cfi import *
 from ..sequences.muonlocalrecoSequence_cfi import *
 from ..sequences.otLocalRecoSequence_cfi import *
+from ..sequences.Phase2HLTL2CosmicMuonsSequence_cfi import *
 
-HLT_Mu50_FromL1TkMuon = cms.Path(HLTBeginSequence
-    +muonlocalrecoSequence
-    +itLocalRecoSequence
-    +otLocalRecoSequence
-    +hltPhase2PixelFitterByHelixProjections
-    +hltPhase2PixelTrackFilterByKinematics
-    +HLTMuonsSequence
-    +hltPhase2L3MuonCandidates
-    +hltL3fL1TkSingleMu22L3Filtered50Q
-    +HLTEndSequence)
+from ..sequences.Phase2HLTMuonsSequence_cfi import * # includes PHASE2_TAG from HLTrigger/Configuration/python/HLT_75e33/modules/hltL2MuonSeedsFromL1TkMuon_cfi.pyfrom ..sequences.HLTTrackingV61Sequence_cfi import *
+
+if PHASE2_TAG:
+    HLT_Mu50_FromL1TkMuon = cms.Path(HLTBeginSequence
+        +muonlocalrecoSequence
+        +itLocalRecoSequence
+        +otLocalRecoSequence
+        +hltPhase2PixelFitterByHelixProjections
+        +hltPhase2PixelTrackFilterByKinematics
+        +Phase2HLTMuonsSequence
+        +Phase2HLTL2CosmicMuonsSequence
+        +hltL3fL1TkSingleMu22L3Filtered50Q
+        +HLTEndSequence)
+else:
+    HLT_Mu50_FromL1TkMuon = cms.Path(HLTBeginSequence
+        +muonlocalrecoSequence
+        +itLocalRecoSequence
+        +otLocalRecoSequence
+        +hltPhase2PixelFitterByHelixProjections
+        +hltPhase2PixelTrackFilterByKinematics
+        +HLTMuonsSequence
+        +hltPhase2L3MuonCandidates
+        +hltL3fL1TkSingleMu22L3Filtered50Q
+        +HLTEndSequence)

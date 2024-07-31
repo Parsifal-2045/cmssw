@@ -6,7 +6,7 @@ from PhysicsTools.NanoAOD.common_cff import *
 from DPGAnalysis.MuonTools.common_cff import *
 
 dtSegmentFlatTableProducer.name = "dtSegment"
-dtSegmentFlatTableProducer.src =  "dt4DSegments"
+dtSegmentFlatTableProducer.src =  "hltDt4DSegments"
 dtSegmentFlatTableProducer.doc =  "DT segment information"
 
 dtSegmentFlatTableProducer.variables = cms.PSet(
@@ -52,7 +52,7 @@ from DPGAnalysis.MuonTools.muDTSegmentExtTableProducer_cfi import muDTSegmentExt
 from DPGAnalysis.MuonTools.rpcRecHitFlatTableProducer_cfi import rpcRecHitFlatTableProducer
 
 rpcRecHitFlatTableProducer.name = "rpcRecHit"
-rpcRecHitFlatTableProducer.src = "rpcRecHits"
+rpcRecHitFlatTableProducer.src = "hltRpcRecHits"
 rpcRecHitFlatTableProducer.doc =  "RPC rec-hit information"
 
 rpcRecHitFlatTableProducer.variables = cms.PSet(
@@ -164,7 +164,7 @@ dtrpcPointFlatTableProducer.detIdVariables = cms.PSet(
 from DPGAnalysis.MuonTools.gemRecHitFlatTableProducer_cfi import gemRecHitFlatTableProducer
 
 gemRecHitFlatTableProducer.name = "gemRecHit"
-gemRecHitFlatTableProducer.src = "gemRecHits"
+gemRecHitFlatTableProducer.src = "hltGemRecHits"
 gemRecHitFlatTableProducer.doc =  "GEM rec-hit information"
 
 gemRecHitFlatTableProducer.variables = cms.PSet(
@@ -198,7 +198,7 @@ gemRecHitFlatTableProducer.globalPosVariables = cms.PSet(
 from DPGAnalysis.MuonTools.gemSegmentFlatTableProducer_cfi import gemSegmentFlatTableProducer
 
 gemSegmentFlatTableProducer.name = "gemSegment"
-gemSegmentFlatTableProducer.src = "gemSegments"
+gemSegmentFlatTableProducer.src = "hltGemSegments"
 gemSegmentFlatTableProducer.doc =  "GEM segment information"
 
 gemSegmentFlatTableProducer.variables = cms.PSet(
@@ -239,6 +239,6 @@ muLocalRecoProducers = cms.Sequence(rpcRecHitFlatTableProducer
                                     + cscrpcPointFlatTableProducer
                                     + gemRecHitFlatTableProducer
                                     + dtSegmentFlatTableProducer
-                                    + muDTSegmentExtTableProducer
+                                    #+ muDTSegmentExtTableProducer
                                     + gemSegmentFlatTableProducer
                                    )

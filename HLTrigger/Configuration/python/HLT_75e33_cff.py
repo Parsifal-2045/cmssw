@@ -341,6 +341,9 @@ fragment.load("HLTrigger/Configuration/HLT_75e33/services/FastTimerService_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/services/MessageLogger_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/services/ThroughputService_cfi")
 
+fragment.load("HLTrigger/Configuration/HLT_75e33/sequences/Phase2HLTL2MuonsFromL1TkSequence_cfi")
+fragment.load("HLTrigger/Configuration/HLT_75e33/sequences/Phase2HLTMuonsSequence_cfi")
+
 fragment.load('L1Trigger.Configuration.GTemulator_cff')
 fragment.l1tGTProducer.GMTTkMuons = cms.InputTag("l1tTkMuonsGmt")
 #fragment.l1tGTProducer.CL2Jets = cms.InputTag("l1tSCPFL1PuppiCorrectedEmulator")
