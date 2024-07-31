@@ -43,7 +43,7 @@
 
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateOnSurface.h"
 
-#include <vector>
+#include <map>
 #include <utility>
 
 class RecHit;
@@ -77,7 +77,6 @@ private:
   edm::ESGetToken<CSCGeometry, MuonGeometryRecord> cscGeometryToken_;
   edm::ESGetToken<DTGeometry, MuonGeometryRecord> dtGeometryToken_;
   edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> magneticFieldToken_;
-  edm::ESGetToken<MuonDetLayerGeometry, MuonRecoGeometryRecord> muonLayersToken_;
 
   // Miminum and maximum pt momentum of a track
   double minMomentum_;
@@ -96,7 +95,6 @@ private:
 
   // Handles
   edm::ESHandle<MagneticField> magneticField_;
-  edm::ESHandle<MuonDetLayerGeometry> muonLayers_;
   edm::ESHandle<CSCGeometry> cscGeometry_;
   edm::ESHandle<DTGeometry> dtGeometry_;
 
@@ -111,24 +109,21 @@ private:
   const std::pair<int, int> matchingStubSegment(const DTChamberId& stubId,
                                                 const l1t::MuonStubRef stub,
                                                 const DTRecSegment4DCollection& segments,
-                                                const l1t::TrackerMuonRef l1TkMuRef,
-                                                const std::pair<int, int>& previousMatch) const;
+                                                const l1t::TrackerMuonRef l1TkMuRef) const;
 
   // Logic to match L1 stubs to CSC segments
   const std::pair<int, int> matchingStubSegment(const CSCDetId& stubId,
                                                 const l1t::MuonStubRef stub,
                                                 const CSCSegmentCollection& segments,
-                                                const l1t::TrackerMuonRef l1TkMuRef,
-                                                const std::pair<int, int>& previousMatch) const;
+                                                const l1t::TrackerMuonRef l1TkMuRef) const;
 
   // Logic to extrapolate from nearby stations in the barrel
-  const std::pair<int, int> extrapolateToNearbyStation(const int stationIndex,
-                                                       const std::pair<int, int> (&matchesInBarrel)[4],
+  const std::pair<int, int> extrapolateToNearbyStation(const int endingStation,
+                                                       const std::map<DTChamberId, std::pair<int, int>>& matchesInBarrel,
                                                        const DTRecSegment4DCollection& segments) const;
 
-  const std::pair<int, int> extrapolateMatch(const int startingStation,
+  const std::pair<int, int> extrapolateMatch(const int bestStartingSegIndex,
                                              const int endingStation,
-                                             const std::pair<int, int> (&matchesInBarrel)[4],
                                              const DTRecSegment4DCollection& segments) const;
 };
 #endif
