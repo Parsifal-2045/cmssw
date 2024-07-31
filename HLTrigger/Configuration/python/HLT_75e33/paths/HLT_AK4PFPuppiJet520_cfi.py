@@ -12,4 +12,10 @@ from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.localrecoSequence_cfi import *
 from ..sequences.RawToDigiSequence_cfi import *
 
-HLT_AK4PFPuppiJet520 = cms.Path(HLTBeginSequence+l1tSinglePFPuppiJet230off+RawToDigiSequence+hgcalLocalRecoSequence+localrecoSequence+HLTTrackingV61Sequence+HLTMuonsSequence+HLTParticleFlowSequence+HLTAK4PFPuppiJetsReconstruction+hltSingleAK4PFPuppiJet520+HLTEndSequence)
+from ..modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
+from ..sequences.Phase2HLTMuonsSequence_cfi import *
+
+if PHASE2_TAG:
+    HLT_AK4PFPuppiJet520 = cms.Path(HLTBeginSequence+l1tSinglePFPuppiJet230off+RawToDigiSequence+hgcalLocalRecoSequence+localrecoSequence+HLTTrackingV61Sequence+Phase2HLTMuonsSequence+HLTParticleFlowSequence+HLTAK4PFPuppiJetsReconstruction+hltSingleAK4PFPuppiJet520+HLTEndSequence)
+else :
+    HLT_AK4PFPuppiJet520 = cms.Path(HLTBeginSequence+l1tSinglePFPuppiJet230off+RawToDigiSequence+hgcalLocalRecoSequence+localrecoSequence+HLTTrackingV61Sequence+HLTMuonsSequence+HLTParticleFlowSequence+HLTAK4PFPuppiJetsReconstruction+hltSingleAK4PFPuppiJet520+HLTEndSequence)

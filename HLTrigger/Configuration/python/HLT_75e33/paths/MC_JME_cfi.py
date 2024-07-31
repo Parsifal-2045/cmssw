@@ -12,4 +12,10 @@ from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.localrecoSequence_cfi import *
 from ..sequences.RawToDigiSequence_cfi import *
 
-MC_JME = cms.Path(HLTBeginSequence+RawToDigiSequence+hgcalLocalRecoSequence+localrecoSequence+HLTTrackingV61Sequence+HLTMuonsSequence+HLTParticleFlowSequence+HLTHgcalTiclPFClusteringForEgamma+HLTJMESequence+hltPFPuppiHT+hltPFPuppiMHT)
+from ..modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
+from ..sequences.Phase2HLTMuonsSequence_cfi import *
+
+if PHASE2_TAG:
+    MC_JME = cms.Path(HLTBeginSequence+RawToDigiSequence+hgcalLocalRecoSequence+localrecoSequence+HLTTrackingV61Sequence+Phase2HLTMuonsSequence+HLTParticleFlowSequence+HLTHgcalTiclPFClusteringForEgamma+HLTJMESequence+hltPFPuppiHT+hltPFPuppiMHT)
+else:
+    MC_JME = cms.Path(HLTBeginSequence+RawToDigiSequence+hgcalLocalRecoSequence+localrecoSequence+HLTTrackingV61Sequence+HLTMuonsSequence+HLTParticleFlowSequence+HLTHgcalTiclPFClusteringForEgamma+HLTJMESequence+hltPFPuppiHT+hltPFPuppiMHT)
