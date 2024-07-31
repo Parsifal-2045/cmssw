@@ -40,6 +40,8 @@
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
 #include "DataFormats/TrajectorySeed/interface/TrajectorySeedCollection.h"
+#include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
+
 
 //
 // class declaration
@@ -53,12 +55,12 @@ public:
 
 private:
   void produce(edm::StreamID, edm::Event &, const edm::EventSetup &) const final;
-  TrajectoryStateOnSurface seedTransientState(const TrajectorySeed &,
+  TrajectoryStateOnSurface seedTransientState(const L2MuonTrajectorySeed &,
                                               const MagneticField &,
                                               const GlobalTrackingGeometry &) const;
   // ----------member data ---------------------------
 
-  edm::EDGetTokenT<TrajectorySeedCollection> L2seedsTagT_;
+  edm::EDGetTokenT<L2MuonTrajectorySeedCollection> L2seedsTagT_;
   edm::EDGetTokenT<edm::View<TrajectorySeed>> L2seedsTagS_;
 
   const edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> theMGFieldToken;

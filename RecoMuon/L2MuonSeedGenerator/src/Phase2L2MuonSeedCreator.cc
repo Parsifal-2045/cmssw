@@ -72,6 +72,7 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
   edm::ParameterSet serviceParameters = pset.getParameter<edm::ParameterSet>("ServiceParameters");
   // Services
   service_ = std::make_unique<MuonServiceProxy>(serviceParameters, consumesCollector());
+  estimator_ = std::make_unique<Chi2MeasurementEstimator>(10000.);
   produces<L2MuonTrajectorySeedCollection>();
   produces<TrajectorySeedCollection>("phase2Validation");
 }
@@ -411,6 +412,14 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
       // Create the TrajectoryStateOnSurface
       TrajectoryStateOnSurface tsos = service_->propagator(propagatorName_)->propagate(state, detLayer->surface());
 
+      auto detsWithStates = detLayer->compatibleDets(tsos, *service_->propagator(propagatorName_), *estimator_);
+
+      if (detsWithStates.size() > 0) {
+        propagateToId = detsWithStates.front().first->geographicalId();
+        tsos = detsWithStates.front().second;
+      } else {
+        LOG("Warning: detsWithStates collection is empty");
+      }
       // Transform it in a Persistent TrajectoryStateOnDet
       const PTrajectoryStateOnDet& seedTSOS = trajectoryStateTransform::persistentState(tsos, propagateToId.rawId());
 

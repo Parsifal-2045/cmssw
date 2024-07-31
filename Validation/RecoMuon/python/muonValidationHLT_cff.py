@@ -28,6 +28,16 @@ l3IOTkV = MTVhlt.clone(
     muonHistoParameters = trkMuonHistoParameters
 )
 
+from SimMuon.MCTruth.SeedToTrackProducer_cfi import SeedToTrackProducer as _SeedToTrackProducer
+muonL2SeedTracks = _SeedToTrackProducer.clone(L2seedsCollection = cms.InputTag("hltL2MuonSeedsFromL1TkMuon"))
+
+# L2 standalone muons seeds
+l2MuSeedV = MTVhlt.clone(
+    associatormap = 'tpToL2SeedAssociation',
+    label = ('hltL2MuonSeedsFromL1TkMuon',),
+    muonHistoParameters = staSeedMuonHistoParameters
+)
+
 # L2 standalone muons
 l2MuV = MTVhlt.clone(
     associatormap = 'tpToL2MuonAssociation',
@@ -51,7 +61,7 @@ l3OITkV = MTVhlt.clone(
     muonHistoParameters = trkMuonHistoParameters
 )
 
-# L3 tracks merged
+# L3 inner tracks merged
 l3TkMergedV = MTVhlt.clone(
     associatormap = 'tpToL3TkMergedAssociation',
     label = ('hltPhase2L3MuonMerged',),
@@ -132,6 +142,7 @@ l3MuIDTrackV = MTVhlt.clone(
 if L3IOFIRST: 
     muonValidationHLT_seq = cms.Sequence(
         tpToL3IOTkAssociation + l3IOTkV
+        + muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
         +tpToL2MuonAssociation + l2MuV
         +tpToL2MuonToReuseAssociation + l2MuToReuseV
         +tpToL3OITkAssociation + l3OITkV
@@ -152,6 +163,7 @@ if L3IOFIRST:
 else: 
     muonValidationHLT_seq = cms.Sequence(
         tpToL3IOTkAssociation + l3IOTkV
+        + muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
         +tpToL2MuonAssociation + l2MuV
         +tpToL3OITkAssociation + l3OITkV
         +tpToL3TkMergedAssociation + l3TkMergedV
