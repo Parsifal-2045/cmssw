@@ -190,6 +190,14 @@ tpToL3IOTkAssociation = MABHhlt.clone(
     UseMuon = False
 )
 
+# L2 standalone muon seeds
+tpToL2SeedAssociation = MABHhlt.clone(
+    dumpInputCollections = True,
+    tracksTag = "hltL2MuonSeedsFromL1TkMuon",
+    UseTracker = False,
+    UseMuon = True
+)
+
 # L2 standalone muons
 tpToL2MuonAssociation = MABHhlt.clone(
     tracksTag = 'hltL2MuonsFromL1TkMuon:UpdatedAtVtx',
@@ -213,7 +221,7 @@ tpToL3OITkAssociation = MABHhlt.clone(
     UseMuon = False
 )
 
-# L3 tracks merged
+# L3 inner tracks merged
 tpToL3TkMergedAssociation = MABHhlt.clone(
     tracksTag = 'hltPhase2L3MuonMerged',
     UseTracker = True,

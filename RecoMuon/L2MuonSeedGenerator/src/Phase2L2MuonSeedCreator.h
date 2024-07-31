@@ -38,6 +38,7 @@
 #include "RecoMuon/Records/interface/MuonRecoGeometryRecord.h"
 #include "MagneticField/Engine/interface/MagneticField.h"
 #include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
+#include "TrackingTools/KalmanUpdators/interface/Chi2MeasurementEstimator.h"
 
 #include "RecoMuon/TrackingTools/interface/MuonServiceProxy.h"
 
@@ -99,6 +100,8 @@ private:
   edm::ESHandle<DTGeometry> dtGeometry_;
 
   std::unique_ptr<MuonServiceProxy> service_;
+  std::unique_ptr<MeasurementEstimator> estimator_;
+
   std::string propagatorName_;
 
   // Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
