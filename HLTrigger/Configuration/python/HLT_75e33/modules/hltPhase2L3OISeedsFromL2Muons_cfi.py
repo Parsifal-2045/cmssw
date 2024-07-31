@@ -2,7 +2,7 @@ import FWCore.ParameterSet.Config as cms
 
 from ..modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST # imported from HLTrigger/Configuration/python/HLT_75e33/modules/Phase2HLTMuonSelectorForL3_cfi.py
 
-from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonsFromL1TkMuon_cfi import PHASE2_TAG
+from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
 
 hltPhase2L3OISeedsFromL2Muons = cms.EDProducer("TSGForOIFromL2",
     MeasurementTrackerEvent = cms.InputTag("MeasurementTrackerEvent"),
