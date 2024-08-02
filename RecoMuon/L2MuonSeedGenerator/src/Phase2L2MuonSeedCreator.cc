@@ -74,7 +74,6 @@ Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
   service_ = std::make_unique<MuonServiceProxy>(serviceParameters, consumesCollector());
   estimator_ = std::make_unique<Chi2MeasurementEstimator>(10000.);
   produces<L2MuonTrajectorySeedCollection>();
-  produces<TrajectorySeedCollection>("phase2Validation");
 }
 
 void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
@@ -106,7 +105,6 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   MuonPatternRecoDumper debug;
 
   auto output = std::make_unique<L2MuonTrajectorySeedCollection>();
-  auto validationOutput = std::make_unique<TrajectorySeedCollection>();
 
   auto const l1TkMuColl = iEvent.getHandle(l1TkMuCollToken_);
 
@@ -411,27 +409,50 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
 
       // Create the TrajectoryStateOnSurface
       TrajectoryStateOnSurface tsos = service_->propagator(propagatorName_)->propagate(state, detLayer->surface());
-
+      // Find valid detectors with states
       auto detsWithStates = detLayer->compatibleDets(tsos, *service_->propagator(propagatorName_), *estimator_);
-
+      // Check that at least one valid detector was found
       if (detsWithStates.size() > 0) {
+        // Update the detId with the one from the first valid detector with measurments found
         propagateToId = detsWithStates.front().first->geographicalId();
+        // Create the Trajectory State on that detector's surface
         tsos = detsWithStates.front().second;
-      } else {
-        LOG("Warning: detsWithStates collection is empty");
+      } else if (detsWithStates.empty() and bestInDt) {
+        // Propagation to MB2 failed, fallback to ME2 (might be an overlap edge case)
+        LOG("Warning: detsWithStates collection is empty for a barrel collection. Falling back to ME2");
+        // Get ME2 DetLayer
+        DetId fallback_id;
+        theta < Geom::pi() / 2. ? fallback_id = CSCDetId(1, 2, 0, 0, 0) : fallback_id = CSCDetId(2, 2, 0, 0, 0);
+        const DetLayer* ME2DetLayer = service_->detLayerGeometry()->idToLayer(fallback_id);
+        // Trajectory state on ME2 DetLayer
+        tsos = service_->propagator(propagatorName_)->propagate(state, ME2DetLayer->surface());
+        // Find the detectors with states on ME2
+        detsWithStates = ME2DetLayer->compatibleDets(tsos, *service_->propagator(propagatorName_), *estimator_);
       }
-      // Transform it in a Persistent TrajectoryStateOnDet
-      const PTrajectoryStateOnDet& seedTSOS = trajectoryStateTransform::persistentState(tsos, propagateToId.rawId());
+      // Use the valid detector found to produce the persistentState for the seed
+      if (!detsWithStates.empty()) {
+        LOG("Found a compatible detWithStates");
+        TrajectoryStateOnSurface newTSOS = detsWithStates.front().second;
+        const GeomDet* newTSOSDet = detsWithStates.front().first;
+        LOG("Most compatible detector: " << newTSOSDet->geographicalId().rawId());
+        if (newTSOS.isValid()) {
+          LOG("pos: (r=" << newTSOS.globalPosition().mag() << ", phi=" << newTSOS.globalPosition().phi()
+                         << ", eta=" << newTSOS.globalPosition().eta() << ")");
+          LOG("mom: (q*pt=" << newTSOS.charge() * newTSOS.globalMomentum().perp() << ", phi="
+                            << newTSOS.globalMomentum().phi() << ", eta=" << newTSOS.globalMomentum().eta() << ")");
+          // Transform the TrajectoryStateOnSurface in a Persistent TrajectoryStateOnDet
+          const PTrajectoryStateOnDet& seedTSOS =
+              trajectoryStateTransform::persistentState(newTSOS, newTSOSDet->geographicalId().rawId());
 
-      // Emplace seed in output
-      LOG("Emplacing seed in output");
-      output->emplace_back(L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef));
-      validationOutput->emplace_back(TrajectorySeed(seedTSOS, container, alongMomentum));
+          // Emplace seed in output
+          LOG("Emplacing seed in output");
+          output->emplace_back(L2MuonTrajectorySeed(seedTSOS, container, alongMomentum, l1TkMuRef));
+        }
+      }
     }  // End seed emplacing (one seed per L1TkMu)
   }  // End loop on L1TkMu
   LOG("All L1TkMu in event processed");
   iEvent.put(std::move(output));
-  iEvent.put(std::move(validationOutput), "phase2Validation");
 }
 
 const bool Phase2L2MuonSeedCreator::matchingDtIds(const DTChamberId& stubId, const DTChamberId& segId) const {
