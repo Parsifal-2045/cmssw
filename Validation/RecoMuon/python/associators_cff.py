@@ -192,8 +192,7 @@ tpToL3IOTkAssociation = MABHhlt.clone(
 
 # L2 standalone muon seeds
 tpToL2SeedAssociation = MABHhlt.clone(
-    dumpInputCollections = True,
-    tracksTag = "hltL2MuonSeedsFromL1TkMuon",
+    tracksTag = "muonL2SeedTracks",
     UseTracker = False,
     UseMuon = True
 )
