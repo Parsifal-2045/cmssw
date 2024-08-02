@@ -301,9 +301,9 @@ if PHASE2_TAG:
         if L3IOFIRST:
             muTriggerProducers = cms.Sequence(l1TkMuTable
                                       + phase2L2SeedFromL1TkMuonTable
-                                      + l2CosmicSeedTable
-                                      + l2CosmicSeedFromL1MuonTable
-                                      + l2CosmicMuTable
+                                      #+ l2CosmicSeedTable
+                                      #+ l2CosmicSeedFromL1MuonTable
+                                      #+ l2CosmicMuTable
                                       + l3TkIOTable
                                       + l2MuTable
                                       + l2MuTableVtx
@@ -319,9 +319,9 @@ if PHASE2_TAG:
             muTriggerProducers = cms.Sequence(l1TkMuTable
                                       + l1TkMuToReuseTable
                                       + phase2L2SeedFromL1TkMuonTable
-                                      + l2CosmicSeedTable
-                                      + l2CosmicSeedFromL1MuonTable
-                                      + l2CosmicMuTable
+                                      #+ l2CosmicSeedTable
+                                      #+ l2CosmicSeedFromL1MuonTable
+                                      #+ l2CosmicMuTable
                                       + l3TkIOTable
                                       + l2MuTable
                                       + l2MuTableVtx

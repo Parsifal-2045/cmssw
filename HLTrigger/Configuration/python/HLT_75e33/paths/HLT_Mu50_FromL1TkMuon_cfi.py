@@ -24,7 +24,7 @@ if PHASE2_TAG:
         +hltPhase2PixelFitterByHelixProjections
         +hltPhase2PixelTrackFilterByKinematics
         +Phase2HLTMuonsSequence
-        +Phase2HLTL2CosmicMuonsSequence
+        #+Phase2HLTL2CosmicMuonsSequence
         +hltL3fL1TkSingleMu22L3Filtered50Q
         +HLTEndSequence)
 else:

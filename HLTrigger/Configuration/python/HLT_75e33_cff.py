@@ -355,6 +355,9 @@ from L1Trigger.Phase2L1GT.l1tGTAlgoBlockProducer_cff import collectAlgorithmPath
 
 fragment.schedule = cms.Schedule(*[
 
+    fragment.GTemulation_step,
+    *collectAlgorithmPaths(fragment),
+
     fragment.L1T_SinglePFPuppiJet230off,
     fragment.L1T_PFPuppiHT450off,
     fragment.L1T_PFPuppiMET220off,

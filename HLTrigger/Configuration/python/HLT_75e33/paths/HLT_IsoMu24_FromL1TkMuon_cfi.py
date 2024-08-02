@@ -34,7 +34,7 @@ from ..modules.hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20Chis
 from ..sequences.Phase2HLTMuonsSequence_cfi import * # includes PHASE2_TAG from HLTrigger/Configuration/python/HLT_75e33/modules/hltL2MuonSeedsFromL1TkMuon_cfi.py
 
 if PHASE2_TAG :
-        HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
+    HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
         +hltSingleTkMuon22L1TkMuonFilter
         +RawToDigiSequence
         +itLocalRecoSequence
@@ -59,6 +59,7 @@ if PHASE2_TAG :
         +hltPhase2L3MuonsTrkIsoRegionalNewdR0p3dRVeto0p005dz0p25dr0p20ChisqInfPtMin0p0Cut0p07
         +hltL3crIsoL1TkSingleMu22L3f24QL3trkIsoRegionalNewFiltered0p07EcalHcalHgcalTrk
         +HLTEndSequence)
+
 else :   
     HLT_IsoMu24_FromL1TkMuon = cms.Path(HLTBeginSequence
         +hltSingleTkMuon22L1TkMuonFilter
