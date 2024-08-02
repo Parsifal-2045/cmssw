@@ -34,7 +34,7 @@ muonL2SeedTracks = _SeedToTrackProducer.clone(L2seedsCollection = cms.InputTag("
 # L2 standalone muons seeds
 l2MuSeedV = MTVhlt.clone(
     associatormap = 'tpToL2SeedAssociation',
-    label = ('hltL2MuonSeedsFromL1TkMuon',),
+    label = ('muonL2SeedTracks',),
     muonHistoParameters = staSeedMuonHistoParameters
 )
 
