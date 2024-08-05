@@ -92,7 +92,7 @@ l3OIGlbMuonV = MTVhlt.clone(
 # L3 Muons ID
 l3MuIDTrackV = MTVhlt.clone(
     associatormap = 'tpToL3MuonIDAssociation',
-    label = ('hltPhase2L3MuonTracks',),
+    label = ('hltL3MuonIdTracks',),
     muonHistoParameters = glbMuonHistoParameters
 )
 
@@ -150,7 +150,7 @@ if L3IOFIRST:
         +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
         +tpToL3OIMuonAssociation + l3OIGlbMuonV
         #+tpToL3MuonNoIDAssociation + l3NoIDV
-        +tpToL3MuonIDAssociation + l3MuIDTrackV
+        +hltL3MuonIdTracks_seq + tpToL3MuonIDAssociation + l3MuIDTrackV
         #+tpToL2UpdMuonAssociation + l2UpdMuonMuTrackV
         #+tpToL3OITkMuonAssociation + l3OITkMuonMuTrackV
         #+tpToL3TkMuonAssociation + l3TkMuonMuTrackV
@@ -170,7 +170,7 @@ else:
         +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
         +tpToL3OIMuonAssociation + l3OIGlbMuonV
         #+tpToL3MuonNoIDAssociation + l3NoIDV
-        +tpToL3MuonIDAssociation + l3MuIDTrackV
+        +hltL3MuonIdTracks_seq + tpToL3MuonIDAssociation + l3MuIDTrackV
         #+tpToL2UpdMuonAssociation + l2UpdMuonMuTrackV
         #+tpToL3OITkMuonAssociation + l3OITkMuonMuTrackV
         #+tpToL3TkMuonAssociation + l3TkMuonMuTrackV
