@@ -251,7 +251,7 @@ tpToL3OIMuonAssociation = MABHhlt.clone(
 
 # L3 Muons ID (tracks)
 tpToL3MuonIDAssociation = MABHhlt.clone(
-    tracksTag = 'hltPhase2L3MuonTracks',
+    tracksTag = 'hltL3MuonIdTracks',
     UseTracker = True,
     UseMuon = True,
     rejectBadGlobal = False
