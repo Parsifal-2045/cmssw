@@ -21,13 +21,6 @@ ignoremissingtrackcollection=True
 MTVhlt.muonTPSelector.src = ("TPmu")
 ################################################
 
-# L3 IO inner tracks
-l3IOTkV = MTVhlt.clone(
-    associatormap = 'tpToL3IOTkAssociation',
-    label = ('hltIter2Phase2L3FromL1TkMuonMerged',),
-    muonHistoParameters = trkMuonHistoParameters
-)
-
 from SimMuon.MCTruth.SeedToTrackProducer_cfi import SeedToTrackProducer as _SeedToTrackProducer
 muonL2SeedTracks = _SeedToTrackProducer.clone(L2seedsCollection = cms.InputTag("hltL2MuonSeedsFromL1TkMuon"))
 
@@ -45,14 +38,12 @@ l2MuV = MTVhlt.clone(
     muonHistoParameters = staMuonHistoParameters
 )
 
-from HLTrigger.Configuration.HLT_75e33.modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST
-if L3IOFIRST:
-    # L2 muons to reuse (in workflow where IO is done first and OI as a second pass)
-    l2MuToReuseV = MTVhlt.clone(
-        associatormap = 'tpToL2MuonToReuseAssociation',
-        label = ('phase2L3FilteredObjects',),
-        muonHistoParameters = staMuonHistoParameters
-    )
+# L3 IO inner tracks
+l3IOTkV = MTVhlt.clone(
+    associatormap = 'tpToL3IOTkAssociation',
+    label = ('hltIter2Phase2L3FromL1TkMuonMerged',),
+    muonHistoParameters = trkMuonHistoParameters
+)
 
 # L3 OI inner tracks
 l3OITkV = MTVhlt.clone(
@@ -60,6 +51,34 @@ l3OITkV = MTVhlt.clone(
     label = ('hltPhase2L3OIMuonTrackSelectionHighPurity',),
     muonHistoParameters = trkMuonHistoParameters
 )
+
+from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
+
+from HLTrigger.Configuration.HLT_75e33.modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST
+# Filtered objects (L2 Muons to reuse and L3 IO tracks filtered if IO first, L3 OI tracks filtered if OI first)
+if PHASE2_TAG:    
+    if L3IOFIRST:
+        # L2 muons to reuse (in workflow where IO is done first and OI as a second pass)
+        L2MuToReuseV = MTVhlt.clone(
+            associatormap = 'tpToL2MuonToReuseAssociation',
+            label = ('phase2L3FilteredObjects:L2MuToReuse',),
+            muonHistoParameters = staMuonHistoParameters
+        )
+
+        # L3 IO inner tracks filtered
+        l3IOTkFilteredV = MTVhlt.clone(
+            associatormap = 'tpToL3IOTkFilteredAssociation',
+            label = ('phase2L3FilteredObjects:L3IOTracksFiltered',),
+            muonHistoParameters = trkMuonHistoParameters
+        )
+
+    else:
+        # L3 OI inner tracks filtered
+        l3OITkFilteredV = MTVhlt.clone(
+            associatormap = 'tpToL3OITkFilteredAssociation',
+            label = ('phase2L3FilteredObjects:L3OITracksFiltered',),
+            muonHistoParameters = trkMuonHistoParameters
+        )
 
 # L3 inner tracks merged
 l3TkMergedV = MTVhlt.clone(
@@ -139,46 +158,43 @@ l3MuIDTrackV = MTVhlt.clone(
 #
 # The full Muon HLT validation sequence
 #
-if L3IOFIRST: 
-    muonValidationHLT_seq = cms.Sequence(
-        tpToL3IOTkAssociation + l3IOTkV
-        + muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
-        +tpToL2MuonAssociation + l2MuV
-        +tpToL2MuonToReuseAssociation + l2MuToReuseV
-        +tpToL3OITkAssociation + l3OITkV
-        +tpToL3TkMergedAssociation + l3TkMergedV
-        +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
-        +tpToL3OIMuonAssociation + l3OIGlbMuonV
-        #+tpToL3MuonNoIDAssociation + l3NoIDV
-        +hltL3MuonIdTracks_seq + tpToL3MuonIDAssociation + l3MuIDTrackV
-        #+tpToL2UpdMuonAssociation + l2UpdMuonMuTrackV
-        #+tpToL3OITkMuonAssociation + l3OITkMuonMuTrackV
-        #+tpToL3TkMuonAssociation + l3TkMuonMuTrackV
-        #+tpToL3FromL1TkMuonAssociation + l3IOFromL1TkMuonMuTrackV 
-        #+tpToL0L3FromL1TkMuonAssociation + l0l3FromL1TkMuonMuTrackV
-        #+tpToL3GlbMuonAssociation + l3GlbMuonMuTrackV
-        #+hltIterL3MuonsNoIDTracks_seq + tpToL3NoIDMuonAssociation + l3NoIDMuonMuTrackV
-        #+hltIterL3MuonsTracks_seq + tpToL3MuonAssociation + l3MuonMuTrackV
-        )
+
+if PHASE2_TAG: 
+    if L3IOFIRST: 
+        muonValidationHLT_seq = cms.Sequence(
+            muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
+            +tpToL2MuonAssociation + l2MuV
+            +tpToL2MuonToReuseAssociation + L2MuToReuseV
+            +tpToL3IOTkAssociation + l3IOTkV
+            +tpToL3OITkAssociation + l3OITkV
+            +tpToL3IOTkFilteredAssociation + l3IOTkFilteredV
+            +tpToL3TkMergedAssociation + l3TkMergedV
+            +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
+            +tpToL3OIMuonAssociation + l3OIGlbMuonV
+            +hltL3MuonIdTracks_seq + tpToL3MuonIDAssociation + l3MuIDTrackV
+            )
+    else: 
+        muonValidationHLT_seq = cms.Sequence(
+            muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
+            +tpToL2MuonAssociation + l2MuV
+            +tpToL3IOTkAssociation + l3IOTkV
+            +tpToL3OITkAssociation + l3OITkV
+            +tpToL3OITkFilteredAssociation + l3OITkFilteredV
+            +tpToL3TkMergedAssociation + l3TkMergedV
+            +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
+            +tpToL3OIMuonAssociation + l3OIGlbMuonV
+            +hltL3MuonIdTracks_seq + tpToL3MuonIDAssociation + l3MuIDTrackV
+            )
 else: 
     muonValidationHLT_seq = cms.Sequence(
-        tpToL3IOTkAssociation + l3IOTkV
-        + muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
+        muonL2SeedTracks + tpToL2SeedAssociation + l2MuSeedV
         +tpToL2MuonAssociation + l2MuV
+        +tpToL3IOTkAssociation + l3IOTkV
         +tpToL3OITkAssociation + l3OITkV
         +tpToL3TkMergedAssociation + l3TkMergedV
         +tpToL3GlbMuonMergedAssociation + l3GlbMuonV
         +tpToL3OIMuonAssociation + l3OIGlbMuonV
-        #+tpToL3MuonNoIDAssociation + l3NoIDV
         +hltL3MuonIdTracks_seq + tpToL3MuonIDAssociation + l3MuIDTrackV
-        #+tpToL2UpdMuonAssociation + l2UpdMuonMuTrackV
-        #+tpToL3OITkMuonAssociation + l3OITkMuonMuTrackV
-        #+tpToL3TkMuonAssociation + l3TkMuonMuTrackV
-        #+tpToL3FromL1TkMuonAssociation + l3IOFromL1TkMuonMuTrackV 
-        #+tpToL0L3FromL1TkMuonAssociation + l0l3FromL1TkMuonMuTrackV
-        #+tpToL3GlbMuonAssociation + l3GlbMuonMuTrackV
-        #+hltIterL3MuonsNoIDTracks_seq + tpToL3NoIDMuonAssociation + l3NoIDMuonMuTrackV
-        #+hltIterL3MuonsTracks_seq + tpToL3MuonAssociation + l3MuonMuTrackV
         )
 
 recoMuonValidationHLT_seq = cms.Sequence(
