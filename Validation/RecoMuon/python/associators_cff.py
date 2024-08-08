@@ -183,13 +183,6 @@ MABHhlt = SimMuon.MCTruth.MuonAssociatorByHits_cfi.muonAssociatorByHits.clone(
 )
 ##############################################
 
-# L3 IO inner tracks
-tpToL3IOTkAssociation = MABHhlt.clone(
-    tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
-    UseTracker = True,
-    UseMuon = False
-)
-
 # L2 standalone muon seeds
 tpToL2SeedAssociation = MABHhlt.clone(
     tracksTag = "muonL2SeedTracks",
@@ -204,14 +197,12 @@ tpToL2MuonAssociation = MABHhlt.clone(
     UseMuon = True
 )
 
-from HLTrigger.Configuration.HLT_75e33.modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST
-if L3IOFIRST:
-    # L2 muons to reuse (in workflow where IO is done first and OI as a second pass)
-    tpToL2MuonToReuseAssociation = MABHhlt.clone(
-        tracksTag = 'phase2L3FilteredObjects',
-        UseTracker = False,
-        UseMuon = True
-    )
+# L3 IO inner tracks
+tpToL3IOTkAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
+    UseTracker = True,
+    UseMuon = False
+)
 
 # L3 OI inner tracks
 tpToL3OITkAssociation = MABHhlt.clone(
@@ -219,6 +210,33 @@ tpToL3OITkAssociation = MABHhlt.clone(
     UseTracker = True,
     UseMuon = False
 )
+
+from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
+
+from HLTrigger.Configuration.HLT_75e33.modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST
+# Associators for L2 Muons to reuse and L3 IO/OI tracks filtered 
+if PHASE2_TAG:
+    if L3IOFIRST:
+        # L2 muons to reuse
+        tpToL2MuonToReuseAssociation = MABHhlt.clone(
+            tracksTag = 'phase2L3FilteredObjects:L2MuToReuse',
+            UseTracker = False,
+            UseMuon = True
+        )
+
+        # L3 IO inner tracks filtered
+        tpToL3IOTkFilteredAssociation = MABHhlt.clone(
+            tracksTag = 'phase2L3FilteredObjects:L3IOTracksFiltered',
+            UseTracker = True,
+            UseMuon = False
+        )
+    else:
+        # L3 OI inner tracks filtered
+        tpToL3OITkFilteredAssociation = MABHhlt.clone(
+            tracksTag = 'phase2L3FilteredObjects:L3OITracksFiltered',
+            UseTracker = True,
+            UseMuon = False
+        )
 
 # L3 inner tracks merged
 tpToL3TkMergedAssociation = MABHhlt.clone(

@@ -39,7 +39,7 @@ hltPhase2L3OISeedsFromL2Muons = cms.EDProducer("TSGForOIFromL2",
     pT2 = cms.double(30.0),
     pT3 = cms.double(70.0),
     propagatorName = cms.string('PropagatorWithMaterialParabolicMf'),
-    src = cms.InputTag("phase2L3FilteredObjects") if (L3IOFIRST and PHASE2_TAG) else cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
+    src = cms.InputTag("phase2L3FilteredObjects", "L2MuToReuse") if (L3IOFIRST and PHASE2_TAG) else cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
     tsosDiff1 = cms.double(0.2),
     tsosDiff2 = cms.double(0.02)
 )

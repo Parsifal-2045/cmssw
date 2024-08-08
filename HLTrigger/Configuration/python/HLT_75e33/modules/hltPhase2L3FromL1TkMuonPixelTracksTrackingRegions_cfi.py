@@ -10,7 +10,7 @@ if PHASE2_TAG:
             beamSpot = cms.InputTag("hltOnlineBeamSpot"),
             deltaEta = cms.double(0.035),
             deltaPhi = cms.double(0.02),
-            input = cms.InputTag("l1tTkMuonsGmt") if L3IOFIRST else cms.InputTag("phase2L3FilteredObjects"),
+            input = cms.InputTag("l1tTkMuonsGmt") if L3IOFIRST else cms.InputTag("phase2L3FilteredObjects", "L1TkMuToReuse"),
             maxNRegions = cms.int32(10000),
             maxNVertices = cms.int32(1),
             measurementTrackerName = cms.InputTag(""),

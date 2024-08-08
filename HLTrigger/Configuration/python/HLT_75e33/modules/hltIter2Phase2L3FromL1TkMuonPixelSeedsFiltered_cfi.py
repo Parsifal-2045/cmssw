@@ -7,7 +7,7 @@ from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi im
 
 if PHASE2_TAG:
     hltIter2Phase2L3FromL1TkMuonPixelSeedsFiltered = cms.EDProducer("MuonHLTSeedMVAClassifierPhase2",
-        L1TkMu = cms.InputTag("l1tTkMuonsGmt") if L3IOFIRST else cms.InputTag("phase2L3FilteredObjects"),
+        L1TkMu = cms.InputTag("l1tTkMuonsGmt") if L3IOFIRST else cms.InputTag("phase2L3FilteredObjects", "L1TkMuToReuse"),
         baseScore = cms.double(0.5),
         doSort = cms.bool(True),
         etaEdge = cms.double(1.2),

@@ -10,6 +10,8 @@
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "DataFormats/Math/interface/deltaR.h"
 
+#include <unordered_set>
+
 //#define SELECTOR_DEBUG
 
 #ifdef SELECTOR_DEBUG
@@ -40,9 +42,11 @@ phase2HLTMuonSelectorForL3::phase2HLTMuonSelectorForL3(const edm::ParameterSet& 
       minNhitsPixel_(iConfig.getParameter<int>("MinNhitsPixel")),
       minNhitsTracker_(iConfig.getParameter<int>("MinNhitsTracker")) {
   if (IOFirst_) {
-    produces<reco::TrackCollection>();
+    produces<reco::TrackCollection>("L2MuToReuse");
+    produces<reco::TrackCollection>("L3IOTracksFiltered");
   } else {
-    produces<l1t::TrackerMuonCollection>();
+    produces<l1t::TrackerMuonCollection>("L1TkMuToReuse");
+    produces<reco::TrackCollection>("L3OITracksFiltered");
   }
 }
 
@@ -78,7 +82,11 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
     auto const l2MuonsCollectionH = iEvent.getHandle(l2MuCollectionToken_);
 
     // Output
-    std::unique_ptr<reco::TrackCollection> result = std::make_unique<reco::TrackCollection>();
+    std::unique_ptr<reco::TrackCollection> L2MuToReuse = std::make_unique<reco::TrackCollection>();
+    std::unique_ptr<reco::TrackCollection> L3IOTracksFiltered = std::make_unique<reco::TrackCollection>();
+
+    // Indexes of good L3 Tracks
+    std::unordered_set<size_t> goodL3Indexes;
 
     // Loop on L2 Muons
     for (size_t l2MuIndex = 0; l2MuIndex != l2MuonsCollectionH->size(); ++l2MuIndex) {
@@ -107,6 +115,10 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
               reuseL2 = rejectL3Track(l1TkMuRef, l3TrackRef);
             }
           }
+          if (!reuseL2) {
+            LOG("Filling good quality L3 IO Tracks collection");
+            goodL3Indexes.insert(l3MuIndex);
+          }
         }  // End loop on L3 Tracks
       } else {
         LOG("Found L2 muon without an associated L1TkMu");
@@ -114,12 +126,19 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       LOG("Reuse L2: " << reuseL2);
       if (reuseL2) {
         LOG("Found a L2 to be reused");
-        result->push_back(*l2MuRef);
+        L2MuToReuse->push_back(*l2MuRef);
       }
     }  // End loop on L2 Muons
 
+    // Fill L3 IO Tracks Filtered
+    for (const size_t index : goodL3Indexes) {
+      L3IOTracksFiltered->push_back(*(reco::TrackRef(l3TracksCollectionH, index)));
+    }
+
     LOG("Placing L2 Muons to be reused in the event");
-    iEvent.put(std::move(result));
+    iEvent.put(std::move(L2MuToReuse), "L2MuToReuse");
+    LOG("Placing good quality L3 IO Tracks in the event");
+    iEvent.put(std::move(L3IOTracksFiltered), "L3IOTracksFiltered");
   } else {
     LOG("Selector OI done first, looping over L1Tk muons");
 
@@ -127,7 +146,11 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
     auto const l1TkMuonsCollectionH = iEvent.getHandle(l1TkMuCollToken_);
 
     // Output
-    std::unique_ptr<l1t::TrackerMuonCollection> result = std::make_unique<l1t::TrackerMuonCollection>();
+    std::unique_ptr<l1t::TrackerMuonCollection> L1TkMuToReuse = std::make_unique<l1t::TrackerMuonCollection>();
+    std::unique_ptr<reco::TrackCollection> L3OITracksFiltered = std::make_unique<reco::TrackCollection>();
+
+    // Indexes of good L3 Tracks
+    std::unordered_set<size_t> goodL3Indexes;
 
     // Loop over L1Tk Muons
     for (size_t l1TkMuIndex = 0; l1TkMuIndex != l1TkMuonsCollectionH->size(); ++l1TkMuIndex) {
@@ -149,15 +172,27 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
             reuseL1TkMu = rejectL3Track(l1TkMuRef, l3TrackRef);
           }
         }
+        if (!reuseL1TkMu) {
+          LOG("Filling good quality L3 OI Tracks collection");
+          goodL3Indexes.insert(l3MuIndex);
+        }
       }  // End loop over L3 Tracks
       LOG("Reuse L1TkMu: " << reuseL1TkMu);
       if (reuseL1TkMu) {
         LOG("Found a L1TkMu to be reused");
-        result->push_back(*l1TkMuRef);
+        L1TkMuToReuse->push_back(*l1TkMuRef);
       }
     }  // End loop over L1Tk Muons
+
+    // Fill L3 OI Tracks Filtered
+    for (const size_t index : goodL3Indexes) {
+      L3OITracksFiltered->push_back(*(reco::TrackRef(l3TracksCollectionH, index)));
+    }
+
     LOG("Placing L1Tk Muons to be reused in the event");
-    iEvent.put(std::move(result));
+    iEvent.put(std::move(L1TkMuToReuse), "L1TkMuToReuse");
+    LOG("Placing good quality L3 OI Tracks in the event");
+    iEvent.put(std::move(L3OITracksFiltered), "L3OITracksFiltered");
   }
 }
 

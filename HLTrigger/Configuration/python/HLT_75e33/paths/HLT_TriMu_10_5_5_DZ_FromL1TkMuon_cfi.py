@@ -34,11 +34,11 @@ if PHASE2_TAG :
         +RawToDigiSequence
         +itLocalRecoSequence
         +otLocalRecoSequence
+        +hltPhase2PixelFitterByHelixProjections
+        +hltPhase2PixelTrackFilterByKinematics
         +Phase2HLTMuonsSequence
         +hltL3fL1TkTripleMu533PreFiltered555
         +hltL3fL1TkTripleMu533L3Filtered1055
-        +hltPhase2PixelFitterByHelixProjections
-        +hltPhase2PixelTrackFilterByKinematics
         +hltL3fL1TkTripleMu533L31055DZFiltered0p2
         +HLTEndSequence)
 
