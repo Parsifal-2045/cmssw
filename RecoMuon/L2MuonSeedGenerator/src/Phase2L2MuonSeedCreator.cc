@@ -455,16 +455,22 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
   iEvent.put(std::move(output));
 }
 
-const bool Phase2L2MuonSeedCreator::matchingDtIds(const DTChamberId& stubId, const DTChamberId& segId) const {
-  if (stubId.sector() == 4 or stubId.sector() == 10) {
-    if (stubId.sector() == 4 and (segId.sector() == 4 or segId.sector() == 13)) {
-      return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
+// In DT station 4 the top and bottom sectors are made of two chambers
+// due to material requirements. Online is not split:
+// Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
+const std::vector<DTChamberId> Phase2L2MuonSeedCreator::matchingIds(const DTChamberId& stubId) const {
+  std::vector<DTChamberId> matchingDtIds;
+  matchingDtIds.reserve(2);
+  matchingDtIds.push_back(stubId);
+  if (stubId.station() == 4) {
+    if (stubId.sector() == 4) {
+      matchingDtIds.emplace_back(DTChamberId(stubId.wheel(), stubId.station(), 13));
     }
-    if (stubId.sector() == 10 and (segId.sector() == 10 or segId.sector() == 14)) {
-      return (stubId.wheel() == segId.wheel() and stubId.station() == segId.station());
+    if (stubId.sector() == 10) {
+      matchingDtIds.emplace_back(DTChamberId(stubId.wheel(), stubId.station(), 14));
     }
   }
-  return stubId == segId;
+  return matchingDtIds;
 }
 
 // Pair bestSegIndex, quality for DT segments matching
@@ -478,70 +484,74 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
   unsigned int nHitsThetaBest = 0;
 
   LOG("Matching stub with DT segment");
-  int matchingIds = 0;
-  for (DTRecSegment4DCollection::const_iterator segment = segments.begin(), last = segments.end(); segment != last;
-       ++segment) {
-    DTChamberId segId = segment->chamberId();
-    LOG("Segment DT detId: " << segId << ". RawId: " << segId.rawId());
-    if (!matchingDtIds(stubId, segId)) {
-      continue;  // skip segments with different detIds
-    }
-    ++matchingIds;
+  int nMatchingIds = 0;
 
-    // Global position of the segment
-    GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
+  for (DTChamberId id : matchingIds(stubId)) {
+    DTRecSegment4DCollection::range segmentsInChamber = segments.get(id);
+    for (DTRecSegment4DCollection::const_iterator segment = segmentsInChamber.first;
+         segment != segmentsInChamber.second;
+         ++segment) {
+      ++nMatchingIds;
+      DTChamberId segId = segment->chamberId();
+      LOG("Segment DT detId: " << segId << ". RawId: " << segId.rawId());
 
-    // Check delta phi
-    double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
-    LOG("deltaPhi: " << deltaPhi);
-    if (deltaPhi > matchingPhiWindow_) {
-      continue;
-    }
+      // Global position of the segment
+      GlobalPoint segPos = dtGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
 
-    // Inside phi window -> check hit multiplicity
-    unsigned int nHitsPhi = (segment->hasPhi() ? segment->phiSegment()->recHits().size() : 0);
-    unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
-    LOG("DT found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
-                                       << " hits in phi and " << nHitsTheta << " hits in theta");
+      // Check delta phi
+      double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
+      LOG("deltaPhi: " << deltaPhi);
 
-    if (nHitsPhi == nHitsPhiBest and segment->hasZed()) {
-      // Same phi hit multiplicity -> check delta theta
-      LOG("DT found segment with same hits in phi as previous best (" << nHitsPhiBest << "), checking theta window");
       double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
       LOG("deltaTheta: " << deltaTheta);
 
-      if (deltaTheta > matchingThetaWindow_) {
-        continue;  // skip segments outside theta window
+      if (deltaPhi > matchingPhiWindow_ or deltaTheta > 0.4) {
+        continue;
       }
 
-      LOG("DT found match in deltaTheta: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
-                                           << " hits in phi and " << nHitsTheta << " hits in theta");
+      // Inside phi window -> check hit multiplicity
+      unsigned int nHitsPhi = (segment->hasPhi() ? segment->phiSegment()->recHits().size() : 0);
+      unsigned int nHitsTheta = (segment->hasZed() ? segment->zSegment()->recHits().size() : 0);
+      LOG("DT found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
+                                         << " hits in phi and " << nHitsTheta << " hits in theta");
 
-      // Inside theta window -> check hit multiplicity (theta)
-      if (nHitsTheta > nHitsThetaBest) {
-        // More hits in theta -> update bestSegment and quality
-        LOG("DT found segment with more hits in theta than previous best");
+      if (nHitsPhi == nHitsPhiBest and segment->hasZed()) {
+        // Same phi hit multiplicity -> check delta theta
+        LOG("DT found segment with same hits in phi as previous best (" << nHitsPhiBest << "), checking theta window");
+
+        if (deltaTheta > matchingThetaWindow_) {
+          continue;  // skip segments outside theta window
+        }
+
+        LOG("DT found match in deltaTheta: " << std::distance(segments.begin(), segment) << " with " << nHitsPhi
+                                             << " hits in phi and " << nHitsTheta << " hits in theta");
+
+        // Inside theta window -> check hit multiplicity (theta)
+        if (nHitsTheta > nHitsThetaBest) {
+          // More hits in theta -> update bestSegment and quality
+          LOG("DT found segment with more hits in theta than previous best");
+          bestSegIndex = std::distance(segments.begin(), segment);
+          quality = 2;
+          LOG("DT updating bestSegIndex (nHitsTheta): " << bestSegIndex << " with " << nHitsPhi + nHitsTheta << ">"
+                                                        << nHitsPhiBest + nHitsThetaBest << " total hits and quality "
+                                                        << quality);
+          nHitsThetaBest = nHitsTheta;
+        }
+      } else if (nHitsPhi > nHitsPhiBest) {
+        // More hits in phi -> update bestSegment and quality
+        LOG("DT found segment with more hits in phi than previous best");
         bestSegIndex = std::distance(segments.begin(), segment);
-        quality = 2;
-        LOG("DT updating bestSegIndex (nHitsTheta): " << bestSegIndex << " with " << nHitsPhi + nHitsTheta << ">"
-                                                      << nHitsPhiBest + nHitsThetaBest << " total hits and quality "
-                                                      << quality);
+        quality = 1;
+        LOG("DT updating bestSegIndex (nHitsPhi): " << bestSegIndex << " with " << nHitsPhi << ">" << nHitsPhiBest
+                                                    << " hits in phi, " << nHitsTheta << " hits in theta and quality "
+                                                    << quality);
+        nHitsPhiBest = nHitsPhi;
         nHitsThetaBest = nHitsTheta;
       }
-    } else if (nHitsPhi > nHitsPhiBest) {
-      // More hits in phi -> update bestSegment and quality
-      LOG("DT found segment with more hits in phi than previous best");
-      bestSegIndex = std::distance(segments.begin(), segment);
-      quality = 1;
-      LOG("DT updating bestSegIndex (nHitsPhi): " << bestSegIndex << " with " << nHitsPhi << ">" << nHitsPhiBest
-                                                  << " hits in phi, " << nHitsTheta << " hits in theta and quality "
-                                                  << quality);
-      nHitsPhiBest = nHitsPhi;
-      nHitsThetaBest = nHitsTheta;
-    }
-  }  // End loop on segments
+    }  // End loop on segments
+  }
 
-  LOG("DT looped over " << matchingIds << (matchingIds > 1 ? " segments" : " segment")
+  LOG("DT looped over " << nMatchingIds << (nMatchingIds > 1 ? " segments" : " segment")
                         << " with same DT detId as stub");
 
   if (quality < 0) {
@@ -555,6 +565,18 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
   }
 }
 
+// Match online-level CSCDetIds to offline labels
+const std::vector<CSCDetId> Phase2L2MuonSeedCreator::matchingIds(const CSCDetId& stubId) const {
+  std::vector<CSCDetId> matchingCscIds;
+  matchingCscIds.push_back(stubId);
+
+  if (stubId.station() == 1 and stubId.ring() == 1) {
+    matchingCscIds.emplace_back(CSCDetId(stubId.endcap(), stubId.station(), 4, stubId.chamber()));
+  }
+
+  return matchingCscIds;
+}
+
 // Pair bestSegIndex, quality for CSC segments matching
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSCDetId& stubId,
                                                                        const l1t::MuonStubRef stub,
@@ -565,55 +587,57 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
   unsigned int nHitsBest = 0;
 
   LOG("Matching stub with CSC segment");
-  int matchingIds = 0;
-  for (CSCSegmentCollection::const_iterator segment = segments.begin(), last = segments.end(); segment != last;
-       ++segment) {
-    CSCDetId segId = segment->cscDetId();
-    LOG("Segment CSC detId: " << segId << ". RawId: " << segId.rawId());
-    if (stubId != segId) {
-      continue;  // skip segments with different detIds
-    }
-    ++matchingIds;
+  int nMatchingIds = 0;
+  for (CSCDetId id : matchingIds(stubId)) {
+    CSCSegmentCollection::range segmentsInChamber = segments.get(id);
+    for (CSCSegmentCollection::const_iterator segment = segmentsInChamber.first; segment != segmentsInChamber.second;
+         ++segment) {
+      ++nMatchingIds;
+      CSCDetId segId = segment->cscDetId();
+      LOG("Segment CSC detId: " << segId << ". RawId: " << segId.rawId());
 
-    // Global position of the segment
-    GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
+      // Global position of the segment
+      GlobalPoint segPos = cscGeometry_->idToDet(segId)->toGlobal(segment->localPosition());
 
-    // Check delta phi
-    double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
-    LOG("deltaPhi: " << deltaPhi);
-    if (deltaPhi > matchingPhiWindow_) {
-      continue;  // skip segments outside phi window
-    }
+      // Check delta phi
+      double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
+      LOG("deltaPhi: " << deltaPhi);
 
-    // Inside phi window -> check hit multiplicity
-    unsigned int nHits = segment->nRecHits();
-    LOG("CSC found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHits << " hits");
-
-    if (nHits == nHitsBest) {
-      // Same hit multiplicity -> check delta theta
-      LOG("Found CSC segment with same hits (" << nHitsBest << ") as previous best, checking theta window");
       double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
       LOG("deltaTheta: " << deltaTheta);
 
-      if (deltaTheta > matchingThetaWindow_) {
-        continue;  // skip segments outside theta window
+      if (deltaPhi > matchingPhiWindow_ or deltaTheta > 0.4) {
+        continue;  // skip segments outside phi window
       }
 
-      // Inside theta window -> update bestSegment and quality
-      bestSegIndex = std::distance(segments.begin(), segment);
-      quality = 1;
-      LOG("CSC found match in deltaTheta: " << bestSegIndex << " with " << nHits << " hits and quality " << quality);
-    } else if (nHits > nHitsBest) {
-      // More hits -> update bestSegment and quality
-      bestSegIndex = std::distance(segments.begin(), segment);
-      quality = 2;
-      LOG("Found CSC segment with more hits. Index: " << bestSegIndex << " with " << nHits << ">" << nHitsBest
-                                                      << " hits and quality " << quality);
-      nHitsBest = nHits;
-    }
-  }  // End loop on segments
+      // Inside phi window -> check hit multiplicity
+      unsigned int nHits = segment->nRecHits();
+      LOG("CSC found match in deltaPhi: " << std::distance(segments.begin(), segment) << " with " << nHits << " hits");
 
-  LOG("CSC looped over " << matchingIds << (matchingIds != 1 ? " segments" : " segment")
+      if (nHits == nHitsBest) {
+        // Same hit multiplicity -> check delta theta
+        LOG("Found CSC segment with same hits (" << nHitsBest << ") as previous best, checking theta window");
+
+        if (deltaTheta > matchingThetaWindow_) {
+          continue;  // skip segments outside theta window
+        }
+
+        // Inside theta window -> update bestSegment and quality
+        bestSegIndex = std::distance(segments.begin(), segment);
+        quality = 1;
+        LOG("CSC found match in deltaTheta: " << bestSegIndex << " with " << nHits << " hits and quality " << quality);
+      } else if (nHits > nHitsBest) {
+        // More hits -> update bestSegment and quality
+        bestSegIndex = std::distance(segments.begin(), segment);
+        quality = 2;
+        LOG("Found CSC segment with more hits. Index: " << bestSegIndex << " with " << nHits << ">" << nHitsBest
+                                                        << " hits and quality " << quality);
+        nHitsBest = nHits;
+      }
+    }  // End loop on segments
+  }
+
+  LOG("CSC looped over " << nMatchingIds << (nMatchingIds != 1 ? " segments" : " segment")
                          << " with same CSC detId as stub");
 
   if (quality < 0) {

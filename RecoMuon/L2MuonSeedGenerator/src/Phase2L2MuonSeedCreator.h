@@ -104,9 +104,13 @@ private:
 
   std::string propagatorName_;
 
+  // In DT station 4 the top and bottom sectors are made of two chambers
+  // due to material requirements. Online is not split:
   // Online sector 4 == offline sector 4 or 10, Online sector 10 == offline sector 10 or 14
-  // Chambers are split due to material requirements, online doesn't have the split
-  const bool matchingDtIds(const DTChamberId& stubId, const DTChamberId& segId) const;
+  const std::vector<DTChamberId> matchingIds(const DTChamberId& stubId) const;
+
+  // Match online-level CSCDetIds with offline
+  const std::vector<CSCDetId> matchingIds(const CSCDetId& stubId) const;
 
   // Logic to match L1 stubs to DT segments
   const std::pair<int, int> matchingStubSegment(const DTChamberId& stubId,
