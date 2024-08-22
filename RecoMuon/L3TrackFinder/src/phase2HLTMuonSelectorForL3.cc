@@ -88,7 +88,7 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
     // Indexes of good L3 Tracks
     std::unordered_set<size_t> goodL3Indexes;
 
-    // Loop on L2 Muons
+    // Loop over L2 Muons
     for (size_t l2MuIndex = 0; l2MuIndex != l2MuonsCollectionH->size(); ++l2MuIndex) {
       reco::TrackRef l2MuRef(l2MuonsCollectionH, l2MuIndex);
       bool reuseL2 = true;
@@ -100,35 +100,37 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
 
       // Check validity of cast (actually found a L1TkMu)
       if (l1TkMuRef.isNonnull()) {
-        // Loop on L3 tracks
-        LOG("Looping on L3 tracks");
+        // Loop over L3 tracks
+        LOG("Looping over L3 tracks");
         for (size_t l3MuIndex = 0; l3MuIndex != l3TracksCollectionH->size(); ++l3MuIndex) {
           reco::TrackRef l3TrackRef(l3TracksCollectionH, l3MuIndex);
-
+          bool rejectL3 = true;
+          // Filter L3 Tracks
+          if (applyL3Filters_) {
+            LOG("Checking L3 Track quality");
+            rejectL3 = rejectL3Track(l1TkMuRef, l3TrackRef);
+            if (!rejectL3) {
+              LOG("Adding good quality L3 IO track to filtered collection");
+              goodL3Indexes.insert(l3MuIndex);
+            }
+          }
+          // Check match in dR
           float dR2 = deltaR2(l1TkMuRef->phEta(), l1TkMuRef->phPhi(), l3TrackRef->eta(), l3TrackRef->phi());
           LOG("deltaR2: " << dR2);
           if (dR2 < matchingDr_ * matchingDr_) {
-            reuseL2 = false;
-            // Check L3 quality
-            if (applyL3Filters_) {
-              LOG("Checking L3 Track quality");
-              reuseL2 = rejectL3Track(l1TkMuRef, l3TrackRef);
-            }
+            LOG("Found L2 muon that matches the L3 track");
+            reuseL2 = applyL3Filters_ ? rejectL3 : false;
+            LOG("Reuse L2: " << reuseL2);
           }
-          if (!reuseL2) {
-            LOG("Filling good quality L3 IO Tracks collection");
-            goodL3Indexes.insert(l3MuIndex);
-          }
-        }  // End loop on L3 Tracks
+        }  // End loop over L3 Tracks
       } else {
         LOG("Found L2 muon without an associated L1TkMu");
       }
-      LOG("Reuse L2: " << reuseL2);
       if (reuseL2) {
-        LOG("Found a L2 to be reused");
+        LOG("Found a L2 muon to be reused");
         L2MuToReuse->push_back(*l2MuRef);
       }
-    }  // End loop on L2 Muons
+    }  // End loop over L2 Muons
 
     // Fill L3 IO Tracks Filtered
     for (const size_t index : goodL3Indexes) {
@@ -161,23 +163,25 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       LOG("Looping over L3 tracks");
       for (size_t l3MuIndex = 0; l3MuIndex != l3TracksCollectionH->size(); ++l3MuIndex) {
         reco::TrackRef l3TrackRef(l3TracksCollectionH, l3MuIndex);
-
+        bool rejectL3 = true;
+        // Filter L3 Tracks
+        if (applyL3Filters_) {
+          LOG("Checking L3 Track quality");
+          rejectL3 = rejectL3Track(l1TkMuRef, l3TrackRef);
+          if (!rejectL3) {
+            LOG("Adding good quality L3 OI track to filtered collection");
+            goodL3Indexes.insert(l3MuIndex);
+          }
+        }
+        // Check match in dR
         float dR2 = deltaR2(l1TkMuRef->phEta(), l1TkMuRef->phPhi(), l3TrackRef->eta(), l3TrackRef->phi());
         LOG("deltaR2: " << dR2);
         if (dR2 < matchingDr_ * matchingDr_) {
-          reuseL1TkMu = false;
-          // Check L3 quality
-          if (applyL3Filters_) {
-            LOG("Checking L3 Track quality");
-            reuseL1TkMu = rejectL3Track(l1TkMuRef, l3TrackRef);
-          }
-        }
-        if (!reuseL1TkMu) {
-          LOG("Filling good quality L3 OI Tracks collection");
-          goodL3Indexes.insert(l3MuIndex);
+          LOG("Found L1TkMu that matches the L3 track");
+          reuseL1TkMu = applyL3Filters_ ? rejectL3 : false;
+          LOG("Reuse L1TkMu: " << reuseL1TkMu);
         }
       }  // End loop over L3 Tracks
-      LOG("Reuse L1TkMu: " << reuseL1TkMu);
       if (reuseL1TkMu) {
         LOG("Found a L1TkMu to be reused");
         L1TkMuToReuse->push_back(*l1TkMuRef);
