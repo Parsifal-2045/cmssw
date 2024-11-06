@@ -12,7 +12,6 @@ from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.HLTItLocalRecoSequence_cfi import *
 from ..sequences.HLTMuonlocalrecoSequence_cfi import *
 from ..sequences.HLTOtLocalRecoSequence_cfi import *
-from ..sequences.Phase2HLTL2CosmicMuonsSequence_cfi import *
 
 from ..sequences.Phase2HLTMuonsSequence_cfi import * # includes PHASE2_TAG from HLTrigger/Configuration/python/HLT_75e33/modules/hltL2MuonSeedsFromL1TkMuon_cfi.pyfrom ..sequences.HLTTrackingV61Sequence_cfi import *
 
@@ -25,7 +24,6 @@ if PHASE2_TAG:
                                     +hltPhase2PixelFitterByHelixProjections
                                     +hltPhase2PixelTrackFilterByKinematics
                                     +Phase2HLTMuonsSequence
-                                    #+Phase2HLTL2CosmicMuonsSequence
                                     +hltL3fL1TkSingleMu22L3Filtered50Q
                                     +HLTEndSequence)
 

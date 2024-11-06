@@ -8,7 +8,7 @@ from PhysicsTools.PatAlgos.slimming.prunedGenParticles_cfi import *
 from DPGAnalysis.MuonTools.nano_phase2_muon_trig import *
 
 
-muDPGNanoProducerHLT = cms.Sequence(muLocalRecoProducers
+muDPGNanoProducerHLT = cms.Sequence(muLocalRecoTables
                                     + prunedGenParticles
                                     + finalGenParticles
                                     + genParticleTable

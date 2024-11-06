@@ -42,7 +42,6 @@
 #include "DataFormats/TrajectorySeed/interface/TrajectorySeedCollection.h"
 #include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
 
-
 //
 // class declaration
 //

@@ -288,7 +288,7 @@ protected:
   std::vector<MonitorElement*> h_assocphiB, h_simulphiB;
 
   std::vector<MonitorElement*> h_assocpTO, h_simulpTO;
-  std::vector<MonitorElement*> h_assocphiO,  h_simulphiO;
+  std::vector<MonitorElement*> h_assocphiO, h_simulphiO;
 
   std::vector<MonitorElement*> h_assocpTE, h_simulpTE;
   std::vector<MonitorElement*> h_assocphiE, h_simulphiE;

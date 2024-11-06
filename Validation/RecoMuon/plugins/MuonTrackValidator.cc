@@ -84,20 +84,32 @@ void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooke
                                          maxPt,
                                          setBinLogX));
 
-      h_assocpTB.push_back(ibooker.book1D(
-          "num_assoSimToReco_pT_barrel", "N of associated tracks (simToReco) vs pT - BARREL", nintPt, minPt, maxPt, setBinLogX));
-      h_simulpTB.push_back(
-          ibooker.book1D("num_simul_pT_barrel", "N of simulated tracks vs pT - BARREL", nintPt, minPt, maxPt, setBinLogX));
+      h_assocpTB.push_back(ibooker.book1D("num_assoSimToReco_pT_barrel",
+                                          "N of associated tracks (simToReco) vs pT - BARREL",
+                                          nintPt,
+                                          minPt,
+                                          maxPt,
+                                          setBinLogX));
+      h_simulpTB.push_back(ibooker.book1D(
+          "num_simul_pT_barrel", "N of simulated tracks vs pT - BARREL", nintPt, minPt, maxPt, setBinLogX));
 
-      h_assocpTO.push_back(ibooker.book1D(
-          "num_assoSimToReco_pT_overlap", "N of associated tracks (simToReco) vs pT - OVERLAP", nintPt, minPt, maxPt, setBinLogX));
-      h_simulpTO.push_back(
-          ibooker.book1D("num_simul_pT_overlap", "N of simulated tracks vs pT - OVERLAP", nintPt, minPt, maxPt, setBinLogX));
+      h_assocpTO.push_back(ibooker.book1D("num_assoSimToReco_pT_overlap",
+                                          "N of associated tracks (simToReco) vs pT - OVERLAP",
+                                          nintPt,
+                                          minPt,
+                                          maxPt,
+                                          setBinLogX));
+      h_simulpTO.push_back(ibooker.book1D(
+          "num_simul_pT_overlap", "N of simulated tracks vs pT - OVERLAP", nintPt, minPt, maxPt, setBinLogX));
 
-      h_assocpTE.push_back(ibooker.book1D(
-          "num_assoSimToReco_pT_endcap", "N of associated tracks (simToReco) vs pT - ENCAP", nintPt, minPt, maxPt, setBinLogX));
-      h_simulpTE.push_back(
-          ibooker.book1D("num_simul_pT_endcap", "N of simulated tracks vs pT - ENDCAP", nintPt, minPt, maxPt, setBinLogX));
+      h_assocpTE.push_back(ibooker.book1D("num_assoSimToReco_pT_endcap",
+                                          "N of associated tracks (simToReco) vs pT - ENCAP",
+                                          nintPt,
+                                          minPt,
+                                          maxPt,
+                                          setBinLogX));
+      h_simulpTE.push_back(ibooker.book1D(
+          "num_simul_pT_endcap", "N of simulated tracks vs pT - ENDCAP", nintPt, minPt, maxPt, setBinLogX));
 
       h_recophi.push_back(ibooker.book1D("num_reco_phi", "N of reco track vs phi", nintPhi, minPhi, maxPhi));
       h_assocphi.push_back(ibooker.book1D(
@@ -111,17 +123,29 @@ void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooke
                                           minPhi,
                                           maxPhi));
 
-      h_assocphiB.push_back(ibooker.book1D(
-          "num_assoSimToReco_phi_barrel", "N of associated tracks (simToReco) vs phi - BARREL", nintPhi, minPhi, maxPhi));
-      h_simulphiB.push_back(ibooker.book1D("num_simul_phi_barrel", "N of simulated track vs phi - BARREL", nintPhi, minPhi, maxPhi));
+      h_assocphiB.push_back(ibooker.book1D("num_assoSimToReco_phi_barrel",
+                                           "N of associated tracks (simToReco) vs phi - BARREL",
+                                           nintPhi,
+                                           minPhi,
+                                           maxPhi));
+      h_simulphiB.push_back(
+          ibooker.book1D("num_simul_phi_barrel", "N of simulated track vs phi - BARREL", nintPhi, minPhi, maxPhi));
 
-      h_assocphiO.push_back(ibooker.book1D(
-          "num_assoSimToReco_phi_overlap", "N of associated tracks (simToReco) vs phi - OVERLAP", nintPhi, minPhi, maxPhi));
-      h_simulphiO.push_back(ibooker.book1D("num_simul_phi_overlap", "N of simulated track vs phi - OVERLAP", nintPhi, minPhi, maxPhi));
+      h_assocphiO.push_back(ibooker.book1D("num_assoSimToReco_phi_overlap",
+                                           "N of associated tracks (simToReco) vs phi - OVERLAP",
+                                           nintPhi,
+                                           minPhi,
+                                           maxPhi));
+      h_simulphiO.push_back(
+          ibooker.book1D("num_simul_phi_overlap", "N of simulated track vs phi - OVERLAP", nintPhi, minPhi, maxPhi));
 
-      h_assocphiE.push_back(ibooker.book1D(
-          "num_assoSimToReco_phi_endcap", "N of associated tracks (simToReco) vs phi - ENDCAP", nintPhi, minPhi, maxPhi));
-      h_simulphiE.push_back(ibooker.book1D("num_simul_phi_endcap", "N of simulated track vs phi - ENDCAP", nintPhi, minPhi, maxPhi));
+      h_assocphiE.push_back(ibooker.book1D("num_assoSimToReco_phi_endcap",
+                                           "N of associated tracks (simToReco) vs phi - ENDCAP",
+                                           nintPhi,
+                                           minPhi,
+                                           maxPhi));
+      h_simulphiE.push_back(
+          ibooker.book1D("num_simul_phi_endcap", "N of simulated track vs phi - ENDCAP", nintPhi, minPhi, maxPhi));
 
       h_recohit.push_back(ibooker.book1D("num_reco_hit", "N of reco tracks vs N SimHits", nintNHit, minNHit, maxNHit));
       h_assochit.push_back(ibooker.book1D(
@@ -136,10 +160,10 @@ void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooke
                                           minNHit,
                                           maxNHit));
 
-      
       int bindR{200};
       double mindR{0.0};
-      double maxdR{10.0};;
+      double maxdR{10.0};
+      ;
 
       h_recodR.push_back(ibooker.book1D("num_reco_dR", "N of reco track vs dR", bindR, mindR, maxdR));
       h_assocdR.push_back(
@@ -149,7 +173,7 @@ void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooke
       h_simuldR.push_back(ibooker.book1D("num_simul_dR", "N of simulated tracks vs dR", bindR, mindR, maxdR));
       h_misiddR.push_back(ibooker.book1D(
           "num_chargemisid_dR", "N of associated (simToReco) tracks with charge misID vs dR", bindR, mindR, maxdR));
-          
+
       h_recodxy.push_back(ibooker.book1D("num_reco_dxy", "N of reco track vs dxy", nintDxy, minDxy, maxDxy));
       h_assocdxy.push_back(ibooker.book1D(
           "num_assoSimToReco_dxy", "N of associated tracks (simToReco) vs dxy", nintDxy, minDxy, maxDxy));
@@ -517,14 +541,13 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
       int ats = 0;
       int st = 0;
 
-      std::optional<double> dR = [&]() -> std::optional<double> { 
-        if (tPC.size() == 2)
-        {
+      std::optional<double> dR = [&]() -> std::optional<double> {
+        if (tPC.size() == 2) {
           TrackingParticle::Vector p1 = lhcParametersDefinerTP_->momentum(event, setup, tPC[0]);
           TrackingParticle::Vector p2 = lhcParametersDefinerTP_->momentum(event, setup, tPC[1]);
-          
-          return reco::deltaR(p1,p2);
-        } 
+
+          return reco::deltaR(p1, p2);
+        }
         return {};
       }();
 
@@ -830,8 +853,7 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
           fillPlotNoFlow(h_assoc2pT[w], xptRec);
         }
 
-        if (dR.has_value())
-        {
+        if (dR.has_value()) {
           fillPlotNoFlow(h_recodR[w], *dR);
           if (Track_is_matched) {
             fillPlotNoFlow(h_assoc2pT[w], *dR);
