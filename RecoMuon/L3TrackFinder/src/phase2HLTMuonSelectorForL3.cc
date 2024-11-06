@@ -1,8 +1,6 @@
 /**  \class phase2HLTMuonSelectorForL3
- * 
- *
- *
- *   \author 
+ *   See header file for a description of this class
+ *   \author Luca Ferragina (INFN BO), 2024
  */
 #include "RecoMuon/L3TrackFinder/interface/phase2HLTMuonSelectorForL3.h"
 
@@ -11,21 +9,6 @@
 #include "DataFormats/Math/interface/deltaR.h"
 
 #include <unordered_set>
-
-//#define SELECTOR_DEBUG
-
-#ifdef SELECTOR_DEBUG
-std::mutex myMutex;
-#define LOG(s)                                         \
-  do {                                                 \
-    std::lock_guard<std::mutex> lock(myMutex);         \
-    std::cout << "(" << __LINE__ << ") " << s << '\n'; \
-  } while (false)
-#else
-#define LOG(s) \
-  do {         \
-  } while (false)
-#endif
 
 // Constructor
 phase2HLTMuonSelectorForL3::phase2HLTMuonSelectorForL3(const edm::ParameterSet& iConfig)
@@ -55,7 +38,7 @@ void phase2HLTMuonSelectorForL3::fillDescriptions(edm::ConfigurationDescriptions
   desc.add<edm::InputTag>("l1TkMuons", edm::InputTag("l1tTkMuonsGmt"));
   desc.add<edm::InputTag>("l2MuonsUpdVtx", edm::InputTag("hltL2MuonsFromL1TkMuon", "UpdatedAtVtx"));
   desc.add<edm::InputTag>("l3Tracks", edm::InputTag("hltIter2Phase2L3FromL1TkMuonMerged"));
-  desc.add<bool>("IOFirst", false);
+  desc.add<bool>("IOFirst", true);
   desc.add<double>("matchingDr", 0.02);
   desc.add<bool>("applyL3Filters", true);
   desc.add<int>("MinNhits", 1);
@@ -70,13 +53,13 @@ void phase2HLTMuonSelectorForL3::fillDescriptions(edm::ConfigurationDescriptions
 // IO first -> collection of L2 muons not already matched to a L3 inner track
 // OI first -> collection of L1Tk Muons not matched to a L3 track
 void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
-  const std::string metname = "Muon|RecoMuon|phase2HLTMuonSelectorForL3";
+  const std::string metname = "RecoMuon|phase2HLTMuonSelectorForL3";
 
   // L3 tracks (IO or OI)
   auto l3TracksCollectionH = iEvent.getHandle(l3TrackCollectionToken_);
 
   if (IOFirst_) {
-    LOG("Selector IO done first, looping over L2 muons");
+    LogDebug(metname) << "Inside-Out reconstruction done first, looping over L2 muons";
 
     // L2 Muons collection
     auto const l2MuonsCollectionH = iEvent.getHandle(l2MuCollectionToken_);
@@ -101,33 +84,33 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       // Check validity of cast (actually found a L1TkMu)
       if (l1TkMuRef.isNonnull()) {
         // Loop over L3 tracks
-        LOG("Looping over L3 tracks");
+        LogDebug(metname) << "Looping over L3 tracks";
         for (size_t l3MuIndex = 0; l3MuIndex != l3TracksCollectionH->size(); ++l3MuIndex) {
           reco::TrackRef l3TrackRef(l3TracksCollectionH, l3MuIndex);
           bool rejectL3 = true;
           // Filter L3 Tracks
           if (applyL3Filters_) {
-            LOG("Checking L3 Track quality");
+            LogDebug(metname) << "Checking L3 Track quality";
             rejectL3 = rejectL3Track(l1TkMuRef, l3TrackRef);
             if (!rejectL3) {
-              LOG("Adding good quality L3 IO track to filtered collection");
+              LogDebug(metname) << "Adding good quality L3 IO track to filtered collection";
               goodL3Indexes.insert(l3MuIndex);
             }
           }
           // Check match in dR
           float dR2 = deltaR2(l1TkMuRef->phEta(), l1TkMuRef->phPhi(), l3TrackRef->eta(), l3TrackRef->phi());
-          LOG("deltaR2: " << dR2);
+          LogDebug(metname) << "deltaR2: " << dR2;
           if (dR2 < matchingDr_ * matchingDr_) {
-            LOG("Found L2 muon that matches the L3 track");
+            LogDebug(metname) << "Found L2 muon that matches the L3 track";
             reuseL2 = applyL3Filters_ ? rejectL3 : false;
-            LOG("Reuse L2: " << reuseL2);
+            LogDebug(metname) << "Reuse L2: " << reuseL2;
           }
         }  // End loop over L3 Tracks
       } else {
-        LOG("Found L2 muon without an associated L1TkMu");
+        LogDebug(metname) << "Found L2 muon without an associated L1TkMu";
       }
       if (reuseL2) {
-        LOG("Found a L2 muon to be reused");
+        LogDebug(metname) << "Found a L2 muon to be reused";
         L2MuToReuse->push_back(*l2MuRef);
       }
     }  // End loop over L2 Muons
@@ -137,12 +120,12 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       L3IOTracksFiltered->push_back(*(reco::TrackRef(l3TracksCollectionH, index)));
     }
 
-    LOG("Placing L2 Muons to be reused in the event");
+    LogDebug(metname) << "Placing L2 Muons to be reused in the event";
     iEvent.put(std::move(L2MuToReuse), "L2MuToReuse");
-    LOG("Placing good quality L3 IO Tracks in the event");
+    LogDebug(metname) << "Placing good quality L3 IO Tracks in the event";
     iEvent.put(std::move(L3IOTracksFiltered), "L3IOTracksFiltered");
   } else {
-    LOG("Selector OI done first, looping over L1Tk muons");
+    LogDebug(metname) << "Outside-In reconstruction done first, looping over L1Tk muons";
 
     // L1Tk Muons collection
     auto const l1TkMuonsCollectionH = iEvent.getHandle(l1TkMuCollToken_);
@@ -160,30 +143,30 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       bool reuseL1TkMu = true;
 
       // Loop over L3 tracks
-      LOG("Looping over L3 tracks");
+      LogDebug(metname) << "Looping over L3 tracks";
       for (size_t l3MuIndex = 0; l3MuIndex != l3TracksCollectionH->size(); ++l3MuIndex) {
         reco::TrackRef l3TrackRef(l3TracksCollectionH, l3MuIndex);
         bool rejectL3 = true;
         // Filter L3 Tracks
         if (applyL3Filters_) {
-          LOG("Checking L3 Track quality");
+          LogDebug(metname) << "Checking L3 Track quality";
           rejectL3 = rejectL3Track(l1TkMuRef, l3TrackRef);
           if (!rejectL3) {
-            LOG("Adding good quality L3 OI track to filtered collection");
+            LogDebug(metname) << "Adding good quality L3 OI track to filtered collection";
             goodL3Indexes.insert(l3MuIndex);
           }
         }
         // Check match in dR
         float dR2 = deltaR2(l1TkMuRef->phEta(), l1TkMuRef->phPhi(), l3TrackRef->eta(), l3TrackRef->phi());
-        LOG("deltaR2: " << dR2);
+        LogDebug(metname) << "deltaR2: " << dR2;
         if (dR2 < matchingDr_ * matchingDr_) {
-          LOG("Found L1TkMu that matches the L3 track");
+          LogDebug(metname) << "Found L1TkMu that matches the L3 track";
           reuseL1TkMu = applyL3Filters_ ? rejectL3 : false;
-          LOG("Reuse L1TkMu: " << reuseL1TkMu);
+          LogDebug(metname) << "Reuse L1TkMu: " << reuseL1TkMu;
         }
       }  // End loop over L3 Tracks
       if (reuseL1TkMu) {
-        LOG("Found a L1TkMu to be reused");
+        LogDebug(metname) << "Found a L1TkMu to be reused";
         L1TkMuToReuse->push_back(*l1TkMuRef);
       }
     }  // End loop over L1Tk Muons
@@ -193,14 +176,16 @@ void phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       L3OITracksFiltered->push_back(*(reco::TrackRef(l3TracksCollectionH, index)));
     }
 
-    LOG("Placing L1Tk Muons to be reused in the event");
+    LogDebug(metname) << "Placing L1Tk Muons to be reused in the event";
     iEvent.put(std::move(L1TkMuToReuse), "L1TkMuToReuse");
-    LOG("Placing good quality L3 OI Tracks in the event");
+    LogDebug(metname) << "Placing good quality L3 OI Tracks in the event";
     iEvent.put(std::move(L3OITracksFiltered), "L3OITracksFiltered");
   }
 }
 
 const bool phase2HLTMuonSelectorForL3::rejectL3Track(l1t::TrackerMuonRef l1TkMuRef, reco::TrackRef l3TrackRef) const {
+  const std::string metname = "RecoMuon|phase2HLTMuonSelectorForL3";
+
   bool nHitsCut = l3TrackRef->numberOfValidHits() < minNhits_;
   bool chi2Cut = l3TrackRef->normalizedChi2() > maxNormalizedChi2_;
   bool nHitsMuonsCut = l3TrackRef->hitPattern().numberOfValidMuonHits() < minNhitsMuons_;
@@ -210,14 +195,12 @@ const bool phase2HLTMuonSelectorForL3::rejectL3Track(l1t::TrackerMuonRef l1TkMuR
 
   bool reject = nHitsCut or chi2Cut or nHitsMuonsCut or nHitsPixelCut or nHitsTrackerCut or ptCut;
 
-  LOG("nHits: " << l3TrackRef->numberOfValidHits() << " | chi2: " << l3TrackRef->normalizedChi2()
-                << " | nHitsMuon: " << l3TrackRef->hitPattern().numberOfValidMuonHits()
-                << " | nHitsPixel: " << l3TrackRef->hitPattern().numberOfValidPixelHits()
-                << " | nHitsTracker: " << l3TrackRef->hitPattern().trackerLayersWithMeasurement());
-  LOG("Reject L3 Track: " << reject);
+  LogDebug(metname) << "nHits: " << l3TrackRef->numberOfValidHits() << " | chi2: " << l3TrackRef->normalizedChi2()
+                    << " | nHitsMuon: " << l3TrackRef->hitPattern().numberOfValidMuonHits()
+                    << " | nHitsPixel: " << l3TrackRef->hitPattern().numberOfValidPixelHits()
+                    << " | nHitsTracker: " << l3TrackRef->hitPattern().trackerLayersWithMeasurement();
+  LogDebug(metname) << "Reject L3 Track: " << reject;
   return reject;
 }
-
-#undef SELECTOR_DEBUG
 
 DEFINE_FWK_MODULE(phase2HLTMuonSelectorForL3);

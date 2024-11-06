@@ -3,8 +3,25 @@
 
 /**  \class phase2HLTMuonSelectorForL3
  * 
+ *   Phase-2 L3 selector for Muons
+ *   This module allows to choose whether to perform 
+ *   Inside-Out or Outside-In reconstruction first for L3 Muons, 
+ *   performing the second pass only on candidates that were not
+ *   reconstructed or whose quality was not good enough. Required 
+ *   quality criteria are configurable, the default parameters 
+ *   match the requests of HLT Muon ID. 
+ *   When Inside-Out reconstruction is performed first, the resulting
+ *   L3 Tracks are filtered and geometrically matched with L2
+ *   Standalone Muons. If either the match is unsuccessful, or 
+ *   the L3 track is not of good-enough quality, the associated 
+ *   Standalone Muon will be re-used to seed the Outside-In.
+ *   The Outside-In first approach follows a similar logic by 
+ *   matching the L3 tracks directly with L1 Tracker Muons. 
+ *   Then, when either the match fails or the track is not of 
+ *   good-enough quality, the L1 Tracker Muon is re-used to seed
+ *   the Inside-Out reconstruction.
  *
- *   \author 
+ *   \author Luca Ferragina (INFN BO), 2024
  */
 
 #include "FWCore/Framework/interface/stream/EDProducer.h"
@@ -25,7 +42,6 @@
 #include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeedCollection.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
-
 
 namespace edm {
   class ParameterSet;

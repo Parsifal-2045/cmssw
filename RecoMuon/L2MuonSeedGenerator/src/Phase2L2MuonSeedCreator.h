@@ -2,8 +2,24 @@
 #define RecoMuon_L2MuonSeedCreator_Phase2L2MuonSeedCreator_H
 
 /** \class Phase2L2MuonSeedCreator
- *  
- *
+ * 
+ *  Standalone Muon seeds for Phase-2
+ *  This class takes in input the full L1 Tracker Muon collection
+ *  and the collections of (DT/CSC) segments in the muon chambers.
+ *  For each L1 Tracker Muon, the stubs used to produced it are 
+ *  matched with segments in the muon chambers looking, in order
+ *  at deltaPhi, number of hits, and deltaTheta. All matched segments
+ *  are added to the seed, together with the pT information from the
+ *  tracker muon itself. Specifically for the barrel region and in 
+ *  stations where no stub is found, a simple extrapolation is 
+ *  attempted from nearby stations with a match (e.g no stub found in 
+ *  station 2 attempt to match segments extrapolating from station
+ *  1, 3, and 4 in this order).
+ * 
+ *  The logic allows a single-step extension to seed displaced muons
+ *  (currently not implemented)
+ * 
+ *  \author Luca Ferragina (INFN BO), 2024
  */
 
 #include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeed.h"
