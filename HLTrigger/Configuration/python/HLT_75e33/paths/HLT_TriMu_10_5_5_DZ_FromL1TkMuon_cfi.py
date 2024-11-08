@@ -20,34 +20,16 @@ from ..modules.hltL3fL1TkTripleMu533PreFiltered555_cfi import *
 from ..modules.hltTripleMuon3DR0_cfi import *
 from ..modules.hltTripleMuon3DZ1p0_cfi import *
 
-from ..sequences.Phase2HLTMuonsSequence_cfi import * # includes PHASE2_TAG from HLTrigger/Configuration/python/HLT_75e33/modules/hltL2MuonSeedsFromL1TkMuon_cfi.py
-
-if PHASE2_TAG : 
-    HLT_TriMu_10_5_5_DZ_FromL1TkMuon = cms.Path(HLTBeginSequence
-                                               +hltTripleMuon3DZ1p0
-                                               +hltTripleMuon3DR0
-                                               +HLTRawToDigiSequence
-                                               +HLTItLocalRecoSequence
-                                               +HLTOtLocalRecoSequence
-                                               +hltPhase2PixelFitterByHelixProjections
-                                               +hltPhase2PixelTrackFilterByKinematics
-                                               +Phase2HLTMuonsSequence
-                                               +hltL3fL1TkTripleMu533PreFiltered555
-                                               +hltL3fL1TkTripleMu533L3Filtered1055
-                                               +hltL3fL1TkTripleMu533L31055DZFiltered0p2
-                                               +HLTEndSequence)
-
-else :
-    HLT_TriMu_10_5_5_DZ_FromL1TkMuon = cms.Path(HLTBeginSequence
-                                               +hltTripleMuon3DZ1p0
-                                               +hltTripleMuon3DR0
-                                               +HLTRawToDigiSequence
-                                               +HLTItLocalRecoSequence
-                                               +HLTOtLocalRecoSequence
-                                               +hltPhase2PixelFitterByHelixProjections
-                                               +hltPhase2PixelTrackFilterByKinematics
-                                               +HLTMuonsSequence
-                                               +hltL3fL1TkTripleMu533PreFiltered555
-                                               +hltL3fL1TkTripleMu533L3Filtered1055
-                                               +hltL3fL1TkTripleMu533L31055DZFiltered0p2
-                                               +HLTEndSequence)
+HLT_TriMu_10_5_5_DZ_FromL1TkMuon = cms.Path(HLTBeginSequence
+                                           +hltTripleMuon3DZ1p0
+                                           +hltTripleMuon3DR0
+                                           +HLTRawToDigiSequence
+                                           +HLTItLocalRecoSequence
+                                           +HLTOtLocalRecoSequence
+                                           +hltPhase2PixelFitterByHelixProjections
+                                           +hltPhase2PixelTrackFilterByKinematics
+                                           +HLTMuonsSequence
+                                           +hltL3fL1TkTripleMu533PreFiltered555
+                                           +hltL3fL1TkTripleMu533L3Filtered1055
+                                           +hltL3fL1TkTripleMu533L31055DZFiltered0p2
+                                           +HLTEndSequence)

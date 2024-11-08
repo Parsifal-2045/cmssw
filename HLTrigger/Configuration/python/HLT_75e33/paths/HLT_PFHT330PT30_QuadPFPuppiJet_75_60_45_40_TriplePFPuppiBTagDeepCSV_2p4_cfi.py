@@ -20,46 +20,22 @@ from ..sequences.HLTTrackingV61Sequence_cfi import *
 from ..sequences.HLTLocalrecoSequence_cfi import *
 from ..sequences.HLTRawToDigiSequence_cfi import *
 
-from ..modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
-from ..sequences.Phase2HLTMuonsSequence_cfi import *
-
-if PHASE2_TAG:
-    HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepCSV_2p4 = cms.Path(HLTBeginSequence
-                                                                                      +hltL1SeedsForQuadPuppiJetTripleBtagFilter
-                                                                                      +HLTRawToDigiSequence
-                                                                                      +HLTHgcalLocalRecoSequence
-                                                                                      +HLTLocalrecoSequence
-                                                                                      +HLTTrackingV61Sequence
-                                                                                      +Phase2HLTMuonsSequence
-                                                                                      +HLTParticleFlowSequence
-                                                                                      +HLTAK4PFPuppiJetsReconstruction
-                                                                                      +hltPFPuppiCentralJetQuad30MaxEta2p4
-                                                                                      +hlt1PFPuppiCentralJet75MaxEta2p4
-                                                                                      +hlt2PFPuppiCentralJet60MaxEta2p4
-                                                                                      +hlt3PFPuppiCentralJet45MaxEta2p4
-                                                                                      +hlt4PFPuppiCentralJet40MaxEta2p4
-                                                                                      +hltHtMhtPFPuppiCentralJetsQuadC30MaxEta2p4
-                                                                                      +hltPFPuppiCentralJetsQuad30HT330MaxEta2p4
-                                                                                      +HLTBtagDeepCSVSequencePFPuppiModEta2p4
-                                                                                      +hltBTagPFPuppiDeepCSV0p31Eta2p4TripleEta2p4
-                                                                                      +HLTEndSequence)
-else:
-    HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepCSV_2p4 = cms.Path(HLTBeginSequence
-                                                                                      +hltL1SeedsForQuadPuppiJetTripleBtagFilter
-                                                                                      +HLTRawToDigiSequence
-                                                                                      +HLTHgcalLocalRecoSequence
-                                                                                      +HLTLocalrecoSequence
-                                                                                      +HLTTrackingV61Sequence
-                                                                                      +HLTMuonsSequence
-                                                                                      +HLTParticleFlowSequence
-                                                                                      +HLTAK4PFPuppiJetsReconstruction
-                                                                                      +hltPFPuppiCentralJetQuad30MaxEta2p4
-                                                                                      +hlt1PFPuppiCentralJet75MaxEta2p4
-                                                                                      +hlt2PFPuppiCentralJet60MaxEta2p4
-                                                                                      +hlt3PFPuppiCentralJet45MaxEta2p4
-                                                                                      +hlt4PFPuppiCentralJet40MaxEta2p4
-                                                                                      +hltHtMhtPFPuppiCentralJetsQuadC30MaxEta2p4
-                                                                                      +hltPFPuppiCentralJetsQuad30HT330MaxEta2p4
-                                                                                      +HLTBtagDeepCSVSequencePFPuppiModEta2p4
-                                                                                      +hltBTagPFPuppiDeepCSV0p31Eta2p4TripleEta2p4
-                                                                                      +HLTEndSequence)
+HLT_PFHT330PT30_QuadPFPuppiJet_75_60_45_40_TriplePFPuppiBTagDeepCSV_2p4 = cms.Path(HLTBeginSequence
+                                                                                  +hltL1SeedsForQuadPuppiJetTripleBtagFilter
+                                                                                  +HLTRawToDigiSequence
+                                                                                  +HLTHgcalLocalRecoSequence
+                                                                                  +HLTLocalrecoSequence
+                                                                                  +HLTTrackingV61Sequence
+                                                                                  +HLTMuonsSequence
+                                                                                  +HLTParticleFlowSequence
+                                                                                  +HLTAK4PFPuppiJetsReconstruction
+                                                                                  +hltPFPuppiCentralJetQuad30MaxEta2p4
+                                                                                  +hlt1PFPuppiCentralJet75MaxEta2p4
+                                                                                  +hlt2PFPuppiCentralJet60MaxEta2p4
+                                                                                  +hlt3PFPuppiCentralJet45MaxEta2p4
+                                                                                  +hlt4PFPuppiCentralJet40MaxEta2p4
+                                                                                  +hltHtMhtPFPuppiCentralJetsQuadC30MaxEta2p4
+                                                                                  +hltPFPuppiCentralJetsQuad30HT330MaxEta2p4
+                                                                                  +HLTBtagDeepCSVSequencePFPuppiModEta2p4
+                                                                                  +hltBTagPFPuppiDeepCSV0p31Eta2p4TripleEta2p4
+                                                                                  +HLTEndSequence)

@@ -17,40 +17,19 @@ from ..sequences.HLTLocalrecoSequence_cfi import *
 from ..sequences.HLTRawToDigiSequence_cfi import *
 from ..modules.hltL1SeedForDoublePuppiTau_cfi import *
 
-from ..modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
-from ..sequences.Phase2HLTMuonsSequence_cfi import *
-
-if PHASE2_TAG:
-    HLT_DoubleMediumDeepTauPFTauHPS35_eta2p1 = cms.Path(HLTBeginSequence
-                                                       +hltL1SeedForDoublePuppiTau
-                                                       +hltPreDoublePFTauHPS
-                                                       +HLTRawToDigiSequence
-                                                       +HLTHgcalLocalRecoSequence
-                                                       +HLTLocalrecoSequence
-                                                       +HLTTrackingV61Sequence
-                                                       +Phase2HLTMuonsSequence
-                                                       +HLTParticleFlowSequence
-                                                       +HLTAK4PFJetsReconstruction
-                                                       +hltAK4PFJetsForTaus
-                                                       +HLTPFTauHPS
-                                                       +HLTHPSDeepTauPFTauSequence
-                                                       +hltHpsSelectedPFTausMediumDitauWPDeepTau
-                                                       +hltHpsDoublePFTau35MediumDitauWPDeepTau
-                                                       +HLTEndSequence)
-else:
-    HLT_DoubleMediumDeepTauPFTauHPS35_eta2p1 = cms.Path(HLTBeginSequence
-                                                       +hltL1SeedForDoublePuppiTau
-                                                       +hltPreDoublePFTauHPS
-                                                       +HLTRawToDigiSequence
-                                                       +HLTHgcalLocalRecoSequence
-                                                       +HLTLocalrecoSequence
-                                                       +HLTTrackingV61Sequence
-                                                       +HLTMuonsSequence
-                                                       +HLTParticleFlowSequence
-                                                       +HLTAK4PFJetsReconstruction
-                                                       +hltAK4PFJetsForTaus
-                                                       +HLTPFTauHPS
-                                                       +HLTHPSDeepTauPFTauSequence
-                                                       +hltHpsSelectedPFTausMediumDitauWPDeepTau
-                                                       +hltHpsDoublePFTau35MediumDitauWPDeepTau
-                                                       +HLTEndSequence)
+HLT_DoubleMediumDeepTauPFTauHPS35_eta2p1 = cms.Path(HLTBeginSequence
+                                                   +hltL1SeedForDoublePuppiTau
+                                                   +hltPreDoublePFTauHPS
+                                                   +HLTRawToDigiSequence
+                                                   +HLTHgcalLocalRecoSequence
+                                                   +HLTLocalrecoSequence
+                                                   +HLTTrackingV61Sequence
+                                                   +HLTMuonsSequence
+                                                   +HLTParticleFlowSequence
+                                                   +HLTAK4PFJetsReconstruction
+                                                   +hltAK4PFJetsForTaus
+                                                   +HLTPFTauHPS
+                                                   +HLTHPSDeepTauPFTauSequence
+                                                   +hltHpsSelectedPFTausMediumDitauWPDeepTau
+                                                   +hltHpsDoublePFTau35MediumDitauWPDeepTau
+                                                   +HLTEndSequence)

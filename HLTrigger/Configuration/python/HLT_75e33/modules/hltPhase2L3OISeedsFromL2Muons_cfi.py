@@ -1,9 +1,5 @@
 import FWCore.ParameterSet.Config as cms
 
-from ..modules.Phase2HLTMuonSelectorForL3_cfi import L3IOFIRST # imported from HLTrigger/Configuration/python/HLT_75e33/modules/Phase2HLTMuonSelectorForL3_cfi.py
-
-from HLTrigger.Configuration.HLT_75e33.modules.hltL2MuonSeedsFromL1TkMuon_cfi import PHASE2_TAG
-
 hltPhase2L3OISeedsFromL2Muons = cms.EDProducer("TSGForOIFromL2",
     MeasurementTrackerEvent = cms.InputTag("hltMeasurementTrackerEvent"),
     SF1 = cms.double(3.0),
@@ -39,7 +35,11 @@ hltPhase2L3OISeedsFromL2Muons = cms.EDProducer("TSGForOIFromL2",
     pT2 = cms.double(30.0),
     pT3 = cms.double(70.0),
     propagatorName = cms.string('PropagatorWithMaterialParabolicMf'),
-    src = cms.InputTag("phase2L3FilteredObjects", "L2MuToReuse") if (L3IOFIRST and PHASE2_TAG) else cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
+    src = cms.InputTag("hltL2MuonsFromL1TkMuon","UpdatedAtVtx"),
     tsosDiff1 = cms.double(0.2),
     tsosDiff2 = cms.double(0.02)
 )
+
+from Configuration.ProcessModifiers.phase2Muon_cff import phase2Muon, L3IOFIRST
+if L3IOFIRST:
+    phase2Muon.toModify(hltPhase2L3OISeedsFromL2Muons, src = cms.InputTag("phase2L3FilteredObjects", "L2MuToReuse"))

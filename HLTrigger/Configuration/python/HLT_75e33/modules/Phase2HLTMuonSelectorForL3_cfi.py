@@ -1,6 +1,5 @@
 import FWCore.ParameterSet.Config as cms
-
-L3IOFIRST = True
+from Configuration.ProcessModifiers.phase2Muon_cff import L3IOFIRST
 
 phase2L3FilteredObjects = cms.EDProducer('phase2HLTMuonSelectorForL3',
  l1TkMuons = cms.InputTag("l1tTkMuonsGmt"),
