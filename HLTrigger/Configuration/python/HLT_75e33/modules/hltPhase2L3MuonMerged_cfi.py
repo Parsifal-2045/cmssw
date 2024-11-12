@@ -24,12 +24,8 @@ hltPhase2L3MuonMerged = cms.EDProducer("TrackListMerger",
     writeOnlyTrkQuals = cms.bool(False)
 )
 
-from Configuration.ProcessModifiers.phase2Muon_cff import phase2Muon, L3IOFIRST
-if L3IOFIRST:
-    TracksToMerge = cms.VInputTag("hltPhase2L3OIMuonTrackSelectionHighPurity", cms.InputTag("phase2L3FilteredObjects","L3IOTracksFiltered"))
-else:
-    TracksToMerge = cms.VInputTag(cms.InputTag("phase2L3FilteredObjects","L3OITracksFiltered"), "hltIter2Phase2L3FromL1TkMuonMerged")
+from Configuration.ProcessModifiers.phase2L2AndL3Muons_cff import phase2L2AndL3Muons
+phase2L2AndL3Muons.toModify(hltPhase2L3MuonMerged, TracksToMerge = cms.VInputTag("hltPhase2L3OIMuonTrackSelectionHighPurity", cms.InputTag("phase2L3MuonFilter","L3IOTracksFiltered")))
 
-phase2Muon.toModify(hltPhase2L3MuonMerged, 
-                    TrackProducers = TracksToMerge, 
-                    selectedTrackQuals = TracksToMerge)
+from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3MuonsOIFirst
+(phase2L2AndL3Muons & phase2L3MuonsOIFirst).toModify(hltPhase2L3MuonMerged, TracksToMerge = cms.VInputTag(cms.InputTag("phase2L3MuonFilter","L3OITracksFiltered"), "hltIter2Phase2L3FromL1TkMuonMerged"))

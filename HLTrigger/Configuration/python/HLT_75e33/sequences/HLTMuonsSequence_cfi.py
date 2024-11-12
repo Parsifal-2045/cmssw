@@ -14,27 +14,27 @@ HLTMuonsSequence = cms.Sequence(HLTL2MuonsFromL1TkSequence
                                +HLTIter2Phase2L3FromL1TkSequence
                                +HLTPhase2L3MuonsSequence)
 
-from ..modules.Phase2HLTMuonSelectorForL3_cfi import *
+from ..modules.phase2L3MuonFilter_cfi import *
 
 # The IO first HLT Muons sequence
-Phase2HLTMuonsSequenceIOFirst = cms.Sequence(Phase2HLTL2MuonsFromL1TkSequence
+Phase2HLTMuonsSequenceIOFirst = cms.Sequence(HLTL2MuonsFromL1TkSequence
                                      +HLTPhase2L3FromL1TkSequence
                                      +HLTIter0Phase2L3FromL1TkSequence
                                      +HLTIter2Phase2L3FromL1TkSequence
-                                     +phase2L3FilteredObjects
+                                     +phase2L3MuonFilter
                                      +HLTPhase2L3OISequence
                                      +HLTPhase2L3MuonsSequence)
 # The OI first HLT Muons sequence
-Phase2HLTMuonsSequenceOIFirst = cms.Sequence(Phase2HLTL2MuonsFromL1TkSequence
+Phase2HLTMuonsSequenceOIFirst = cms.Sequence(HLTL2MuonsFromL1TkSequence
                                      +HLTPhase2L3OISequence
-                                     +phase2L3FilteredObjects
+                                     +phase2L3MuonFilter
                                      +HLTPhase2L3FromL1TkSequence
                                      +HLTIter0Phase2L3FromL1TkSequence
                                      +HLTIter2Phase2L3FromL1TkSequence
                                      +HLTPhase2L3MuonsSequence)
 
-from Configuration.ProcessModifiers.phase2Muon_cff import phase2Muon, L3IOFIRST
-if L3IOFIRST :
-    phase2Muon.toReplaceWith(HLTMuonsSequence, Phase2HLTMuonsSequenceIOFirst)
-else:
-    phase2Muon.toReplaceWith(HLTMuonsSequence, Phase2HLTMuonsSequenceOIFirst)
+from Configuration.ProcessModifiers.phase2L2AndL3Muons_cff import phase2L2AndL3Muons
+phase2L2AndL3Muons.toReplaceWith(HLTMuonsSequence, Phase2HLTMuonsSequenceIOFirst)
+
+from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3MuonsOIFirst
+(phase2L2AndL3Muons & phase2L3MuonsOIFirst).toReplaceWith(HLTMuonsSequence, Phase2HLTMuonsSequenceOIFirst)

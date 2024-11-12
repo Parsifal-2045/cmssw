@@ -15,5 +15,5 @@ Phase2HLTL2MuonsFromL1TkSequence = cms.Sequence(HLTMuonlocalrecoSequence
                                                +hltL2MuonSeedsFromL1TkMuon
                                                +hltL2MuonsFromL1TkMuon)
 
-from Configuration.ProcessModifiers.phase2Muon_cff import phase2Muon
-phase2Muon.toReplaceWith(HLTL2MuonsFromL1TkSequence, Phase2HLTL2MuonsFromL1TkSequence)
+from Configuration.ProcessModifiers.phase2L2AndL3Muons_cff import phase2L2AndL3Muons
+phase2L2AndL3Muons.toReplaceWith(HLTL2MuonsFromL1TkSequence, Phase2HLTL2MuonsFromL1TkSequence)

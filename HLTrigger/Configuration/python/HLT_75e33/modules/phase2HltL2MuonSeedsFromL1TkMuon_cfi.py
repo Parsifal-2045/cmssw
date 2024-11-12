@@ -1,6 +1,6 @@
 import FWCore.ParameterSet.Config as cms
 
-Phase2hltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
+phase2HltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
   InputObjects = cms.InputTag('l1tTkMuonsGmt'),
   CSCRecSegmentLabel = cms.InputTag('hltCscSegments'),
   DTRecSegmentLabel = cms.InputTag('hltDt4DSegments'),

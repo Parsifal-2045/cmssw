@@ -23,6 +23,6 @@ hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions = cms.EDProducer("CandidateSee
     )
 )
 
-from Configuration.ProcessModifiers.phase2Muon_cff import phase2Muon, L3IOFIRST
-if not L3IOFIRST:
-    phase2Muon.toModify(hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions.RegionPSet, input = cms.InputTag("phase2L3FilteredObjects", "L1TkMuToReuse"))
+from Configuration.ProcessModifiers.phase2L2AndL3Muons_cff import phase2L2AndL3Muons
+from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3MuonsOIFirst
+(phase2L2AndL3Muons & phase2L3MuonsOIFirst).toModify(hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions.RegionPSet, input = cms.InputTag("phase2L3MuonFilter", "L1TkMuToReuse"))

@@ -21,7 +21,7 @@ hltL2MuonSeedsFromL1TkMuon = cms.EDProducer("L2MuonSeedGeneratorFromL1TkMu",
     UseUnassociatedL1 = cms.bool(False)
 )
 
-Phase2hltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
+phase2HltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
     InputObjects = cms.InputTag('l1tTkMuonsGmt'),
     CSCRecSegmentLabel = cms.InputTag('hltCscSegments'),
     DTRecSegmentLabel = cms.InputTag('hltDt4DSegments'),
@@ -41,5 +41,5 @@ Phase2hltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
     )
 )   
 
-from Configuration.ProcessModifiers.phase2Muon_cff import phase2Muon
-phase2Muon.toReplaceWith(hltL2MuonSeedsFromL1TkMuon, Phase2hltL2MuonSeedsFromL1TkMuon)
+from Configuration.ProcessModifiers.phase2L2AndL3Muons_cff import phase2L2AndL3Muons
+phase2L2AndL3Muons.toReplaceWith(hltL2MuonSeedsFromL1TkMuon, phase2HltL2MuonSeedsFromL1TkMuon)
