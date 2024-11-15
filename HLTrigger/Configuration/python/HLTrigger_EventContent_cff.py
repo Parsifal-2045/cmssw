@@ -396,7 +396,16 @@ HLTDebugFEVT = cms.PSet(
         'keep *_hltScoutingPFPacker_*_*',
         'keep *_hltScoutingPrimaryVertexPacker_*_*',
         'keep *_hltScoutingTrackPacker_*_*',
-        'keep edmTriggerResults_*_*_*'
+        'keep edmTriggerResults_*_*_*',
+        'keep *_hltL2MuonSeedsFromL1TkMuon_*_*',
+        'keep *_hltL2MuonsFromL1TkMuon_*_*',
+        'keep *_hltIter2Phase2L3FromL1TkMuonMerged_*_*',
+        'keep *_hltPhase2L3OIMuonTrackSelectionHighPurity_*_*',
+        'keep *_phase2L3MuonFilter_*_*',
+        'keep *_hltPhase2L3MuonMerged_*_*',
+        'keep *_hltPhase2L3GlbMuon_*_*',
+        'keep *_hltPhase2L3MuonsNoID_*_*',
+        'keep *_hltPhase2L3Muons_*_*'
     ) )
 )
 
