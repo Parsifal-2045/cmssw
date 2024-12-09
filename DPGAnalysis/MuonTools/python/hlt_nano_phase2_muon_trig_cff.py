@@ -71,7 +71,7 @@ hltDtSegmentFlatTable = dtSegmentFlatTableProducer.clone(
             f"? hasZed() ? (zSegment().chi2() / zSegment().degreesOfFreedom()) : {defaults.FLOAT_POS}",
             float,
             doc = "chi2/n.d.o.f. from segments with z view",
-        ),
+        )
     ),
     detIdVariables = cms.PSet(
         wheel = DetIdVar("wheel()", "int16", doc = "wheel  -  [-2:2] range"),
@@ -82,13 +82,13 @@ hltDtSegmentFlatTable = dtSegmentFlatTableProducer.clone(
             "<br />sector 13 used for the second MB4 of sector 4"
             "<br />sector 14 used for the second MB4 of sector 10",
         ),
-        station = DetIdVar("station()", "int16", doc = "station - [1:4] range"),
+        station = DetIdVar("station()", "int16", doc = "station - [1:4] range")
     ),
     globalPosVariables = cms.PSet(
         seg4D_posGlb_phi = GlobGeomVar(
             "phi().value()", doc = "position phi in global coordinates - radians [-pi:pi]"
         ),
-        seg4D_posGlb_eta = GlobGeomVar("eta()", doc = "position eta in global coordinates"),
+        seg4D_posGlb_eta = GlobGeomVar("eta()", doc = "position eta in global coordinates")
     ),
     globalDirVariables = cms.PSet(
         seg4D_dirGlb_phi = GlobGeomVar(
@@ -97,8 +97,8 @@ hltDtSegmentFlatTable = dtSegmentFlatTableProducer.clone(
         ),
         seg4D_dirGlb_eta = GlobGeomVar(
             "eta()", doc = "direction eta in global coordinates"
-        ),
-    ),
+        )
+    )
 )
 
 from DPGAnalysis.MuonTools.cscSegmentFlatTableProducer_cfi import cscSegmentFlatTableProducer
@@ -109,8 +109,51 @@ hltCscSegmentFlatTable = cscSegmentFlatTableProducer.clone(
     doc = "CSC segment information",
     variables = cms.PSet(
         degreesOfFreedom = Var("degreesOfFreedom()", int, doc = "Degrees of freedom of the 4D CSC segment"),
-        nHits = Var("nRecHits()", int, doc = "Number of recHits used to build the segment")
+        nHits = Var("nRecHits()", int, doc = "Number of recHits used to build the segment"),
+        posLoc_x = Var(
+            "localPosition().x()", float, doc = "position x in local coordinates - cm"
+        ),
+        posLoc_y = Var(
+            "localPosition().y()", float, doc = "position y in local coordinates - cm"
+        ),
+        posLoc_z = Var(
+            "localPosition().z()", float, doc = "position z in local coordinates - cm"
+        ),
+        dirLoc_x = Var(
+            "localDirection().x()", float, doc = "direction x in local coordinates"
+        ),
+        dirLoc_y = Var(
+            "localDirection().y()", float, doc = "direction y in local coordinates"
+        ),
+        dirLoc_z = Var(
+            "localDirection().z()", float, doc = "direction z in local coordinates"
+        ),
+        normChi2 = Var(
+            "chi2() / degreesOfFreedom()", float, doc = "chi2/n.d.o.f. for all segments"
+        )
+    ),    
+    detIdVariables = cms.PSet(
+        endcap = DetIdVar("endcap()", int, doc = "Endcap - 1 Forward (+Z), 2 Backward (-Z)"),
+        layer = DetIdVar("layer()", int, doc = "Layer [1:6]"),
+        chamber = DetIdVar("chamber()", int, doc = "Chamber [1:36]"),
+        ring = DetIdVar("ring()", int, doc = "Ring [1:4]"),
+        station = DetIdVar("station()", int, doc = "Station [1-4]")
     ),
+    globalPosVariables = cms.PSet(
+        posGlb_phi = GlobGeomVar(
+            "phi().value()", doc = "position phi in global coordinates - radians [-pi:pi]"
+        ),
+        posGlb_eta = GlobGeomVar("eta()", doc = "position eta in global coordinates")
+    ),
+    globalDirVariables = cms.PSet(
+        dirGlb_phi = GlobGeomVar(
+            "phi().value()",
+            doc = "direction phi in global coordinates - radians [-pi:pi]",
+        ),
+        dirGlb_eta = GlobGeomVar(
+            "eta()", doc = "direction eta in global coordinates"
+        )
+    )
 )
 
 from DPGAnalysis.MuonTools.rpcRecHitFlatTableProducer_cfi import rpcRecHitFlatTableProducer
@@ -136,7 +179,7 @@ hltRpcRecHitFlatTable = rpcRecHitFlatTableProducer.clone(
         ),
         coordZ = Var(
             "localPosition().z()", float, doc = "position z in local coordinates - cm"
-        ),
+        )
     ),
     detIdVariables = cms.PSet(
         region = DetIdVar("region()", "int16", doc = "0: barrel, +-1: endcap"),
@@ -173,7 +216,7 @@ hltRpcRecHitFlatTable = rpcRecHitFlatTableProducer.clone(
             "<br />each chamber is divided along the strip direction",
         ),
         rawId = DetIdVar("rawId()", "uint", doc = "unique detector unit ID"),
-    ),
+    )
 )
 
 from DPGAnalysis.MuonTools.gemRecHitFlatTableProducer_cfi import gemRecHitFlatTableProducer
@@ -203,7 +246,7 @@ hltGemRecHitFlatTable = gemRecHitFlatTableProducer.clone(
         ),
         loc_z = Var(
             "localPosition().z()", float, doc = "hit position z in local coordinates - cm"
-        ),
+        )
     ),
     detIdVariables = cms.PSet(
         roll = DetIdVar(
@@ -229,7 +272,7 @@ hltGemRecHitFlatTable = gemRecHitFlatTableProducer.clone(
             "int16",
             doc = "GE11 layer where the hit is reconstructed"
             "<br />(layer1: 1, layer2: 2)",
-        ),
+        )
     ),
     globalPosVariables = cms.PSet(
         g_r = GlobGeomVar("perp()", doc = "hit position r in global coordinates - cm"),
@@ -239,8 +282,8 @@ hltGemRecHitFlatTable = gemRecHitFlatTableProducer.clone(
         ),
         g_x = GlobGeomVar("x()", doc = "hit position x in global coordinates - cm"),
         g_y = GlobGeomVar("y()", doc = "hit position y in global coordinates - cm"),
-        g_z = GlobGeomVar("z()", doc = "hit position z in global coordinates - cm"),
-    ),
+        g_z = GlobGeomVar("z()", doc = "hit position z in global coordinates - cm")
+    )
 )
 
 from DPGAnalysis.MuonTools.gemSegmentFlatTableProducer_cfi import gemSegmentFlatTableProducer
@@ -269,7 +312,7 @@ hltGemSegmentFlatTable = gemSegmentFlatTableProducer.clone(
         ),
         dirLoc_z = Var(
             "localDirection().z()", float, doc = "direction z in local coordinates"
-        ),
+        )
     ),
     detIdVariables = cms.PSet(
         region = DetIdVar(
@@ -287,7 +330,7 @@ hltGemSegmentFlatTable = gemSegmentFlatTableProducer.clone(
             "int16",
             doc = "GE11 superchamber where the hit is reconstructed"
             "<br />(chambers numbered from 0 to 35)",
-        ),
+        )
     ),
     globalPosVariables = cms.PSet(
         posGlb_x = GlobGeomVar("x()", doc = "position x in global coordinates - cm"),
@@ -296,15 +339,15 @@ hltGemSegmentFlatTable = gemSegmentFlatTableProducer.clone(
         posGlb_phi = GlobGeomVar(
             "phi().value()", doc = "position phi in global coordinates - radians [-pi:pi]"
         ),
-        posGlb_eta = GlobGeomVar("eta()", doc = "position eta in global coordinates"),
+        posGlb_eta = GlobGeomVar("eta()", doc = "position eta in global coordinates")
     ),
     globalDirVariables = cms.PSet(
         dirGlb_phi = GlobGeomVar(
             "phi().value()",
             doc = "direction phi in global coordinates - radians [-pi:pi]",
         ),
-        dirGlb_eta = GlobGeomVar("eta()", doc = "direction eta in global coordinates"),
-    ),
+        dirGlb_eta = GlobGeomVar("eta()", doc = "direction eta in global coordinates")
+    )
 )
 
 hltLocalRecoMuon_seq = cms.Sequence(
@@ -328,8 +371,8 @@ l1TkMuTable = cms.EDProducer(
         eta = Var("phEta()", "float", doc = "#eta"),
         phi = Var("phPhi()", "float", doc = "#phi (rad)"),
         dXY = Var("phD0()", "float", doc = "dXY (cm)"),
-        dZ = Var("phZ0()", "float", doc = "dZ (cm)"),
-    ),
+        dZ = Var("phZ0()", "float", doc = "dZ (cm)")
+    )
 )
 
 # L2 offline seeds
@@ -352,8 +395,8 @@ l2SeedTable = cms.EDProducer(
             "startingState().parameters().position().y()",
             "float",
             doc = "local y of the seed",
-        ),
-    ),
+        )
+    )
 )
 
 # L2 seeds from L1Tk Muons
@@ -376,8 +419,8 @@ l2SeedFromL1TkMuonTable = cms.EDProducer(
             "startingState().parameters().position().y()",
             "float",
             doc = "local y of the seed",
-        ),
-    ),
+        )
+    )
 )
 
 # L2 standalone muons
@@ -397,8 +440,8 @@ l2MuTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L2 standalone muons updated at vertex
@@ -418,8 +461,8 @@ l2MuTableVtx = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 IO inner tracks
@@ -439,8 +482,8 @@ l3TkIOTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 OI inner tracks
@@ -460,8 +503,8 @@ l3TkOITable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 tracks merged
@@ -481,8 +524,8 @@ l3TkMergedTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 global muons
@@ -502,8 +545,8 @@ l3GlbMuTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 Muons no ID (tracks)
@@ -523,8 +566,8 @@ l3MuTkNoIdTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 Muons ID (tracks)
@@ -544,8 +587,8 @@ l3MuTkIdTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L2 muons to reuse (IO first)
@@ -563,8 +606,8 @@ l2MuToReuseTable = cms.EDProducer(
         dXY = Var("dxy()", "float", doc = "dXY (cm)"),
         dZ = Var("dz()", "float", doc = "dZ (cm)"),
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L3 IO tracks filtered (IO first)
@@ -584,8 +627,8 @@ l3TkIOFilteredTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # L1 Tracker Muons to reuse (OI first)
@@ -601,8 +644,8 @@ l1TkMuToReuseTable = cms.EDProducer(
         eta = Var("phEta()", "float", doc = "#eta"),
         phi = Var("phPhi()", "float", doc = "#phi (rad)"),
         dXY = Var("phD0()", "float", doc = "dXY (cm)"),
-        dZ = Var("phZ0()", "float", doc = "dZ (cm)"),
-    ),
+        dZ = Var("phZ0()", "float", doc = "dZ (cm)")
+    )
 )
 
 # L3 OI tracks filtered (OI first)
@@ -622,8 +665,8 @@ l3TkOIFilteredTable = cms.EDProducer(
         t0 = Var("t0()", "float", doc = "t0 (ns)"),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
-    ),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+    )
 )
 
 # The muon trigger producers sequence
@@ -699,8 +742,8 @@ phase2L2AndL3Muons.toModify(
             "startingState().parameters().position().y()",
             "float",
             doc = "local y of the seed",
-        ),
-    ),
+        )
+    )
 )
 phase2L2AndL3Muons.toReplaceWith(
     hltMuonTriggerProducers, hltMuonTriggerProducersIOFirst
@@ -726,8 +769,8 @@ from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3Muon
             "startingState().parameters().position().y()",
             "float",
             doc = "local y of the seed",
-        ),
-    ),
+        )
+    )
 )
 (phase2L2AndL3Muons & phase2L3MuonsOIFirst).toReplaceWith(
     hltMuonTriggerProducers, hltMuonTriggerProducersOIFirst
