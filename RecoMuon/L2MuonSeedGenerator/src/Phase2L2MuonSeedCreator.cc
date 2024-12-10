@@ -30,56 +30,59 @@
 #include "FWCore/Framework/interface/ESHandle.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 
-#include "CLHEP/Vector/ThreeVector.h"
+#include <vdt/atan.h>
+#include <vdt/exp.h>
+#include <vdt/sincos.h>
 
 #include <vector>
 
 // Constructor
 Phase2L2MuonSeedCreator::Phase2L2MuonSeedCreator(const edm::ParameterSet& pset)
-    : l1TkMuCollToken_{consumes(pset.getParameter<edm::InputTag>("InputObjects"))},
-      cscSegmentCollToken_{consumes(pset.getParameter<edm::InputTag>("CSCRecSegmentLabel"))},
-      dtSegmentCollToken_{consumes(pset.getParameter<edm::InputTag>("DTRecSegmentLabel"))},
+    : l1TkMuCollToken_{consumes(pset.getParameter<edm::InputTag>("inputObjects"))},
+      cscSegmentCollToken_{consumes(pset.getParameter<edm::InputTag>("cscRecSegmentLabel"))},
+      dtSegmentCollToken_{consumes(pset.getParameter<edm::InputTag>("dtRecSegmentLabel"))},
       cscGeometryToken_{esConsumes<CSCGeometry, MuonGeometryRecord>()},
       dtGeometryToken_{esConsumes<DTGeometry, MuonGeometryRecord>()},
       magneticFieldToken_{esConsumes<MagneticField, IdealMagneticFieldRecord>()},
-      minMomentum_{pset.getParameter<double>("MinPL1Tk")},
-      maxMomentum_{pset.getParameter<double>("MaxPL1Tk")},
+      minMomentum_{pset.getParameter<double>("minPL1Tk")},
+      maxMomentum_{pset.getParameter<double>("maxPL1Tk")},
       matchingPhiWindow_{pset.getParameter<double>("stubMatchDPhi")},
       matchingThetaWindow_{pset.getParameter<double>("stubMatchDTheta")},
       extrapolationDeltaPhiClose_{pset.getParameter<double>("extrapolationWindowClose")},
       extrapolationDeltaPhiFar_{pset.getParameter<double>("extrapolationWindowFar")},
       maxEtaBarrel_{pset.getParameter<double>("maximumEtaBarrel")},
       maxEtaOverlap_{pset.getParameter<double>("maximumEtaOverlap")},
-      propagatorName_{pset.getParameter<string>("Propagator")} {
+      propagatorName_{pset.getParameter<string>("propagator")} {
   // Service parameters
-  edm::ParameterSet serviceParameters = pset.getParameter<edm::ParameterSet>("ServiceParameters");
+  edm::ParameterSet serviceParameters = pset.getParameter<edm::ParameterSet>("serviceParameters");
   // Services
   service_ = std::make_unique<MuonServiceProxy>(serviceParameters, consumesCollector());
-  estimator_ = std::make_unique<Chi2MeasurementEstimator>(10000.);
+  estimator_ = std::make_unique<Chi2MeasurementEstimator>(pset.getParameter<double>("estimatorMaxChi2"));
   produces<L2MuonTrajectorySeedCollection>();
 }
 
 void Phase2L2MuonSeedCreator::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
-  desc.add<edm::InputTag>("InputObjects", edm::InputTag("l1tTkMuonsGmt"));
-  desc.add<edm::InputTag>("CSCRecSegmentLabel", edm::InputTag("hltCscSegments"));
-  desc.add<edm::InputTag>("DTRecSegmentLabel", edm::InputTag("hltDt4DSegments"));
-  desc.add<double>("MinPL1Tk", 3.5);
-  desc.add<double>("MaxPL1Tk", 200);
+  desc.add<edm::InputTag>("inputObjects", edm::InputTag("l1tTkMuonsGmt"));
+  desc.add<edm::InputTag>("cscRecSegmentLabel", edm::InputTag("hltCscSegments"));
+  desc.add<edm::InputTag>("dtRecSegmentLabel", edm::InputTag("hltDt4DSegments"));
+  desc.add<double>("minPL1Tk", 3.5);
+  desc.add<double>("maxPL1Tk", 200);
   desc.add<double>("stubMatchDPhi", 0.05);
   desc.add<double>("stubMatchDTheta", 0.1);
   desc.add<double>("extrapolationWindowClose", 0.1);
   desc.add<double>("extrapolationWindowFar", 0.05);
   desc.add<double>("maximumEtaBarrel", 0.7);
   desc.add<double>("maximumEtaOverlap", 1.3);
-  desc.add<string>("Propagator", "SteppingHelixPropagatorAny");
+  desc.add<string>("propagator", "SteppingHelixPropagatorAny");
 
   // Service parameters
   edm::ParameterSetDescription psd0;
   psd0.addUntracked<std::vector<std::string>>("Propagators", {"SteppingHelixPropagatorAny"});
   psd0.add<bool>("RPCLayers", true);
   psd0.addUntracked<bool>("UseMuonNavigation", true);
-  desc.add<edm::ParameterSetDescription>("ServiceParameters", psd0);
+  desc.add<edm::ParameterSetDescription>("serviceParameters", psd0);
+  desc.add<double>("estimatorMaxChi2", 1000.0);
   descriptions.add("Phase2L2MuonSeedCreator", desc);
 }
 
@@ -106,14 +109,25 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
     l1t::TrackerMuonRef l1TkMuRef(l1TkMuColl, l1TkMuIndex);
 
     // Physical info of L1TkMu
-    float pt = l1TkMuRef->phPt();
+    const float pt = l1TkMuRef->phPt();
     if (pt < minMomentum_) {
       continue;
     }
-    float eta = l1TkMuRef->phEta();
-    float theta = 2 * std::atan(std::exp(-eta));
-    float phi = l1TkMuRef->phPhi();
-    int charge = l1TkMuRef->phCharge();
+    const float eta = l1TkMuRef->phEta();
+    const float phi = l1TkMuRef->phPhi();
+    const int charge = l1TkMuRef->phCharge();
+
+    // Calculate theta once to use it for stub-segment matching
+    // theta == 2 * atan(e^(-eta))
+    const float theta = 2 * vdt::fast_atanf(vdt::fast_expf(-eta));
+
+    // Precompute trig functions for theta
+    float sinTheta, cosTheta;
+    vdt::fast_sincosf(theta, sinTheta, cosTheta);
+
+    // Precompute trig functions for phi
+    float sinPhi, cosPhi;
+    vdt::fast_sincosf(phi, sinPhi, cosPhi);
 
     LogDebug(metname) << "L1TKMu pT: " << pt << ", eta: " << eta << ", phi: " << phi;
     Type muonType = overlap;
@@ -165,7 +179,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                                            stub->phiRegion() + 1);  // sector, online to offline
           LogDebug(metname) << "Stub DT detId: " << stubId << ". RawId: " << stubId.rawId();
 
-          auto& tmpMatch = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+          auto& tmpMatch = matchingStubSegment(stubId, stub, dtSegments, theta);
 
           // Found a match -> update matching info
           if (tmpMatch.first != -1) {
@@ -196,7 +210,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                                      stub->phiRegion());               // chamber
           LogDebug(metname) << "Stub CSC detId: " << stubId << ". RawId: " << stubId.rawId();
 
-          auto& tmpMatch = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+          auto& tmpMatch = matchingStubSegment(stubId, stub, cscSegments, theta);
 
           // Found a match -> update matching info
           if (tmpMatch.first != -1) {
@@ -225,7 +239,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                                              stub->phiRegion() + 1);  // sector, online to offline
             LogDebug(metname) << "Stub DT detId: " << stubId << ". RawId: " << stubId.rawId();
 
-            auto& tmpMatch = matchingStubSegment(stubId, stub, dtSegments, l1TkMuRef);
+            auto& tmpMatch = matchingStubSegment(stubId, stub, dtSegments, theta);
             totalBarrelQuality += tmpMatch.second;
 
             // Found a match -> update matching info
@@ -254,7 +268,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
                                        stub->phiRegion());               // chamber
             LogDebug(metname) << "Stub CSC detId: " << stubId << ". RawId: " << stubId.rawId();
 
-            auto& tmpMatch = matchingStubSegment(stubId, stub, cscSegments, l1TkMuRef);
+            auto& tmpMatch = matchingStubSegment(stubId, stub, cscSegments, theta);
             totalEndcapQuality += tmpMatch.second;
 
             // Found a match -> update matching info
@@ -322,10 +336,6 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
       const DetLayer* detLayer = nullptr;
       float radius = 0.;
 
-      CLHEP::Hep3Vector vec(0., 1., 0.);
-      vec.setTheta(theta);
-      vec.setPhi(phi);
-
       DetId propagateToId;
 
       edm::OwnVector<TrackingRecHit> container;
@@ -337,7 +347,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         detLayer = service_->detLayerGeometry()->idToLayer(propagateToId);
         const BoundSurface* sur = &(detLayer->surface());
         const BoundCylinder* bc = dynamic_cast<const BoundCylinder*>(sur);
-        radius = std::abs(bc->radius() / sin(theta));
+        radius = std::abs(bc->radius() / sinTheta);
 
         // Propagate matched segments to the seed and try to extrapolate in unmatched chambers
         std::vector<int> matchedStations;
@@ -366,7 +376,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         // ME2
         propagateToId = eta > 0 ? CSCDetId(1, 2, 0, 0, 0) : CSCDetId(2, 2, 0, 0, 0);
         detLayer = service_->detLayerGeometry()->idToLayer(propagateToId);
-        radius = std::abs(detLayer->position().z() / cos(theta));
+        radius = std::abs(detLayer->position().z() / cosTheta);
 
         // Fill seed with matched segment(s)
         for (auto& [detId, matchingPair] : matchesInEndcap) {
@@ -374,10 +384,9 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
           container.push_back(cscSegments[matchingPair.first]);
         }
       }
-      vec.setMag(radius);
       // Get Global point and direction
-      GlobalPoint pos(vec.x(), vec.y(), vec.z());
-      GlobalVector mom(pt * cos(phi), pt * sin(phi), pt * cos(theta) / sin(theta));
+      GlobalPoint pos(radius * cosPhi * sinTheta, radius * sinPhi * sinTheta, radius * cosTheta);
+      GlobalVector mom(pt * cosPhi, pt * sinPhi, pt * cosTheta / sinTheta);
 
       GlobalTrajectoryParameters param(pos, mom, charge, &*magneticField_);
 
@@ -407,8 +416,7 @@ void Phase2L2MuonSeedCreator::produce(edm::Event& iEvent, const edm::EventSetup&
         // Propagation to MB2 failed, fallback to ME2 (might be an overlap edge case)
         LogDebug(metname) << "Warning: detsWithStates collection is empty for a barrel collection. Falling back to ME2";
         // Get ME2 DetLayer
-        DetId fallback_id;
-        theta < Geom::pi() / 2. ? fallback_id = CSCDetId(1, 2, 0, 0, 0) : fallback_id = CSCDetId(2, 2, 0, 0, 0);
+        DetId fallback_id = eta > 0 ? CSCDetId(1, 2, 0, 0, 0) : CSCDetId(2, 2, 0, 0, 0);
         const DetLayer* ME2DetLayer = service_->detLayerGeometry()->idToLayer(fallback_id);
         // Trajectory state on ME2 DetLayer
         tsos = service_->propagator(propagatorName_)->propagate(state, ME2DetLayer->surface());
@@ -465,7 +473,7 @@ const std::vector<DTChamberId> Phase2L2MuonSeedCreator::matchingIds(const DTCham
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTChamberId& stubId,
                                                                        const l1t::MuonStubRef stub,
                                                                        const DTRecSegment4DCollection& segments,
-                                                                       const l1t::TrackerMuonRef l1TkMuRef) const {
+                                                                       const float l1TkMuTheta) const {
   const std::string metname = "RecoMuon|Phase2L2MuonSeedCreator";
 
   int bestSegIndex = -1;
@@ -492,7 +500,7 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const DTC
       double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
       LogDebug(metname) << "deltaPhi: " << deltaPhi;
 
-      double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
+      double deltaTheta = std::abs(segPos.theta() - l1TkMuTheta);
       LogDebug(metname) << "deltaTheta: " << deltaTheta;
 
       // Skip segments outside phi window or very far in the theta view
@@ -573,7 +581,7 @@ const std::vector<CSCDetId> Phase2L2MuonSeedCreator::matchingIds(const CSCDetId&
 const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSCDetId& stubId,
                                                                        const l1t::MuonStubRef stub,
                                                                        const CSCSegmentCollection& segments,
-                                                                       const l1t::TrackerMuonRef l1TkMuRef) const {
+                                                                       const float l1TkMuTheta) const {
   const std::string metname = "RecoMuon|Phase2L2MuonSeedCreator";
 
   int bestSegIndex = -1;
@@ -597,10 +605,14 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::matchingStubSegment(const CSC
       double deltaPhi = std::abs(segPos.phi() - stub->offline_coord1());
       LogDebug(metname) << "deltaPhi: " << deltaPhi;
 
-      double deltaTheta = std::abs(segPos.theta() - 2 * std::atan(std::exp(-l1TkMuRef->phEta())));
+      double deltaTheta = std::abs(segPos.theta() - l1TkMuTheta);
       LogDebug(metname) << "deltaTheta: " << deltaTheta;
 
-      if (deltaPhi > matchingPhiWindow_ or deltaTheta > 0.4) {
+      // Theta mainly used in cases where multiple matches are found
+      // to keep only the best one. Still skip segments way outside
+      // a reasonable window
+      const double roughThetaWindow = 0.4;
+      if (deltaPhi > matchingPhiWindow_ or deltaTheta > roughThetaWindow) {
         continue;  // skip segments outside phi window
       }
 
@@ -791,7 +803,11 @@ const std::pair<int, int> Phase2L2MuonSeedCreator::extrapolateMatch(const int be
     double matchingDeltaPhi =
         std::abs(matchId.station() - endingStation) == 1 ? extrapolationDeltaPhiClose_ : extrapolationDeltaPhiFar_;
 
-    if (deltaPhi > matchingDeltaPhi or deltaTheta > 0.4) {
+    // Theta mainly used in cases where multiple matches are found
+    // to keep only the best one. Still skip segments way outside
+    // a reasonable window
+    const double roughThetaWindow = 0.4;
+    if (deltaPhi > matchingDeltaPhi or deltaTheta > roughThetaWindow) {
       continue;
     }
 
