@@ -255,7 +255,7 @@ Phase2tpToL2MuonUpdAssociation = MABHhlt.clone(
 )
 # L3 IO inner tracks
 Phase2tpToL3IOTkAssociation = MABHhlt.clone(
-    tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
+    tracksTag = 'hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity',
     UseTracker = True,
     UseMuon = False
 )

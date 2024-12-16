@@ -37,7 +37,7 @@ void Phase2HLTMuonSelectorForL3::fillDescriptions(edm::ConfigurationDescriptions
   edm::ParameterSetDescription desc;
   desc.add<edm::InputTag>("l1TkMuons", edm::InputTag("l1tTkMuonsGmt"));
   desc.add<edm::InputTag>("l2MuonsUpdVtx", edm::InputTag("hltL2MuonsFromL1TkMuon", "UpdatedAtVtx"));
-  desc.add<edm::InputTag>("l3Tracks", edm::InputTag("hltIter2Phase2L3FromL1TkMuonMerged"));
+  desc.add<edm::InputTag>("l3Tracks", edm::InputTag("hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity"));
   desc.add<bool>("IOFirst", true);
   desc.add<double>("matchingDr", 0.02);
   desc.add<bool>("applyL3Filters", true);

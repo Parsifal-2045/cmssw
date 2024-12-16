@@ -7,12 +7,17 @@ from ..sequences.HLTPhase2L3FromL1TkSequence_cfi import *
 from ..sequences.HLTPhase2L3MuonsSequence_cfi import *
 from ..sequences.HLTPhase2L3OISequence_cfi import *
 
+from ..sequences.HLTPhase2PixelTracksSequence_cfi import *
+from ..modules.hltPhase2PixelVertices_cfi import *
+
 HLTMuonsSequence = cms.Sequence(
     HLTL2MuonsFromL1TkSequence
     + HLTPhase2L3OISequence
-    + HLTPhase2L3FromL1TkSequence
+    + HLTPhase2PixelTracksSequence
+    + hltPhase2PixelVertices
+    #+ HLTPhase2L3FromL1TkSequence
     + HLTIter0Phase2L3FromL1TkSequence
-    + HLTIter2Phase2L3FromL1TkSequence
+    #+ HLTIter2Phase2L3FromL1TkSequence
     + HLTPhase2L3MuonsSequence
 )
 

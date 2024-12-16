@@ -30,5 +30,5 @@ hltIter0Phase2L3FromL1TkMuonTrackCutClassifier = cms.EDProducer("TrackCutClassif
     ),
     qualityCuts = cms.vdouble(-0.7, 0.1, 0.7),
     src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
-    vertices = cms.InputTag("hltPhase2L3FromL1TkMuonTrimmedPixelVertices")
+    vertices = cms.InputTag("hltPhase2PixelVertices")
 )

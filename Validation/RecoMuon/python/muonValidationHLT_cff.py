@@ -92,7 +92,7 @@ Phase2l2MuUpdV = MTVhlt.clone(
 # L3 IO inner tracks
 Phase2l3IOTkV = MTVhlt.clone(
     associatormap = 'Phase2tpToL3IOTkAssociation',
-    label = ('hltIter2Phase2L3FromL1TkMuonMerged',),
+    label = ('hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity',),
     muonHistoParameters = trkMuonHistoParameters
 )
 # L3 OI inner tracks

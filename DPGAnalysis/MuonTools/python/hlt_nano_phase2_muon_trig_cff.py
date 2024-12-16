@@ -468,7 +468,7 @@ l2MuTableVtx = cms.EDProducer(
 # L3 IO inner tracks
 l3TkIOTable = cms.EDProducer(
     "SimpleTriggerTrackFlatTableProducer",
-    src = cms.InputTag("hltIter2Phase2L3FromL1TkMuonMerged"),
+    src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity"),
     cut = cms.string(""),
     name = cms.string("l3_tk_IO"),
     doc = cms.string(""),
