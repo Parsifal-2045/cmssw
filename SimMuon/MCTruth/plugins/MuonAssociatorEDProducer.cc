@@ -147,3 +147,6 @@ void MuonAssociatorEDProducer::produce(edm::Event &event, const edm::EventSetup 
     event.put(std::move(str));
   }
 }
+
+#include "FWCore/Framework/interface/MakerMacros.h"
+DEFINE_FWK_MODULE(MuonAssociatorEDProducer);

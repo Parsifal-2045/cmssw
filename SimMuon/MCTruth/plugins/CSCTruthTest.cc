@@ -18,3 +18,6 @@ void CSCTruthTest::analyze(const edm::Event &iEvent, const edm::EventSetup &iSet
     edm::LogVerbatim("SimMuonCSCTruthTest") << theTruth_.muonFraction() << " " << recHitItr->cscDetId();
   }
 }
+
+#include "FWCore/Framework/interface/MakerMacros.h"
+DEFINE_FWK_MODULE(CSCTruthTest);
