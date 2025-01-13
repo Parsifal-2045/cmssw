@@ -702,6 +702,7 @@ phase2_common.toModify(FEVTDEBUGHLTEventContent,
 phase2_muon.toModify(FEVTDEBUGHLTEventContent, 
     outputCommands = FEVTDEBUGHLTEventContent.outputCommands + [
         'keep recoMuons_muons1stStep_*_*',
+        'keep *_hltL2OfflineMuonSeeds_*_*',
         'keep *_hltL2MuonSeedsFromL1TkMuon_*_*',
         'keep *_hltL2MuonsFromL1TkMuon_*_*',
         'keep *_hltIter2Phase2L3FromL1TkMuonMerged_*_*',
