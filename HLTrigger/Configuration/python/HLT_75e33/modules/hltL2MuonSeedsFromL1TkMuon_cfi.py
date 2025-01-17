@@ -34,7 +34,6 @@ phase2HltL2MuonSeedsFromL1TkMuon = cms.EDProducer('Phase2L2MuonSeedCreator',
     extrapolationWindowFar = cms.double(0.1),
     maximumEtaBarrel = cms.double(0.7),
     maximumEtaOverlap = cms.double(1.3),
-    maximumEtaCSCs = cms.double(2.4),
     propagator = cms.string('SteppingHelixPropagatorAny'),
     serviceParameters = cms.PSet(
         Propagators = cms.untracked.vstring('SteppingHelixPropagatorAny'),
