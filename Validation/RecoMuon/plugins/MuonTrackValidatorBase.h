@@ -36,7 +36,7 @@
 
 class MuonTrackValidatorBase {
   typedef dqm::legacy::DQMStore DQMStore;
-  typedef dqm::legacy::MonitorElement MonitorElement;
+  typedef dqm::reco::MonitorElement MonitorElement;
 
 public:
   /// Constructor
@@ -46,19 +46,19 @@ public:
       tp_refvector_Token = iC.consumes<TrackingParticleRefVector>(label_tp);
     else
       tp_Token = iC.consumes<TrackingParticleCollection>(label_tp);
-    pileupinfo_Token = iC.consumes<std::vector<PileupSummaryInfo> >(label_pileupinfo);
+    pileupinfo_Token = iC.consumes<std::vector<PileupSummaryInfo>>(label_pileupinfo);
     for (unsigned int www = 0; www < label.size(); www++) {
-      track_Collection_Token[www] = iC.consumes<edm::View<reco::Track> >(label[www]);
+      track_Collection_Token[www] = iC.consumes<edm::View<reco::Track>>(label[www]);
     }
   }
 
   MuonTrackValidatorBase(const edm::ParameterSet& pset)
-      : label(pset.getParameter<std::vector<edm::InputTag> >("label")),
+      : label(pset.getParameter<std::vector<edm::InputTag>>("label")),
         bsSrc(pset.getParameter<edm::InputTag>("beamSpot")),
         label_tp(pset.getParameter<edm::InputTag>("label_tp")),
         label_tp_refvector(pset.getParameter<bool>("label_tp_refvector")),
         label_pileupinfo(pset.getParameter<edm::InputTag>("label_pileupinfo")),
-        associators(pset.getParameter<std::vector<std::string> >("associators")),
+        associators(pset.getParameter<std::vector<std::string>>("associators")),
         out(pset.getParameter<std::string>("outputFile")),
         parametersDefiner(pset.getParameter<std::string>("parametersDefiner")),
         muonHistoParameters(pset.getParameter<edm::ParameterSet>("muonHistoParameters")),
@@ -216,11 +216,11 @@ protected:
   std::vector<std::string> associators;
   std::string out;
   std::string parametersDefiner;
-  std::vector<edm::EDGetTokenT<edm::View<reco::Track> > > track_Collection_Token;
+  std::vector<edm::EDGetTokenT<edm::View<reco::Track>>> track_Collection_Token;
   edm::EDGetTokenT<reco::BeamSpot> bsSrc_Token;
   edm::EDGetTokenT<TrackingParticleCollection> tp_Token;
   edm::EDGetTokenT<TrackingParticleRefVector> tp_refvector_Token;
-  edm::EDGetTokenT<std::vector<PileupSummaryInfo> > pileupinfo_Token;
+  edm::EDGetTokenT<std::vector<PileupSummaryInfo>> pileupinfo_Token;
   edm::ESHandle<MagneticField> theMF;
 
   edm::ParameterSet muonHistoParameters;
@@ -278,6 +278,8 @@ protected:
   bool do_TRKhitsPlots, do_MUOhitsPlots;
   bool ignoremissingtkcollection_;
 
+  // collections
+  std::vector<MonitorElement*> h_assoc_coll, h_simul_coll, h_reco_coll, h_assoc2_coll;
   //1D
   std::vector<MonitorElement*> h_tracks, h_fakes, h_nhits, h_charge;
   std::vector<MonitorElement*> h_recoeta, h_assoceta, h_assoc2eta, h_simuleta, h_misideta;
