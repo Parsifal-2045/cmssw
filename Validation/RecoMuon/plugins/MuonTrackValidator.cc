@@ -22,8 +22,54 @@ using namespace edm;
 void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooker,
                                         edm::Run const&,
                                         edm::EventSetup const& setup) {
-  for (unsigned int ww = 0; ww < associators.size(); ww++) {
-    for (unsigned int www = 0; www < label.size(); www++) {
+  // No booking if there are no tracks in a collection
+  if (label.empty()) {
+    return;
+  }
+
+  const auto minColl = -0.5;
+  const auto maxColl = label.size() - 0.5;
+  const auto nintColl = label.size();
+  std::cout << "\n -------------------------- Muon Validation -------------------------- \n";
+  std::cout << "Label size: " << label.size() << "\n";
+  for (size_t i = 0; i != label.size(); ++i) {
+    std::cout << "----------- LABEL " << i << " -----------\n";
+    std::cout << "Track Label: " << label[i].label() << ", instance: " << label[i].instance()
+              << ", process name: " << label[i].process() << "\n";
+    std::cout << "Associator Label: " << associators[i] << '\n';
+    std::cout << "--------------------------------\n";
+  }
+
+  auto binLabels = [&](dqm::reco::MonitorElement* me) -> dqm::reco::MonitorElement* {
+    for (size_t i = 0; i < label.size(); ++i) {
+      std::string labelName =
+          label[i].instance().empty() ? label[i].label() : label[i].label() + "_" + label[i].instance();
+      me->setBinLabel(i + 1, labelName);
+    }
+    me->disableAlphanumeric();
+    return me;
+  };
+
+  size_t outerLoopSize = UseAssociators ? associators.size() : 1;
+  for (unsigned int ww = 0; ww < outerLoopSize; ++ww) {
+    if (doSummaryPlots_) {
+      ibooker.setCurrentFolder(dirName_);
+      h_assoc_coll.push_back(binLabels(ibooker.book1D("num_asso_SimToReco_coll",
+                                                      "N of associated (SimToReco) muons vs muon collection",
+                                                      nintColl,
+                                                      minColl,
+                                                      maxColl)));
+      h_simul_coll.push_back(binLabels(
+          ibooker.book1D("num_simul_coll", "N of simulated muons vs muon collection", nintColl, minColl, maxColl)));
+      h_reco_coll.push_back(
+          binLabels(ibooker.book1D("num_reco_coll", "N of reco muons vs muon collection", nintColl, minColl, maxColl)));
+      h_assoc2_coll.push_back(binLabels(ibooker.book1D("num_asso_RecoToSim_coll",
+                                                       "N of associated (recoToSim) muons vs muon collection",
+                                                       nintColl,
+                                                       minColl,
+                                                       maxColl)));
+    }
+    for (unsigned int www = 0; www < label.size(); ++www) {
       ibooker.cd();
       InputTag algo = label[www];
       string dirName = dirName_;
@@ -46,8 +92,7 @@ void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooke
       if (dirName.find("UpdatedAtVtx") < dirName.length()) {
         dirName.replace(dirName.find("UpdatedAtVtx"), 12, "UpdAtVtx");
       }
-      string assoc = associators[ww];
-      if (assoc.find("tpToTkmuTrackAssociation") < assoc.length()) {
+      if (UseAssociators && associators[ww].find("tpToTkmuTrackAssociation") != std::string::npos) {
         dirName += "_TkAsso";
       }
       std::replace(dirName.begin(), dirName.end(), ':', '_');
@@ -401,13 +446,15 @@ void MuonTrackValidator::bookHistograms(DQMEDAnalyzer::DQMStore::IBooker& ibooke
         h_PurityVsQuality.push_back(
             ibooker.book2D("PurityVsQuality", "Purity vs Quality (MABH)", 20, 0.01, 1.01, 20, 0.01, 1.01));
       }
-
-      if (associators[ww] == "trackAssociatorByChi2") {
-        h_assochi2.push_back(ibooker.book1D("assocChi2", "track association #chi^{2}", 1000, 0., 100.));
-        h_assochi2_prob.push_back(ibooker.book1D("assocChi2_prob", "probability of association #chi^{2}", 100, 0., 1.));
-      } else if (associators[ww] == "trackAssociatorByHits") {
-        h_assocFraction.push_back(ibooker.book1D("assocFraction", "fraction of shared hits", 22, 0., 1.1));
-        h_assocSharedHit.push_back(ibooker.book1D("assocSharedHit", "number of shared hits", 41, -0.5, 40.5));
+      if (UseAssociators) {
+        if (associators[ww] == "trackAssociatorByChi2") {
+          h_assochi2.push_back(ibooker.book1D("assocChi2", "track association #chi^{2}", 1000, 0., 100.));
+          h_assochi2_prob.push_back(
+              ibooker.book1D("assocChi2_prob", "probability of association #chi^{2}", 100, 0., 1.));
+        } else if (associators[ww] == "trackAssociatorByHits") {
+          h_assocFraction.push_back(ibooker.book1D("assocFraction", "fraction of shared hits", 22, 0., 1.1));
+          h_assocSharedHit.push_back(ibooker.book1D("assocSharedHit", "number of shared hits", 41, -0.5, 40.5));
+        }
       }
 
     }  //for (unsigned int www=0;www<label.size();www++)
@@ -481,8 +528,9 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
   }
 
   int w = 0;
-  for (unsigned int ww = 0; ww < associators.size(); ww++) {
-    for (unsigned int www = 0; www < label.size(); www++) {
+  const size_t outerLoopSize = UseAssociators ? associators.size() : 1;
+  for (unsigned int ww = 0; ww < outerLoopSize; ++ww) {
+    for (unsigned int www = 0; www < label.size(); ++www) {
       //
       //get collections from the event
       //
@@ -516,15 +564,15 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
         } else {
           edm::LogVerbatim("MuonTrackValidator")
               << "Analyzing " << label[www].process() << ":" << label[www].label() << ":" << label[www].instance()
-              << " with " << associatormap.process() << ":" << associatormap.label() << ":" << associatormap.instance()
-              << "\n";
+              << " with " << associatormap[www].process() << ":" << associatormap[www].label() << ":"
+              << associatormap[www].instance() << "\n";
 
           Handle<reco::SimToRecoCollection> simtorecoCollectionH;
-          event.getByToken(simToRecoCollection_Token, simtorecoCollectionH);
+          event.getByToken(simToRecoCollection_Token[www], simtorecoCollectionH);
           simRecColl = *simtorecoCollectionH.product();
 
           Handle<reco::RecoToSimCollection> recotosimCollectionH;
-          event.getByToken(recoToSimCollection_Token, recotosimCollectionH);
+          event.getByToken(recoToSimCollection_Token[www], recotosimCollectionH);
           recSimColl = *recotosimCollectionH.product();
         }
       }
@@ -601,6 +649,7 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
 
         double TPeta = momentumTP.eta();
         double xTPeta = getEta(TPeta);  // may be |eta| in histos according to useFabsEta
+        double absEta = fabs(TPeta);
         double TPpt = sqrt(momentumTP.perp2());
         double xTPpt = getPt(TPpt);  // may be 1/pt in histos according to useInvPt
         double TPphi = momentumTP.phi();
@@ -735,6 +784,13 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
             fillPlotNoFlow(h_misidpu[w], PU_NumInteractions);
         }
 
+        if (doSummaryPlots_) {
+          fillPlotNoFlow(h_simul_coll[ww], www);
+          if (TP_is_matched) {
+            fillPlotNoFlow(h_assoc_coll[ww], www);
+          }
+        }
+
       }  // End for (size_t i = 0; i < tPCeff.size(); i++) {
 
       //
@@ -830,6 +886,14 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
         double dxyError = track->dxyError();
         double dzError = track->dzError();
 
+        // histos for coll
+        if (doSummaryPlots_) {
+          fillPlotNoFlow(h_reco_coll[ww], www);
+          if (Track_is_matched) {
+            fillPlotNoFlow(h_assoc2_coll[ww], www);
+          }
+        }
+
         // histos for fake rate vs eta
         fillPlotNoFlow(h_recoeta[w], xetaRec);
         if (Track_is_matched) {
@@ -906,15 +970,17 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
           }
         }
 
-        if (associators[ww] == "trackAssociatorByChi2") {
-          //association chi2
-          double assocChi2 = -tp.begin()->second;  //in association map is stored -chi2
-          h_assochi2[www]->Fill(assocChi2);
-          h_assochi2_prob[www]->Fill(TMath::Prob((assocChi2) * 5, 5));
-        } else if (associators[ww] == "trackAssociatorByHits") {
-          double fraction = tp.begin()->second;
-          h_assocFraction[www]->Fill(fraction);
-          h_assocSharedHit[www]->Fill(fraction * nRecHits);
+        if (UseAssociators) {
+          if (associators[ww] == "trackAssociatorByChi2") {
+            //association chi2
+            double assocChi2 = -tp.begin()->second;  //in association map is stored -chi2
+            h_assochi2[www]->Fill(assocChi2);
+            h_assochi2_prob[www]->Fill(TMath::Prob((assocChi2) * 5, 5));
+          } else if (associators[ww] == "trackAssociatorByHits") {
+            double fraction = tp.begin()->second;
+            h_assocFraction[www]->Fill(fraction);
+            h_assocSharedHit[www]->Fill(fraction * nRecHits);
+          }
         }
 
         h_charge[w]->Fill(track->charge());
@@ -1056,7 +1122,7 @@ void MuonTrackValidator::analyze(const edm::Event& event, const edm::EventSetup&
                                              << "Total Reconstructed: " << rT << "\n"
                                              << "Total Associated (recoToSim): " << at << "\n"
                                              << "Total Fakes: " << rT - at << "\n";
-      w++;
+      ++w;
     }  // End of for (unsigned int www=0;www<label.size();www++){
   }  //END of for (unsigned int ww=0;ww<associators.size();ww++){
 }
