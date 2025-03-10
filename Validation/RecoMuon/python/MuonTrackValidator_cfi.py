@@ -46,7 +46,7 @@ muonTrackValidator = DQMEDAnalyzer("MuonTrackValidator",
     dirName = cms.string('Muons/RecoMuonV/MuonTrack/'),
     #
     # Parameters defining which histograms to make and their attributes (nbins, range: min, max...)
-    muonHistoParameters = cms.PSet(defaultMuonHistoParameters)
+    muonHistoParameters = cms.VPSet(defaultMuonHistoParameters,)
 )
 
 from Configuration.Eras.Modifier_run3_GEM_cff import run3_GEM
