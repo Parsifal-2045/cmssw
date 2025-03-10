@@ -80,6 +80,13 @@ public:
       doSummaryPlots_ = false;
     }
 
+    if (label.size() != histoParameters.size()) {
+      throw cms::Exception("Configuration")
+          << "Different number of labels and histoParameters provided!" << '\n'
+          << "Please, make sure to configure the muonValidator with the same number and ordering "
+             "of labels and histoParameters!";
+    }
+
     track_Collection_Token.reserve(label.size());
     simToRecoCollection_Token.reserve(label.size());
     recoToSimCollection_Token.reserve(label.size());
@@ -118,18 +125,18 @@ public:
       }
     }
 
-    // inform on which SimHits will be counted
-    if (usetracker)
-      edm::LogVerbatim("MuonTrackValidator") << "\n usetracker = TRUE : Tracker SimHits WILL be counted";
-    else
-      edm::LogVerbatim("MuonTrackValidator") << "\n usetracker = FALSE : Tracker SimHits WILL NOT be counted";
-    if (usemuon)
-      edm::LogVerbatim("MuonTrackValidator") << " usemuon = TRUE : Muon SimHits WILL be counted";
-    else
-      edm::LogVerbatim("MuonTrackValidator") << " usemuon = FALSE : Muon SimHits WILL NOT be counted" << std::endl;
-
     // loop over the reco::Track collections to validate: check for inconsistent input settings
     for (unsigned int www = 0; www < label.size(); www++) {
+      // inform on which SimHits will be counted
+      if (histoParameters[www].usetracker)
+        edm::LogVerbatim("MuonTrackValidator") << "\n usetracker = TRUE : Tracker SimHits WILL be counted";
+      else
+        edm::LogVerbatim("MuonTrackValidator") << "\n usetracker = FALSE : Tracker SimHits WILL NOT be counted";
+      if (histoParameters[www].usemuon)
+        edm::LogVerbatim("MuonTrackValidator") << " usemuon = TRUE : Muon SimHits WILL be counted";
+      else
+        edm::LogVerbatim("MuonTrackValidator") << " usemuon = FALSE : Muon SimHits WILL NOT be counted" << std::endl;
+
       std::string recoTracksLabel = label[www].label();
       std::string recoTracksInstance = label[www].instance();
 
@@ -140,17 +147,17 @@ public:
           recoTracksLabel == "ctfWithMaterialTracksP5" ||
           recoTracksLabel == "hltIterL3OIMuonTrackSelectionHighPurity" || recoTracksLabel == "hltIterL3MuonMerged" ||
           recoTracksLabel == "hltIterL3MuonAndMuonFromL1Merged") {
-        if (usemuon) {
+        if (histoParameters[www].usemuon) {
           edm::LogWarning("MuonTrackValidator")
               << "\n*** WARNING : inconsistent input tracksTag = " << label[www] << "\n with usemuon == true"
               << "\n ---> resetting to usemuon == false ";
-          usemuon = false;
+          histoParameters[www].usemuon = false;
         }
-        if (!usetracker) {
+        if (!histoParameters[www].usetracker) {
           edm::LogWarning("MuonTrackValidator")
               << "\n*** WARNING : inconsistent input tracksTag = " << label[www] << "\n with usetracker == false"
               << "\n ---> resetting to usetracker == true ";
-          usetracker = true;
+          histoParameters[www].usetracker = true;
         }
       }
 
@@ -159,17 +166,17 @@ public:
                recoTracksLabel == "seedsOfDisplacedSTAmuons" || recoTracksLabel == "displacedStandAloneMuons" ||
                recoTracksLabel == "refittedStandAloneMuons" || recoTracksLabel == "cosmicMuons" ||
                recoTracksLabel == "cosmicMuons1Leg" || recoTracksLabel == "hltL2Muons") {
-        if (usetracker) {
+        if (histoParameters[www].usetracker) {
           edm::LogWarning("MuonTrackValidator")
               << "\n*** WARNING : inconsistent input tracksTag = " << label[www] << "\n with usetracker == true"
               << "\n ---> resetting to usetracker == false ";
-          usetracker = false;
+          histoParameters[www].usetracker = false;
         }
-        if (!usemuon) {
+        if (!histoParameters[www].usemuon) {
           edm::LogWarning("MuonTrackValidator")
               << "\n*** WARNING : inconsistent input tracksTag = " << label[www] << "\n with usemuon == false"
               << "\n ---> resetting to usemuon == true ";
-          usemuon = true;
+          histoParameters[www].usemuon = true;
         }
       }
 
