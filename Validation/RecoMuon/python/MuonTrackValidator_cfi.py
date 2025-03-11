@@ -39,7 +39,7 @@ muonTrackValidator = DQMEDAnalyzer("MuonTrackValidator",
     #  setting it to False the ghost and split tracks are counted as good ones
     #  the default setting is True: should NOT be changed !
     BiDirectional_RecoToSim_association = cms.bool(True),
-    doSummaryPlots = cms.bool(True),
+    doSummaryPlots = cms.bool(False),
     #
     # Output File / Directory
     outputFile = cms.string(''),
