@@ -67,14 +67,17 @@ private:
 
   const std::vector<edm::InputTag> trackLabels_;
   std::vector<edm::EDGetTokenT<edm::View<reco::Track>>> trackTokens_;
-  const edm::EDGetTokenT<reco::TrackToTrackingParticleAssociator> trackAssociatorToken_;
+  const edm::EDGetTokenT<reco::SimToRecoCollection> SimToRecoCollectionToken_;
+  const edm::EDGetTokenT<reco::RecoToSimCollection> RecoToSimCollectionToken_;
   const edm::EDGetTokenT<TrackingParticleCollection> trackingParticleToken_;
 };
 
 SimpleTrackValidation::SimpleTrackValidation(const edm::ParameterSet& iConfig)
     : trackLabels_(iConfig.getParameter<std::vector<edm::InputTag>>("trackLabels")),
-      trackAssociatorToken_(
-          consumes<reco::TrackToTrackingParticleAssociator>(iConfig.getParameter<edm::InputTag>("trackAssociator"))),
+      SimToRecoCollectionToken_(
+          consumes<reco::SimToRecoCollection>(iConfig.getParameter<edm::InputTag>("associatormap"))),
+      RecoToSimCollectionToken_(
+          consumes<reco::RecoToSimCollection>(iConfig.getParameter<edm::InputTag>("associatormap"))),
       trackingParticleToken_(
           consumes<TrackingParticleCollection>(iConfig.getParameter<edm::InputTag>("trackingParticles"))) {
   for (auto& itag : trackLabels_) {
@@ -102,7 +105,6 @@ SimpleTrackValidation::SimpleTrackValidation(const edm::ParameterSet& iConfig)
 void SimpleTrackValidation::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup) {
   using namespace edm;
 
-  auto const& associatorByHits = iEvent.get(trackAssociatorToken_);
   auto TPCollectionH = iEvent.getHandle(trackingParticleToken_);
   TrackingParticleRefVector tpCollection;
 
@@ -123,8 +125,8 @@ void SimpleTrackValidation::analyze(const edm::Event& iEvent, const edm::EventSe
       trackRefs.push_back(tracks.refAt(i));
     }
 
-    reco::RecoToSimCollection recSimColl = associatorByHits.associateRecoToSim(trackRefs, tpCollection);
-    reco::SimToRecoCollection simRecColl = associatorByHits.associateSimToReco(trackRefs, tpCollection);
+    reco::RecoToSimCollection recSimColl = iEvent.get(RecoToSimCollectionToken_);
+    reco::SimToRecoCollection simRecColl = iEvent.get(SimToRecoCollectionToken_);
 
     int rt = 0;   // number of reconstructed tracks;
     int at = 0;   // number of reconstructed tracks associated to a tracking particle;
@@ -173,6 +175,9 @@ void SimpleTrackValidation::analyze(const edm::Event& iEvent, const edm::EventSe
     global_dt_ += dt;
     global_ast_ += ast;
   }
+
+  std::cout << "Total simulated " << global_st_ << " Associated tracks " << global_at_ << " Total reconstructed "
+            << global_rt_ << '\n';
 }
 
 void SimpleTrackValidation::beginJob() {
@@ -233,9 +238,10 @@ void SimpleTrackValidation::endJob() { output_tree_->Fill(); }
 void SimpleTrackValidation::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
 
-  desc.add<std::vector<edm::InputTag>>("trackLabels", {edm::InputTag("generalTracks")});
+  desc.add<std::vector<edm::InputTag>>("trackLabels",
+                                       {edm::InputTag("hltIter0IterL3FromL1MuonTrackSelectionHighPurity")});
   desc.add<edm::InputTag>("trackingParticles", edm::InputTag("mix", "MergedTrackTruth"));
-  desc.add<edm::InputTag>("trackAssociator", edm::InputTag("trackingParticleRecoTrackAsssociation"));
+  desc.add<edm::InputTag>("associatormap", edm::InputTag("Phase2tpToL3IOiter0TkHighPurityAssociation"));
 
   // TP Selector parameters
   desc.add<double>("ptMinTP", 0.9);
@@ -249,7 +255,7 @@ void SimpleTrackValidation::fillDescriptions(edm::ConfigurationDescriptions& des
   desc.add<bool>("intimeOnlyTP", false);
   desc.add<bool>("chargedOnlyTP", true);
   desc.add<bool>("stableOnlyTP", false);
-  desc.add<std::vector<int>>("pdgIdTP", {});
+  desc.add<std::vector<int>>("pdgIdTP", {13});
   desc.add<bool>("invertRapidityCutTP", false);
   desc.add<double>("minPhiTP", -3.2);
   desc.add<double>("maxPhiTP", 3.2);
