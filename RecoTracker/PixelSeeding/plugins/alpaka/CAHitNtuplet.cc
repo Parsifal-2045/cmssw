@@ -37,7 +37,7 @@
 #include "RecoTracker/PixelSeeding/interface/CAGeometrySoA.h"
 #include "DataFormats/SiStripDetId/interface/StripSubdetector.h"
 
-#define GPU_DEBUG
+// #define GPU_DEBUG
 
 namespace reco {
   struct CAGeometryParams {
@@ -51,6 +51,7 @@ namespace reco {
           minZ_(iConfig.getParameter<std::vector<double>>("minZ")),
           maxZ_(iConfig.getParameter<std::vector<double>>("maxZ")),
           maxR_(iConfig.getParameter<std::vector<double>>("maxR")) {}
+
     // Layers params
     const std::vector<double> caThetaCuts_;
     const std::vector<double> caDCACuts_;
@@ -88,11 +89,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     using Rotation = SOARotation<float>;
     using Frame = SOAFrame<float>;
 
-<<<<<<< HEAD
-
   public:
     explicit CAHitNtupletAlpaka(const edm::ParameterSet& iConfig, const ::reco::CAGeometryParams* iCache);
-
     ~CAHitNtupletAlpaka() override = default;
 
     void produce(device::Event& iEvent, const device::EventSetup& es) override;
@@ -165,7 +163,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                 trackerGeometry.getDetectorType(detId) == TrackerGeometry::ModuleType::Ph2PXF ||
                 trackerGeometry.getDetectorType(detId) == TrackerGeometry::ModuleType::Ph2PXF3D);
       };
-      if constexpr (std::is_base_of_v<pixelTopology::Phase2OT, TrackerTraits>) {
+      if constexpr (std::is_same_v<pixelTopology::Phase2OT, TrackerTraits>) {
         int counter = 0;
         for (auto& det : dets) {
           DetId detid = det->geographicalId();
@@ -196,96 +194,77 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                     break;
                   oldLayer = layer;
                 }
+                moduleToindexInDets.push_back(counter);
+                n_modules++;
               }
             }
-            counter++;
           }
-          layerStarts[n_layers] = n_modules;
-          std::cout << "OT LayerStart: " << n_layers << " has " << n_modules << " modules." << std::endl;
+          counter++;
         }
-        else {
-          for (auto& det : dets) {
-            DetId detid = det->geographicalId();
+        layerStarts[n_layers] = n_modules;
+        std::cout << "OT LayerStart: " << n_layers << " has " << n_modules << " modules." << std::endl;
+      } else {
+        for (auto& det : dets) {
+          DetId detid = det->geographicalId();
 #ifdef GPU_DEBUG
-            if (n_modules >= int(subSystemOffset)) {
-              subSystemName = GeomDetEnumerators::tkDetEnum[++subSystem];
-              subSystemOffset = trackerGeometry.offsetDU(subSystemName);
-              std::cout << " ===================== Subsystem: " << subSystemName << std::endl;
-            }
+          if (n_modules >= int(subSystemOffset)) {
+            subSystemName = GeomDetEnumerators::tkDetEnum[++subSystem];
+            subSystemOffset = trackerGeometry.offsetDU(subSystemName);
+            std::cout << " ===================== Subsystem: " << subSystemName << std::endl;
+          }
 #endif
 
-            auto layer = trackerTopology.layer(detid);
+          auto layer = trackerTopology.layer(detid);
 
-            if (layer != oldLayer) {
-              layerStarts[layerCount++] = n_modules;
+          if (layer != oldLayer) {
+            layerStarts[layerCount++] = n_modules;
 
-              if (layerCount >= layerStarts.size())
-                break;
+            if (layerCount >= layerStarts.size())
+              break;
 
-              oldLayer = layer;
+            oldLayer = layer;
 #ifdef GPU_DEBUG
-              std::cout << " > New layer at module : " << n_modules << " (detId: " << detid << ")" << std::endl;
+            std::cout << " > New layer at module : " << n_modules << " (detId: " << detid << ")" << std::endl;
 #endif
-            }
-
-            n_modules++;
           }
+
+          n_modules++;
         }
-
-        reco::CAGeometryHost product{{{n_layers + 1, n_pairs, n_modules}}, cms::alpakatools::host()};
-
-        auto layerSoA = product.view();
-        auto cellSoA = product.view<::reco::CAGraphSoA>();
-        auto modulesSoA = product.view<::reco::CAModulesSoA>();
-
-        if constexpr (std::is_base_of_v<pixelTopology::Phase2, TrackerTraits>) {
-          for (int i = 0; i < n_modules; ++i) {
-            auto idx = moduleToindexInDets[i];
-            auto det = dets[idx];
-            auto vv = det->surface().position();
-            auto rr = Rotation(det->surface().rotation());
-            modulesSoA[i].detFrame() = Frame(vv.x(), vv.y(), vv.z(), rr);
-          }
-
-          for (int i = 0; i < n_layers; ++i) {
-            layerSoA.layerStarts()[i] = layerStarts[i];
-            layerSoA.caThetaCut()[i] = iCache->caThetaCuts_[i];
-            layerSoA.caDCACut()[i] = iCache->caDCACuts_[i];
-          }
-        } else {
-          for (int i = 0; i < n_modules; ++i) {
-            auto det = dets[i];
-            auto vv = det->surface().position();
-            auto rr = Rotation(det->surface().rotation());
-            modulesSoA[i].detFrame() = Frame(vv.x(), vv.y(), vv.z(), rr);
-          }
-
-          for (int i = 0; i < n_layers; ++i) {
-            layerSoA.layerStarts()[i] = layerStarts[i];
-            layerSoA.caThetaCut()[i] = iCache->caThetaCuts_[i];
-            layerSoA.caDCACut()[i] = iCache->caDCACuts_[i];
-          }
-        }
-
-        layerSoA.layerStarts()[n_layers] = layerStarts[n_layers];
-
-        for (int i = 0; i < n_pairs; ++i) {
-          cellSoA.graph()[i] = {{uint32_t(iCache->pairGraph_[2 * i]), uint32_t(iCache->pairGraph_[2 * i + 1])}};
-          cellSoA.phiCuts()[i] = iCache->phiCuts_[i];
-          cellSoA.minz()[i] = iCache->minZ_[i];
-          cellSoA.maxz()[i] = iCache->maxZ_[i];
-          cellSoA.maxr()[i] = iCache->maxR_[i];
-          cellSoA.startingPair()[i] = false;
-        }
-
-        for (const int& i : iCache->startingPairs_)
-          cellSoA.startingPair()[i] = true;
-
-        return std::make_shared<CAGeometryCache>(std::move(product));
       }
 
-      static std::unique_ptr<::reco::CAGeometryParams> initializeGlobalCache(edm::ParameterSet const& iConfig) {
-        return std::make_unique<::reco::CAGeometryParams>(iConfig.getParameterSet("geometry"));
+      reco::CAGeometryHost product{{{n_layers + 1, n_pairs, n_modules}}, cms::alpakatools::host()};
+
+      auto layerSoA = product.view();
+      auto cellSoA = product.view<::reco::CAGraphSoA>();
+      auto modulesSoA = product.view<::reco::CAModulesSoA>();
+
+      if constexpr (std::is_same_v<pixelTopology::Phase2OT, TrackerTraits>) {
+        for (int i = 0; i < n_modules; ++i) {
+          auto idx = moduleToindexInDets[i];
+          auto det = dets[idx];
+          auto vv = det->surface().position();
+          auto rr = Rotation(det->surface().rotation());
+          modulesSoA[i].detFrame() = Frame(vv.x(), vv.y(), vv.z(), rr);
+        }
+
+        for (int i = 0; i < n_layers; ++i) {
+          layerSoA.layerStarts()[i] = layerStarts[i];
+          layerSoA.caThetaCut()[i] = iCache->caThetaCuts_[i];
+          layerSoA.caDCACut()[i] = iCache->caDCACuts_[i];
+        }
+      } else {
+        for (int i = 0; i < n_modules; ++i) {
+          auto det = dets[i];
+          auto vv = det->surface().position();
+          auto rr = Rotation(det->surface().rotation());
+          modulesSoA[i].detFrame() = Frame(vv.x(), vv.y(), vv.z(), rr);
+        }
+
+        for (int i = 0; i < n_layers; ++i) {
+          layerSoA.layerStarts()[i] = layerStarts[i];
+          layerSoA.caThetaCut()[i] = iCache->caThetaCuts_[i];
+          layerSoA.caDCACut()[i] = iCache->caDCACuts_[i];
+        }
       }
 
       layerSoA.layerStarts()[n_layers] = layerStarts[n_layers];
@@ -299,27 +278,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         cellSoA.startingPair()[i] = false;
       }
 
-      for (const int& i : iCache->startingPairs_)
+      for (const unsigned int& i : iCache->startingPairs_)
         cellSoA.startingPair()[i] = true;
 
-      const ::reco::FormulaEvaluator maxNumberOfDoublets_;
-      const ::reco::FormulaEvaluator maxNumberOfTuples_;
-
-      Algo deviceAlgo_;
-    };
-
-    template <typename TrackerTraits>
-    CAHitNtupletAlpaka<TrackerTraits>::CAHitNtupletAlpaka(const edm::ParameterSet& iConfig,
-                                                          const ::reco::CAGeometryParams* iCache)
-        : EDProducer(iConfig),
-          tokenField_(esConsumes()),
-          tokenHit_(consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitSrc"))),
-          tokenTrack_(produces()),
-          maxNumberOfDoublets_(iConfig.getParameter<std::string>("maxNumberOfDoublets")),
-          maxNumberOfTuples_(iConfig.getParameter<std::string>("maxNumberOfTuples")),
-          deviceAlgo_(iConfig) {
-      iCache->tokenGeometry_ = esConsumes<edm::Transition::BeginRun>();
-      iCache->tokenTopology_ = esConsumes<edm::Transition::BeginRun>();
+      return std::make_shared<CAGeometryCache>(std::move(product));
     }
 
     static std::unique_ptr<::reco::CAGeometryParams> initializeGlobalCache(edm::ParameterSet const& iConfig) {
@@ -331,26 +293,21 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const device::EDGetToken<HitsOnDevice> tokenHit_;
     const device::EDPutToken<TkSoADevice> tokenTrack_;
 
-    std::array<double, 1> nHitsV = {{double(hits.nHits())}};
-    std::array<double, 1> emptyV;
-
-    uint32_t const maxTuples = maxNumberOfTuples_.evaluate(nHitsV, emptyV);
-    uint32_t const maxDoublets = maxNumberOfDoublets_.evaluate(nHitsV, emptyV);
+    const ::reco::FormulaEvaluator maxNumberOfDoublets_;
+    const ::reco::FormulaEvaluator maxNumberOfTuples_;
 
     Algo deviceAlgo_;
   };
 
   template <typename TrackerTraits>
   CAHitNtupletAlpaka<TrackerTraits>::CAHitNtupletAlpaka(const edm::ParameterSet& iConfig,
-                                                        const ::reco::CAGeoemtryParams* iCache)
+                                                        const ::reco::CAGeometryParams* iCache)
       : EDProducer(iConfig),
         tokenField_(esConsumes()),
         tokenHit_(consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitSrc"))),
         tokenTrack_(produces()),
-        maxNumberOfDoublets_(
-            TFormula("doubletsHitsDependecy", iConfig.getParameter<std::string>("maxNumberOfDoublets").data())),
-        maxNumberOfTuples_(
-            TFormula("tracksHitsDependency", iConfig.getParameter<std::string>("maxNumberOfTuples").data())),
+        maxNumberOfDoublets_(iConfig.getParameter<std::string>("maxNumberOfDoublets")),
+        maxNumberOfTuples_(iConfig.getParameter<std::string>("maxNumberOfTuples")),
         deviceAlgo_(iConfig) {
     iCache->tokenGeometry_ = esConsumes<edm::Transition::BeginRun>();
     iCache->tokenTopology_ = esConsumes<edm::Transition::BeginRun>();
@@ -373,8 +330,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto const& geometry = runCache()->get(iEvent.queue());
     auto const& hits = iEvent.get(tokenHit_);
 
-    uint32_t const maxTuples = maxNumberOfTuples_.Eval(hits.nHits());
-    uint32_t const maxDoublets = maxNumberOfDoublets_.Eval(hits.nHits());
+    std::array<double, 1> nHitsV = {{double(hits.nHits())}};
+    std::array<double, 1> emptyV;
+
+    uint32_t const maxTuples = maxNumberOfTuples_.evaluate(nHitsV, emptyV);
+    uint32_t const maxDoublets = maxNumberOfDoublets_.evaluate(nHitsV, emptyV);
 
     iEvent.emplace(tokenTrack_,
                    deviceAlgo_.makeTuplesAsync(hits, geometry, bf, maxDoublets, maxTuples, iEvent.queue()));
@@ -383,6 +343,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   using CAHitNtupletAlpakaPhase1 = CAHitNtupletAlpaka<pixelTopology::Phase1>;
   using CAHitNtupletAlpakaHIonPhase1 = CAHitNtupletAlpaka<pixelTopology::HIonPhase1>;
   using CAHitNtupletAlpakaPhase2 = CAHitNtupletAlpaka<pixelTopology::Phase2>;
+  using CAHitNtupletAlpakaPhase2OT = CAHitNtupletAlpaka<pixelTopology::Phase2OT>;
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE
 
 #include "HeterogeneousCore/AlpakaCore/interface/alpaka/MakerMacros.h"
