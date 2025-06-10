@@ -401,7 +401,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
           if (aligned && thisCell.dcaCut(hh, oc, dcaCut, params.hardCurvCut_)) {
             auto t_ind = alpaka::atomicAdd(acc, nTrips, 1u, alpaka::hierarchy::Blocks{});
 #ifdef CA_DEBUG
-            printf("Triplet no. %d %.5f %.5f (%d %d) - %d %d -> (%d, %d, %d, %d) \n",
+            if (cms::alpakatools::once_per_grid(acc))
+              printf("%-10s %-7s %-7s %-3s %-3s %-3s %-3s %-4s %-4s %-4s %-4s\n",
+                     "Triplet#",
+                     "Theta",
+                     "DCA",
+                     "LI",
+                     "LO",
+                     "OC",
+                     "CI",
+                     "i1",
+                     "o1",
+                     "i2",
+                     "o2");
+            printf("%-10d %-7.5f %-7.5f %-3d %-3d %-3d %-3d %-4d %-4d %-4d %-4d\n",
                    t_ind,
                    thetaCut,
                    dcaCut,
@@ -422,6 +435,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
             if (t_ind >= maxTriplets) {
 #ifdef CA_WARNINGS
               printf("Warning!!!! Too many cell->cell (triplets) associations (limit = %d)!\n", cn.metadata().size());
+              assert(0);
 #endif
               alpaka::atomicSub(acc, nTrips, 1u, alpaka::hierarchy::Blocks{});
               break;
@@ -1062,28 +1076,40 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
 
       // Print header
       printf("TK: %10s %3s %3s %3s %6s %9s %8s %8s %9s %9s %9s %9s %9s\n",
-       "ID", "Q", "nH", "nL", "Qchg", "pT", "Eta", "Phi", "Tip", "Zip", "Chi2", "z1", "z2");
+             "ID",
+             "Q",
+             "nH",
+             "nL",
+             "Qchg",
+             "pT",
+             "Eta",
+             "Phi",
+             "Tip",
+             "Zip",
+             "Chi2",
+             "z1",
+             "z2");
       for (auto i : cms::alpakatools::uniform_elements(acc, firstPrint, std::min(lastPrint, foundNtuplets->nOnes()))) {
         auto nh = foundNtuplets->size(i);
         if (nh < 3)
           continue;
-        if (tracks_view[i].quality() < loose)
-          continue;
+        //        if (tracks_view[i].quality() < loose)
+        //          continue;
 
         printf("TK: %10d %3d %3d %3d %6.1f %9.3f %8.3f %8.3f %9.3f %9.3f %9.3f %9.3f %9.3f\n",
-         10000 * iev + i,                             // ID
-         int(tracks_view[i].quality()),              // Quality
-         nh,                                          // Number of hits
-         tracks_view[i].nLayers(),                   // Number of layers
-         reco::charge(tracks_view, i),               // Charge
-         tracks_view[i].pt(),                        // Pt
-         tracks_view[i].eta(),                       // Eta
-         reco::phi(tracks_view, i),                  // Phi
-         reco::tip(tracks_view, i),                  // Tip
-         reco::zip(tracks_view, i),                  // Zip
-         tracks_view[i].chi2(),                      // Chi2
-         hh[*foundNtuplets->begin(i)].zGlobal(),     // z1
-         hh[*(foundNtuplets->begin(i) + 1)].zGlobal()// z2
+               10000 * iev + i,                              // ID
+               int(tracks_view[i].quality()),                // Quality
+               nh,                                           // Number of hits
+               tracks_view[i].nLayers(),                     // Number of layers
+               reco::charge(tracks_view, i),                 // Charge
+               tracks_view[i].pt(),                          // Pt
+               tracks_view[i].eta(),                         // Eta
+               reco::phi(tracks_view, i),                    // Phi
+               reco::tip(tracks_view, i),                    // Tip
+               reco::zip(tracks_view, i),                    // Zip
+               tracks_view[i].chi2(),                        // Chi2
+               hh[*foundNtuplets->begin(i)].zGlobal(),       // z1
+               hh[*(foundNtuplets->begin(i) + 1)].zGlobal()  // z2
         );
       }
     }
@@ -1094,9 +1120,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
     ALPAKA_FN_ACC void operator()(Acc1D const &acc, Counters const *counters) const {
       auto const &c = *counters;
       printf("||%-15s|%10s|%10s|%10s|%10s|%14s|%16s|%14s|%11s|%10s|%13s|%15s|%12s|%17s||\n",
-       "Counters", "nEvents", "nHits", "nCells", "nTuples", "nFitTracks",
-       "nLooseTracks", "nGoodTracks", "nUsedHits", "nDupHits", "nFishCells",
-       "nKilledCells", "nUsedCells", "nZeroTrackCells");
+             "Counters",
+             "nEvents",
+             "nHits",
+             "nCells",
+             "nTuples",
+             "nFitTracks",
+             "nLooseTracks",
+             "nGoodTracks",
+             "nUsedHits",
+             "nDupHits",
+             "nFishCells",
+             "nKilledCells",
+             "nUsedCells",
+             "nZeroTrackCells");
       printf("||%-15s|%10lld|%10lld|%10lld|%10lld|%14lld|%16lld|%14lld|%11lld|%10lld|%13lld|%15lld|%12lld|%17lld||\n",
              "Raw",
              c.nEvents,
@@ -1113,20 +1150,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
              c.nEmptyCells,
              c.nZeroTrackCells);
       printf("||%-15s|%10lld|%10.1f|%10.1f|%10.1f|%14.1f|%16.1f|%14.1f|%11.1f|%10.3f|%13.3f|%15.3f|%12.3f|%17.3f||\n",
-       "Norm",
-       c.nEvents,
-       c.nHits / double(c.nEvents),
-       c.nCells / double(c.nEvents),
-       c.nTuples / double(c.nEvents),
-       c.nFitTracks / double(c.nEvents),
-       c.nLooseTracks / double(c.nEvents),
-       c.nGoodTracks / double(c.nEvents),
-       c.nUsedHits / double(c.nEvents),
-       c.nDupHits / double(c.nEvents),
-       c.nFishCells / double(c.nCells),
-       c.nKilledCells / double(c.nCells),
-       c.nEmptyCells / double(c.nCells),
-       c.nZeroTrackCells / double(c.nCells));
+             "Norm",
+             c.nEvents,
+             c.nHits / double(c.nEvents),
+             c.nCells / double(c.nEvents),
+             c.nTuples / double(c.nEvents),
+             c.nFitTracks / double(c.nEvents),
+             c.nLooseTracks / double(c.nEvents),
+             c.nGoodTracks / double(c.nEvents),
+             c.nUsedHits / double(c.nEvents),
+             c.nDupHits / double(c.nEvents),
+             c.nFishCells / double(c.nCells),
+             c.nKilledCells / double(c.nCells),
+             c.nEmptyCells / double(c.nCells),
+             c.nZeroTrackCells / double(c.nCells));
     }
   };
 
