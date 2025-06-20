@@ -253,6 +253,28 @@ Phase2tpToL2MuonUpdAssociation = MABHhlt.clone(
     UseTracker = False,
     UseMuon = True
 )
+
+# Muon pixeltracks for L3 IO
+Phase2tpToMuonPixelTracksAssociation = MABHhlt.clone(
+    tracksTag = 'hltPhase2L3FromL1TkMuonPixelTracks',
+    UseTracker = True,
+    UseMuon = False,
+)
+
+# Iter0 tracks no HP
+Phase2tpToL3Iter0NoHPTkAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks',
+    UseTracker = True,
+    UseMuon = False
+)
+
+# Iter0 tracks HP
+Phase2tpToL3Iter0HPTkAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity',
+    UseTracker = True,
+    UseMuon = False
+)
+
 # L3 IO inner tracks
 Phase2tpToL3IOTkAssociation = MABHhlt.clone(
     tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
@@ -434,6 +456,7 @@ muonAssociationReduced_seq = cms.Sequence(
 _muonAssociationHLT_seq_IO_first = cms.Sequence(
     hltPhase2L2MuonSeedTracks+Phase2tpToL2SeedAssociation
     +Phase2tpToL2MuonAssociation+Phase2tpToL2MuonUpdAssociation
+    +Phase2tpToMuonPixelTracksAssociation+Phase2tpToL3Iter0NoHPTkAssociation+Phase2tpToL3Iter0HPTkAssociation
     +Phase2tpToL3IOTkAssociation+Phase2tpToL3OITkAssociation
     +Phase2tpToL2MuonToReuseAssociation+Phase2tpToL3IOTkFilteredAssociation
     +Phase2tpToL3TkMergedAssociation+Phase2tpToL3GlbMuonMergedAssociation
@@ -448,7 +471,9 @@ _muonAssociationHLT_seq_OI_first = cms.Sequence(
     hltPhase2L2MuonSeedTracks+Phase2tpToL2SeedAssociation
     +Phase2tpToL2MuonAssociation+Phase2tpToL2MuonUpdAssociation
     +Phase2tpToL3OITkAssociation+Phase2tpToL3OITkFilteredAssociation
-    +Phase2tpToL3IOTkAssociation+Phase2tpToL3TkMergedAssociation
+    +Phase2tpToL3IOTkAssociation
+    +Phase2tpToMuonPixelTracksAssociation+Phase2tpToL3Iter0NoHPTkAssociation+Phase2tpToL3Iter0HPTkAssociation
+    +Phase2tpToL3TkMergedAssociation
     +Phase2tpToL3GlbMuonMergedAssociation
     +hltPhase2L3MuonNoIdTracks+Phase2tpToL3MuonNoIdAssociation
     +hltPhase2L3MuonIdTracks+Phase2tpToL3MuonIdAssociation
