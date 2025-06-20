@@ -39,3 +39,16 @@ phase2L3MuonsOIFirst.toModify(
         "hltIter2Phase2L3FromL1TkMuonMerged",
     ),
 )
+
+from  Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2CAExtension & phase2L3MuonsOIFirst).toModify(
+    hltPhase2L3MuonMerged,
+    TrackProducers = cms.VInputTag(
+        "hltPhase2L3MuonFilter:L3OITracksFiltered",
+        "hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity",
+    ),
+    selectedTrackQuals = cms.VInputTag(
+        "hltPhase2L3MuonFilter:L3OITracksFiltered",
+        "hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity",
+    ),
+)

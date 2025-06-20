@@ -8,6 +8,7 @@
 #include "RecoTracker/TkTrackingRegions/plugins/CandidateSeededTrackingRegionsProducer.h"
 #include "RecoTracker/TkTrackingRegions/plugins/CandidatePointSeededTrackingRegionsProducer.h"
 #include "RecoTracker/TkTrackingRegions/plugins/L1MuonSeededTrackingRegionsProducer.h"
+#include "RecoTracker/TkTrackingRegions/plugins/L1TkMuonSeededTrackingRegionsProducer.h"
 #include "RecoTracker/MeasurementDet/interface/MeasurementTrackerEvent.h"
 #include "GlobalTrackingRegionWithVerticesProducer.h"
 #include "GlobalTrackingRegionProducer.h"
@@ -33,6 +34,10 @@ DEFINE_EDM_PLUGIN(TrackingRegionProducerFactory,
                   L1MuonSeededTrackingRegionsProducer,
                   "L1MuonSeededTrackingRegionsProducer");
 
+DEFINE_EDM_PLUGIN(TrackingRegionProducerFactory,
+                  L1TkMuonSeededTrackingRegionsProducer,
+                  "L1TkMuonSeededTrackingRegionsProducer");
+
 #include "RecoTracker/TkTrackingRegions/interface/TrackingRegionEDProducerT.h"
 using GlobalTrackingRegionEDProducer = TrackingRegionEDProducerT<GlobalTrackingRegionProducer>;
 DEFINE_FWK_MODULE(GlobalTrackingRegionEDProducer);
@@ -55,6 +60,9 @@ DEFINE_FWK_MODULE(CandidatePointSeededTrackingRegionsEDProducer);
 
 using L1MuonSeededTrackingRegionsEDProducer = TrackingRegionEDProducerT<L1MuonSeededTrackingRegionsProducer>;
 DEFINE_FWK_MODULE(L1MuonSeededTrackingRegionsEDProducer);
+
+using L1TkMuonSeededTrackingRegionsEDProducer = TrackingRegionEDProducerT<L1TkMuonSeededTrackingRegionsProducer>;
+DEFINE_FWK_MODULE(L1TkMuonSeededTrackingRegionsEDProducer);
 
 using AreaSeededTrackingRegionsEDProducer = TrackingRegionEDProducerT<AreaSeededTrackingRegionsProducer>;
 DEFINE_FWK_MODULE(AreaSeededTrackingRegionsEDProducer);

@@ -28,3 +28,16 @@ phase2L3MuonsOIFirst.toModify(
     hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions.RegionPSet,
     input = "hltPhase2L3MuonFilter:L1TkMuToReuse"
 )
+
+from RecoTracker.TkTrackingRegions.L1TkMuonSeededTrackingRegionsEDProducer import L1TkMuonSeededTrackingRegionsEDProducer as _L1TkMuonSeededTrackingRegionsEDProducer
+_hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions = _L1TkMuonSeededTrackingRegionsEDProducer()
+phase2L3MuonsOIFirst.toModify(
+    _hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions,
+    L1TkMuonInputCollection = "hltPhase2L3MuonFilter:L1TkMuToReuse"
+)
+
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+phase2CAExtension.toReplaceWith(
+    hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions,
+    _hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions
+)

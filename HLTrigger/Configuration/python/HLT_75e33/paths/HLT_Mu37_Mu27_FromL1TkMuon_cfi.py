@@ -27,3 +27,10 @@ HLT_Mu37_Mu27_FromL1TkMuon = cms.Path(
     + hltL3fL1DoubleMu155fFiltered37
     + HLTEndSequence
 )
+
+from Configuration.ProcessModifiers.alpaka_cff import alpaka
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(alpaka & phase2CAExtension).toReplaceWith(
+    HLT_Mu37_Mu27_FromL1TkMuon,
+    HLT_Mu37_Mu27_FromL1TkMuon.copyAndExclude([hltPhase2PixelFitterByHelixProjections, hltPhase2PixelTrackFilterByKinematics])
+)

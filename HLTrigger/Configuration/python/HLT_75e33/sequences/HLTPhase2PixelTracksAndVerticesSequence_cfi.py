@@ -47,8 +47,6 @@ from ..modules.hltPhase2PixelTracksCutClassifier_cfi import hltPhase2PixelTracks
 _HLTPhase2PixelTracksAndVerticesSequenceCAExtension = cms.Sequence(
    HLTBeamSpotSequence
   +hltPhase2PixelTracksAndHighPtStepTrackingRegions # needed by highPtTripletStep iteration
-  +hltPhase2PixelFitterByHelixProjections # needed by tracker muons
-  +hltPhase2PixelTrackFilterByKinematics  # needed by tracker muons
   +hltPhase2OtRecHitsSoA
   +hltPhase2PixelRecHitsExtendedSoA
   +hltPhase2PixelTracksSoA

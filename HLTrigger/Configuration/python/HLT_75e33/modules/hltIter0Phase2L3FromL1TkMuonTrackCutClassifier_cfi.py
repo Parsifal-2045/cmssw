@@ -35,3 +35,10 @@ hltIter0Phase2L3FromL1TkMuonTrackCutClassifier = cms.EDProducer("TrackCutClassif
     src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
     vertices = cms.InputTag("hltPhase2L3FromL1TkMuonTrimmedPixelVertices")
 )
+
+from Configuration.ProcessModifiers.alpaka_cff import alpaka
+alpaka.toModify(
+    hltIter0Phase2L3FromL1TkMuonTrackCutClassifier,
+    vertices = "hltPhase2PixelVertices"
+)
+
