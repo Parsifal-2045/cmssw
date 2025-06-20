@@ -10,3 +10,8 @@ HLTPhase2L3MuonsIOSequence = cms.Sequence(
     + HLTIter2Phase2L3FromL1TkSequence
 )
 
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+phase2CAExtension.toReplaceWith(
+    HLTPhase2L3MuonsIOSequence,
+    HLTPhase2L3MuonsIOSequence.copyAndExclude([HLTIter2Phase2L3FromL1TkSequence])
+)
