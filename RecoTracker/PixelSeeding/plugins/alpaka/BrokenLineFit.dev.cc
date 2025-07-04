@@ -1,6 +1,6 @@
-// MRMR #define BROKENLINE_DEBUG  // MRMR
-// MRMR #define BL_DUMP_HITS      // MRMR
-// MRMR #define GPU_DEBUG         // MRMR
+// #define BROKENLINE_DEBUG
+// #define BL_DUMP_HITS
+// #define GPU_DEBUG
 #include <cstdint>
 
 #include <alpaka/alpaka.hpp>
@@ -138,7 +138,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
 
 #ifdef BL_DUMP_HITS
-          bool dump = foundNtuplets->size(tkid) == 5;
           bool dump = foundNtuplets->size(tkid) >= 4;
           if (dump) {
             printf("Track local_id %d tkid: %d Hit %d on det: %d\nGlobal: hits.col(%d) << x: %f,y: %f, r(%f),z: %f\n",

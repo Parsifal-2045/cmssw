@@ -168,15 +168,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         for (auto& det : dets) {
           DetId detid = det->geographicalId();
           auto layer = trackerTopology.layer(detid);
-//          std::cout << "Looping on " << detid.rawId() << " on layer " << layer << std::endl;
+          //          std::cout << "Looping on " << detid.rawId() << " on layer " << layer << std::endl;
           // Logic:
           // - if we are not inside pixels, we need to ignore anything **but** the OT.
           // - for the time being, this is assuming that the CA extension will
           //   only cover the OT barrel part, and will ignore the OT forward.
           if (isPh2Pixel(detid)) {
-//            std::cout << "Good Pixel" << std::endl;
+            //            std::cout << "Good Pixel" << std::endl;
             if (layer != oldLayer) {
-              std::cout << "Pixel LayerStart: " << layerCount << " at layer " << layer << " has " << n_modules << " modules." << std::endl;
+#ifdef GPU_DEBUG
+              std::cout << "Pixel LayerStart: " << layerCount << " at layer " << layer << " has " << n_modules
+                        << " modules." << std::endl;
+#endif
               layerStarts[layerCount++] = n_modules;
               if (layerCount >= layerStarts.size())
                 break;
@@ -189,9 +192,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             for (auto& detUnit : detUnits) {
               DetId unitDetId(detUnit->geographicalId());
               if (isPinPSinOTBarrel(unitDetId)) {
-//                std::cout << "Good OT Barrel" << std::endl;
+                //std::cout << "Good OT Barrel" << std::endl;
                 if (layer != oldLayer) {
-                  std::cout << "OT LayerStart: " << layerCount << " at layer " << layer << " has " << n_modules << " modules." << std::endl;
+#ifdef GPU_DEBUG
+                  std::cout << "OT LayerStart: " << layerCount << " at layer " << layer << " has " << n_modules
+                            << " modules." << std::endl;
+#endif
                   layerStarts[layerCount++] = n_modules;
                   if (layerCount >= layerStarts.size())
                     break;
@@ -200,15 +206,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                 moduleToindexInDets.push_back(counter);
                 n_modules++;
               } else {
-//                std::cout << "BAD OT" << std::endl;
+                //std::cout << "BAD OT" << std::endl;
               }
             }
-//            std::cout << "Done OT" << std::endl;
+            //std::cout << "Done OT" << std::endl;
           }
           counter++;
         }
         layerStarts[n_layers] = n_modules;
+#ifdef GPU_DEBUG
         std::cout << "OT LayerStart: " << n_layers << " has " << n_modules << " modules." << std::endl;
+#endif
       } else {
         for (auto& det : dets) {
           DetId detid = det->geographicalId();
@@ -251,19 +259,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #ifdef GPU_DEBUG
           auto const& detUnits = det->components();
           for (auto& detUnit : detUnits) {
-             DetId unitDetId(detUnit->geographicalId());
-             if (isPinPSinOTBarrel(unitDetId)) {
-              std::cout << "Filling frame at index " << idx << " in SoA position " << i << " for det " << det->geographicalId() << " and detUnit->index: " << detUnit->index() << std::endl;
-              } 
+            DetId unitDetId(detUnit->geographicalId());
+            if (isPinPSinOTBarrel(unitDetId)) {
+              std::cout << "Filling frame at index " << idx << " in SoA position " << i << " for det "
+                        << det->geographicalId() << " and detUnit->index: " << detUnit->index() << std::endl;
+            }
           }
-          std::cout << "Filling frame at index " << idx << " in SoA position " << i << " for det " << det->geographicalId() << std::endl;
+          std::cout << "Filling frame at index " << idx << " in SoA position " << i << " for det "
+                    << det->geographicalId() << std::endl;
 #endif
           auto vv = det->surface().position();
           auto rr = Rotation(det->surface().rotation());
           modulesSoA[i].detFrame() = Frame(vv.x(), vv.y(), vv.z(), rr);
 #ifdef GPU_DEBUG
           std::cout << "Position: " << vv << " with Rotation: " << det->surface().rotation() << std::endl;
-          std::cout << "Rotation in Z-r plane: " << atan2(det->surface().normalVector().perp(),det->surface().normalVector().z())*180./M_PI << std::endl;
+          std::cout << "Rotation in Z-r plane: "
+                    << atan2(det->surface().normalVector().perp(), det->surface().normalVector().z()) * 180. / M_PI
+                    << std::endl;
 #endif
         }
 

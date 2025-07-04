@@ -1,7 +1,7 @@
 #ifndef RecoTracker_PixelSeeding_plugins_alpaka_CAHitNtupletGeneratorKernelsImpl_h
 #define RecoTracker_PixelSeeding_plugins_alpaka_CAHitNtupletGeneratorKernelsImpl_h
 
-#define GPU_DEBUG
+// #define GPU_DEBUG
 // #define NTUPLE_DEBUG
 // #define CA_DEBUG
 // #define CA_WARNINGS
@@ -435,7 +435,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
             if (t_ind >= maxTriplets) {
 #ifdef CA_WARNINGS
               printf("Warning!!!! Too many cell->cell (triplets) associations (limit = %d)!\n", cn.metadata().size());
-              assert(0);
 #endif
               alpaka::atomicSub(acc, nTrips, 1u, alpaka::hierarchy::Blocks{});
               break;

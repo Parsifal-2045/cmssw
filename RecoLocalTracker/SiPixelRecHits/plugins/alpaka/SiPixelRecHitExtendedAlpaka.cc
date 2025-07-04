@@ -36,7 +36,7 @@
 #include <optional>
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
-  
+
   class SiPixelRecHitExtendedAlpaka : public global::EDProducer<> {
   public:
     explicit SiPixelRecHitExtendedAlpaka(const edm::ParameterSet& iConfig);
@@ -53,14 +53,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const device::EDPutToken<reco::TrackingRecHitsSoACollection> outputRecHitsSoAToken_;
   };
 
-  
   SiPixelRecHitExtendedAlpaka::SiPixelRecHitExtendedAlpaka(const edm::ParameterSet& iConfig)
       : EDProducer(iConfig),
         pixelRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitsSoA"))),
         trackerRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("trackerRecHitsSoA"))),
         outputRecHitsSoAToken_(produces()) {}
 
-  
   void SiPixelRecHitExtendedAlpaka::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
     edm::ParameterSetDescription desc;
 
@@ -70,26 +68,25 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     descriptions.addWithDefaultLabel(desc);
   }
 
-  
   void SiPixelRecHitExtendedAlpaka::produce(edm::StreamID streamID,
-                                                           device::Event& iEvent,
-                                                           const device::EventSetup& es) const {
+                                            device::Event& iEvent,
+                                            const device::EventSetup& es) const {
     // get both Pixel and Tracker recHits
     auto queue = iEvent.queue();
     const auto& pixelRecHitsSoA = iEvent.get(pixelRecHitToken_);
     const auto& otRecHitsSoA = iEvent.get(trackerRecHitToken_);
-    std::cout << "----------------- Merging Pixel and Tracker RecHits -----------------" << std::endl;
+    //std::cout << "----------------- Merging Pixel and Tracker RecHits -----------------" << std::endl;
     const int nPixelHits = pixelRecHitsSoA.nHits();
-    std::cout << "Number of Pixel recHits: " << nPixelHits << std::endl;
+    //std::cout << "Number of Pixel recHits: " << nPixelHits << std::endl;
     const int nTrackerHits = otRecHitsSoA.nHits();
-    std::cout << "Number of Tracker recHits: " << nTrackerHits << std::endl;
+    //std::cout << "Number of Tracker recHits: " << nTrackerHits << std::endl;
     const int nTotHits = nPixelHits + nTrackerHits;
-    std::cout << "Number of Pixel modules: " << pixelRecHitsSoA.nModules() << std::endl;
-    std::cout << "Number of Tracker modules: " << otRecHitsSoA.nModules() << std::endl;
+    //std::cout << "Number of Pixel modules: " << pixelRecHitsSoA.nModules() << std::endl;
+    //std::cout << "Number of Tracker modules: " << otRecHitsSoA.nModules() << std::endl;
     const int nTotModules = pixelRecHitsSoA.nModules() + otRecHitsSoA.nModules();
 
     auto outputSoA = reco::TrackingRecHitsSoACollection(queue, nTotHits, nTotModules);
-    std::cout << "Total number of recHits: " << outputSoA.nHits() << std::endl;
+    //std::cout << "Total number of recHits: " << outputSoA.nHits() << std::endl;
 
     // copy all columns from pixelRecHitsSoA and otRecHitsSoA to outputSoA
     // xLocal

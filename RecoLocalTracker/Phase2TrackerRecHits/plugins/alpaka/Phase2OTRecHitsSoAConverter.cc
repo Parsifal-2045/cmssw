@@ -85,7 +85,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     descriptions.addWithDefaultLabel(desc);
   }
 
-  void Phase2OTRecHitsSoAConverter::beginRun(edm::Run const &iRun, edm::EventSetup const& iSetup) {
+  void Phase2OTRecHitsSoAConverter::beginRun(edm::Run const& iRun, edm::EventSetup const& iSetup) {
     const auto& trackerGeometry = &iSetup.getData(geomTokenRun_);
     auto isPinPSinOTBarrel = [&](DetId detId) {
       //    std::cout << (int)trackerGeometry->getDetectorType(detId) << " " << (trackerGeometry->getDetectorType(detId) == TrackerGeometry::ModuleType::Ph2PSP) << "\n";
@@ -112,7 +112,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         detIdToIndex_[detUnit->geographicalId()] = detUnit->index();
         moduleIndexToOffset_[detUnit->index()] = orderedModules_.size();
         orderedModules_.push_back(detUnit->index());
-        //      std::cout << "Inserted " << detUnit->index() << " " << p_modulesInPSInOTBarrel.size() << " on layer " << int((detId.rawId() >> 20) & 0xF) <<  std::endl;
+        //std::cout << "Inserted " << detUnit->index() << " " << p_modulesInPSInOTBarrel.size() << " on layer " << int((detId.rawId() >> 20) & 0xF) <<  std::endl;
       }
     }
   }
@@ -141,17 +141,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           PHitsInOTBarrel++;
       }
     }
-    std::cout << "Tot number of modules in Pixels " << modulesInPixel_ << std::endl;
-    std::cout << "Tot number of p_modulesInPSInOTBarrel: " << orderedModules_.size() << std::endl;
-    std::cout << "Number of strip (active) modules:      " << activeStripModules << std::endl;
-    std::cout << "Number of strip hits: " << nStripHits << std::endl;
-    std::cout << "Total hits of PinOTBarrel:   " << PHitsInOTBarrel << std::endl;
+    //std::cout << "Tot number of modules in Pixels " << modulesInPixel_ << std::endl;
+    //std::cout << "Tot number of p_modulesInPSInOTBarrel: " << orderedModules_.size() << std::endl;
+    //std::cout << "Number of strip (active) modules:      " << activeStripModules << std::endl;
+    //std::cout << "Number of strip hits: " << nStripHits << std::endl;
+    //std::cout << "Total hits of PinOTBarrel:   " << PHitsInOTBarrel << std::endl;
 
     HitsHost stripHitsHost(queue, PHitsInOTBarrel, orderedModules_.size());
     auto& stripHitsModuleView = stripHitsHost.view<::reco::HitModuleSoA>();
 
     std::vector<int> counterOfHitsPerModule(orderedModules_.size(), 0);
-    assert(orderedModules_.size());
+    assert(!orderedModules_.empty());
     for (const auto& detSet : stripHits) {
       auto firstHit = detSet.begin();
       auto detId = firstHit->rawId();
@@ -201,21 +201,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
             stripHitsHost.view()[idx].yLocal() = recHit.localPosition().y();
             stripHitsHost.view()[idx].xerrLocal() = recHit.localPositionError().xx();
             stripHitsHost.view()[idx].yerrLocal() = recHit.localPositionError().yy();
-            std::cout << "Local (x, y) with (xx, yy) --> (" << recHit.localPosition().x() << ", " << recHit.localPosition().y() << ") with (" << recHit.localPositionError().xx() << ", " << recHit.localPositionError().yy() << ")" << std::endl;
+            //std::cout << "Local (x, y) with (xx, yy) --> (" << recHit.localPosition().x() << ", "
+            //          << recHit.localPosition().y() << ") with (" << recHit.localPositionError().xx() << ", "
+            //          << recHit.localPositionError().yy() << ")" << std::endl;
             auto globalPosition = det->toGlobal(recHit.localPosition());
             double gx = globalPosition.x() - bs.x0();
             double gy = globalPosition.y() - bs.y0();
             double gz = globalPosition.z() - bs.z0();
-            std::cout << "Global           (x, y, z) --> (" << globalPosition.x() << ", " << globalPosition.y() << ", " << globalPosition.z() << ")" << std::endl;
-            std::cout << "Corrected Global (x, y, z) --> (" << gx << ", " << gy << ", " << gz << ")" << std::endl;
-            //        std::cout << gx << std::endl;
+            //std::cout << "Global           (x, y, z) --> (" << globalPosition.x() << ", " << globalPosition.y() << ", "
+            //          << globalPosition.z() << ")" << std::endl;
+            //std::cout << "Corrected Global (x, y, z) --> (" << gx << ", " << gy << ", " << gz << ")" << std::endl;
+            //std::cout << gx << std::endl;
             stripHitsHost.view()[idx].xGlobal() = gx;
             stripHitsHost.view()[idx].yGlobal() = gy;
             stripHitsHost.view()[idx].zGlobal() = gz;
             stripHitsHost.view()[idx].rGlobal() = sqrt(gx * gx + gy * gy);
             stripHitsHost.view()[idx].iphi() = unsafe_atan2s<7>(gy, gx);
             stripHitsHost.view()[idx].chargeAndStatus().charge = 0;
-            stripHitsHost.view()[idx].chargeAndStatus().status = {0, 0, 0, 0, 0};
+            stripHitsHost.view()[idx].chargeAndStatus().status = {false, false, false, false, 0};
             stripHitsHost.view()[idx].clusterSizeX() = -1;
             stripHitsHost.view()[idx].clusterSizeY() = -1;
             stripHitsHost.view()[idx].detectorIndex() = modulesInPixel_ + offset;
@@ -226,7 +229,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     stripHitsModuleView[orderedModules_.size()].moduleStart() =
         cumulativeHitPerModule[orderedModules_.size() - 1] + nPixelHits;
 
-    std::cout << "DONE" << std::endl;
+    //std::cout << "DONE" << std::endl;
 #if 0
   int current = 0;
   for (int h = 0; h < stripHitsHost.view().metadata().size(); ++h) {

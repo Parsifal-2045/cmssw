@@ -17,9 +17,9 @@
 #include "CAHitNtupletGeneratorKernels.h"
 #include "CAHitNtupletGeneratorKernelsImpl.h"
 
-//#define GPU_DEBUG
-//#define NTUPLE_DEBUG
-//#define CA_STATS
+// #define GPU_DEBUG
+// #define NTUPLE_DEBUG
+// #define CA_STATS
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
@@ -744,11 +744,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           workDiv1D,
                           Kernel_doStatsForTracks<TrackerTraits>{},
                           tracks_view,
-                          this->device_hitContainer_.data(),
-                          this->counters_.data());
+                          this->device_hitContainer_->data(),
+                          this->counters_->data());
 
       workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(1, 1);
-      alpaka::exec<Acc1D>(queue, workDiv1D, Kernel_printCounters{}, this->counters_.data());
+      alpaka::exec<Acc1D>(queue, workDiv1D, Kernel_printCounters{}, this->counters_->data());
       alpaka::wait(queue);
 
       workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(1, 1);
@@ -757,8 +757,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           Kernel_print_found_ntuplets<TrackerTraits>{},
                           hh,
                           tracks_view,
-                          this->device_hitContainer_.data(),
-                          this->device_hitToTuple_.data(),
+                          this->device_hitContainer_->data(),
+                          this->device_hitToTuple_->data(),
                           0,
                           100,
                           0);
@@ -814,7 +814,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   */
 
   template class CAHitNtupletGeneratorKernels<pixelTopology::Phase1>;
-  template class CAHitNtupletGeneratorKernels<pixelTopology::Phase2>;
   template class CAHitNtupletGeneratorKernels<pixelTopology::HIonPhase1>;
-
+  template class CAHitNtupletGeneratorKernels<pixelTopology::Phase2>;
+  template class CAHitNtupletGeneratorKernels<pixelTopology::Phase2OT>;
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE
