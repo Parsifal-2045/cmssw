@@ -72,16 +72,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   // This utility unrolls the SoA columns (tuples) at compile time, calling the provided functor 'f'
   // once for each element. The index is passed as a std::integral_constant so it
   // is available at compile time.
-  template <typename Tuple, typename F, std::size_t... Is>
-  void unrollColumns(Tuple&& t, F&& f, std::index_sequence<Is...>) {
-    (f(std::get<Is>(t), std::integral_constant<std::size_t, Is>{}), ...);
+  template <std::size_t N, typename F, std::size_t... Is>
+  void unrollColumns(F&& f, std::index_sequence<Is...>) {
+    (f(std::integral_constant<std::size_t, Is>{}), ...);
   }
   // User-facing wrapper to deduce the size of the tuple and create the index sequence
-  // Usage: mergeColumns(descriptor, [](auto& column, auto index) { ... });
-  template <typename Tuple, typename F>
-  void mergeSoAColumns(Tuple&& t, F&& f) {
-    constexpr size_t N = std::tuple_size<std::remove_reference_t<Tuple>>::value;
-    unrollColumns(std::forward<Tuple>(t), std::forward<F>(f), std::make_index_sequence<N>{});
+  // Usage: mergeSoAColumns<NumberOfColumns>([&](auto columnIndex) { ... });
+  template <std::size_t N, typename F>
+  void mergeSoAColumns(F&& f) {
+    unrollColumns<N>(std::forward<F>(f), std::make_index_sequence<N>{});
   }
 
   void SiPixelRecHitExtendedAlpaka::produce(edm::StreamID streamID,
@@ -120,7 +119,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               << "Number of Tracker recHits: " << nTrkHits << '\n'
               << "Total number of recHits: " << output.nHits() << '\n'
               << "Number of Pixel modules: " << nPixMod << '\n'
-              << "Number of Tracker modules: " << nTrkMod << '\n'
+              << "Number of Tracker modules: " << nTrkMod - 1 << '\n'
               << "Total number of modules: " << output.nModules() << '\n'
               << "---------------------------------------------------------------------\n";
 #endif
@@ -131,7 +130,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto trkView = trkColl.view();
 
     // layout type (same for all views)
-    using ViewType = std::remove_reference_t<decltype(outView)>;
+    using ViewType = decltype(outView);
     using LayoutType = typename ViewType::Metadata::TypeOf_Layout;
 
     // build descriptors (tuple of spans: one span for each column)
@@ -140,20 +139,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto trkDesc = LayoutType::ConstDescriptor(trkView);
 
     // merge all columns using a compile-time loop
-    mergeSoAColumns(outDesc.buff, [&](auto& outCol, auto columnIndex) {
-      constexpr std::size_t idx = decltype(columnIndex)::value;
-      const auto& pixCol = std::get<idx>(pixDesc.buff);
-      const auto& trkCol = std::get<idx>(trkDesc.buff);
+
+    // number of columns (same for all hits SoAs)
+    constexpr std::size_t N = std::tuple_size_v<decltype(outDesc.buff)>;
+
+    mergeSoAColumns<N>([&](auto columnIndex) {
+      auto& outCol = std::get<columnIndex>(outDesc.buff);
+      const auto& pixCol = std::get<columnIndex>(pixDesc.buff);
+      const auto& trkCol = std::get<columnIndex>(trkDesc.buff);
       // FIXME offsetBPIX2 is the only scalar column, all others are arrays
       // and should be copied as such, I have not found a better way to distinguish it from the others,
       // the code below is a workaround to copy the scalar column (as long as the layout does not change)
-      if constexpr (idx == 13) {
+      if constexpr (columnIndex == 13) {
         alpaka::memcpy(queue,
                        cms::alpakatools::make_device_view(queue, outCol.data(), 1),
                        cms::alpakatools::make_device_view(queue, pixCol.data(), 1));
 #ifdef GPU_DEBUG
         alpaka::wait(queue);
-        std::cout << "Copied scalar column with index " << idx << '\n';
+        std::cout << "Copied scalar column with index " << columnIndex << '\n';
 #endif
       } else {
         // copy Pixel hits
@@ -164,11 +167,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         alpaka::memcpy(queue,
                        cms::alpakatools::make_device_view(queue, outCol.data() + nPixHits, nTrkHits),
                        cms::alpakatools::make_device_view(queue, trkCol.data(), nTrkHits));
-      }
 #ifdef GPU_DEBUG
-      alpaka::wait(queue);
-      std::cout << "Copied array column with index " << idx << '\n';
+        alpaka::wait(queue);
+        std::cout << "Copied array column with index " << columnIndex << '\n';
 #endif
+      }
     });
     // copy hitModuleStart for Pixel modules
     alpaka::memcpy(
