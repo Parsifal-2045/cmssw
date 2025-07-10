@@ -286,6 +286,21 @@ namespace cms::soa {
               BOOST_PP_EMPTY(),                                                             \
               BOOST_PP_EXPAND(_ASSIGN_SPAN_TO_COLUMNS_IMPL TYPE_NAME))
 
+#define _DECLARE_COLUMN_NAME_IMPL(VALUE_TYPE, CPP_TYPE, NAME, ARGS) \
+  BOOST_PP_IF(BOOST_PP_GREATER(VALUE_TYPE, _VALUE_LAST_COLUMN_TYPE), BOOST_PP_EMPTY(), (BOOST_PP_STRINGIZE(NAME)))
+
+#define _DECLARE_COLUMN_NAME(R, DATA, TYPE_NAME) BOOST_PP_EXPAND(_DECLARE_COLUMN_NAME_IMPL TYPE_NAME)
+
+#define _DECLARE_COLUMN_TYPE_IMPL(VALUE_TYPE, CPP_TYPE, NAME, ARGS)  \
+  BOOST_PP_IF(BOOST_PP_GREATER(VALUE_TYPE, _VALUE_LAST_COLUMN_TYPE), \
+              BOOST_PP_EMPTY(),                                      \
+              (cms::soa::SoAColumnType::BOOST_PP_IF(                 \
+                  BOOST_PP_EQUAL(VALUE_TYPE, _VALUE_TYPE_SCALAR),    \
+                  scalar,                                            \
+                  BOOST_PP_IF(BOOST_PP_EQUAL(VALUE_TYPE, _VALUE_TYPE_COLUMN), column, eigen))))
+
+#define _DECLARE_COLUMN_TYPE(R, DATA, TYPE_NAME) BOOST_PP_EXPAND(_DECLARE_COLUMN_TYPE_IMPL TYPE_NAME)
+
 // clang-format off
 #define _DECLARE_MEMBER_TRIVIAL_CONSTRUCTION_IMPL(VALUE_TYPE, CPP_TYPE, NAME, ARGS)                                    \
   _SWITCH_ON_TYPE(VALUE_TYPE,                                                                                          \
@@ -1639,6 +1654,10 @@ _SWITCH_ON_TYPE(VALUE_TYPE,                                                     
           : buff{ _ITERATE_ON_ALL_COMMA(_ASSIGN_SPAN_TO_COLUMNS, ~, __VA_ARGS__)} {}                                   \
                                                                                                                        \
       std::tuple<_ITERATE_ON_ALL_COMMA(_DECLARE_CONST_DESCRIPTOR_SPANS, ~, __VA_ARGS__)> buff;                         \
+      static constexpr std::array<const char*, std::tuple_size_v<decltype(buff)>> columnNames = {{                     \
+        _ITERATE_ON_ALL_COMMA(_DECLARE_COLUMN_NAME, ~, __VA_ARGS__)}};                                                 \
+      static constexpr std::array<cms::soa::SoAColumnType, std::tuple_size_v<decltype(buff)>> columnTypes = {{         \
+        _ITERATE_ON_ALL_COMMA(_DECLARE_COLUMN_TYPE, ~, __VA_ARGS__)}};                                                 \
       static constexpr size_type num_cols = std::tuple_size<std::tuple<                                                \
                                     _ITERATE_ON_ALL_COMMA(_DECLARE_CONST_DESCRIPTOR_SPANS, ~, __VA_ARGS__)>>::value;   \
     };                                                                                                                 \
@@ -1651,6 +1670,10 @@ _SWITCH_ON_TYPE(VALUE_TYPE,                                                     
           : buff{ _ITERATE_ON_ALL_COMMA(_ASSIGN_SPAN_TO_COLUMNS, ~, __VA_ARGS__)} {}                                   \
                                                                                                                        \
       std::tuple<_ITERATE_ON_ALL_COMMA(_DECLARE_DESCRIPTOR_SPANS, ~, __VA_ARGS__)> buff;                               \
+      static constexpr std::array<const char*, std::tuple_size_v<decltype(buff)>> columnNames = {{                     \
+        _ITERATE_ON_ALL_COMMA(_DECLARE_COLUMN_NAME, ~, __VA_ARGS__)}};                                                 \
+      static constexpr std::array<cms::soa::SoAColumnType, std::tuple_size_v<decltype(buff)>> columnTypes = {{         \
+        _ITERATE_ON_ALL_COMMA(_DECLARE_COLUMN_TYPE, ~, __VA_ARGS__)}};                                                 \
       static constexpr size_type num_cols = std::tuple_size<std::tuple<                                                \
                                     _ITERATE_ON_ALL_COMMA(_DECLARE_DESCRIPTOR_SPANS, ~, __VA_ARGS__)>>::value;         \
     };                                                                                                                 \
