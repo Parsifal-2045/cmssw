@@ -30,9 +30,8 @@ HLT_TriMu_10_5_5_DZ_FromL1TkMuon = cms.Path(
     + HLTEndSequence
 )
 
-from Configuration.ProcessModifiers.alpaka_cff import alpaka
 from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
-(alpaka & phase2CAExtension).toReplaceWith(
+phase2CAExtension.toReplaceWith(
     HLT_TriMu_10_5_5_DZ_FromL1TkMuon,
     HLT_TriMu_10_5_5_DZ_FromL1TkMuon.copyAndExclude([hltPhase2PixelFitterByHelixProjections, hltPhase2PixelTrackFilterByKinematics])
 )

@@ -24,3 +24,12 @@ hltPhase2L3MuonGeneralTracks = cms.EDProducer("TrackListMerger",
     trackAlgoPriorityOrder = cms.string('hltPhase2L3MuonTrackAlgoPriorityOrder'),
     writeOnlyTrkQuals = cms.bool(False)
 )
+
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+_hltPhase2L3MuonPixelTracks = cms.EDProducer("TrackSelectorByRegion",
+    produceMask = cms.bool(False),
+    produceTrackCollection = cms.bool(True),
+    regions = cms.InputTag("hltPhase2L3MuonPixelTracksAndHighPtTripletTrackingRegions"),
+    tracks = cms.InputTag("hltPhase2PixelTracks")
+)
+phase2CAExtension.toReplaceWith(hltPhase2L3MuonGeneralTracks, _hltPhase2L3MuonPixelTracks)
