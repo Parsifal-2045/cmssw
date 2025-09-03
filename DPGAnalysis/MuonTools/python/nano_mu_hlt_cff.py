@@ -3,12 +3,12 @@ import FWCore.ParameterSet.Config as cms
 from PhysicsTools.NanoAOD.common_cff import *
 from DPGAnalysis.MuonTools.common_cff import *
 
-
 from PhysicsTools.NanoAOD.l1trig_cff import *
 
-from PhysicsTools.NanoAOD.simpleCandidateFlatTableProducer_cfi import simpleCandidateFlatTableProducer
-
 from Validation.RecoMuon.muonValidationHLT_cff import *
+
+from PhysicsTools.NanoAOD.simpleCandidateFlatTableProducer_cfi import simpleCandidateFlatTableProducer
+from PhysicsTools.NanoAOD.trackingAssocValueMapsProducer_cfi import trackingAssocValueMapsProducer
 
 from DPGAnalysis.MuonTools.nano_mu_local_reco_cff import dtSegmentFlatTable as dtSegmentFlatTable_
 
@@ -122,76 +122,40 @@ l1TkMuTable = cms.EDProducer(
     )
 )
 
-# L2 offline seeds
-l2SeedTable = cms.EDProducer(
-    "SimpleTrajectorySeedFlatTableProducer",
-    src = cms.InputTag("hltL2OfflineMuonSeeds"),
-    cut = cms.string(""),
-    name = cms.string("l2_seed_offline"),
-    doc = cms.string(""),
-    extension = cms.bool(False),
-    variables = cms.PSet(
-        pt = Var("startingState().pt()", "float", doc = "p_T (GeV)"),
-        nHits = Var("nHits()", "int16", doc = ""),
-        localX = Var(
-            "startingState().parameters().position().x()",
-            "float",
-            doc = "local x of the seed",
-        ),
-        localY = Var(
-            "startingState().parameters().position().y()",
-            "float",
-            doc = "local y of the seed",
-        )
-    )
-)
-
-# L2 seeds from L1Tk Muons
-l2SeedFromL1TkMuonTable = cms.EDProducer(
-    "SimpleL2MuonTrajectorySeedFlatTableProducer",
-    src = cms.InputTag("hltL2MuonSeedsFromL1TkMuon"),
-    cut = cms.string(""),
-    name = cms.string("phase2_l2_seed"),
-    doc = cms.string(""),
-    extension = cms.bool(False),
-    variables = cms.PSet(
-        pt = Var("startingState().pt()", "float", doc = "p_T (GeV)"),
-        nHits = Var(
-            "nHits()", "int16", doc = "number of DT/CSC segments propagated to the seed"
-        ),
-        eta = Var("l1TkMu().phEta()", "float", doc = "associated L1TkMu #eta"),
-        phi = Var("l1TkMu().phPhi()", "float", doc = "associated L1TkMu #phi"),
-        localX = Var(
-            "startingState().parameters().position().x()",
-            "float",
-            doc = "local x of the seed",
-        ),
-        localY = Var(
-            "startingState().parameters().position().y()",
-            "float",
-            doc = "local y of the seed",
-        )
-    )
-)
-
 # L2 standalone muons
 l2MuTable = cms.EDProducer(
     "SimpleTriggerTrackFlatTableProducer",
+    skipNonExistingSrc = cms.bool(True),
     src = cms.InputTag("hltL2MuonsFromL1TkMuon"),
     cut = cms.string(""),
     name = cms.string("l2_mu"),
     doc = cms.string("Standalone Muon tracks"),
     extension = cms.bool(False),
     variables = cms.PSet(
+        p = Var("p()", "float", doc = "p (GeV)"),
+        qoverp = Var("qoverp()", "float", doc = "q/p"),
         pt = Var("pt()", "float", doc = "p_T (GeV)"),
         eta = Var("eta()", "float", doc = "#eta"),
         phi = Var("phi()", "float", doc = "#phi (rad)"),
-        dXY = Var("dxy()", "float", doc = "dXY (cm)"),
-        dZ = Var("dz()", "float", doc = "dZ (cm)"),
-        t0 = Var("t0()", "float", doc = "t0 (ns)"),
+        dsz = Var("dsz()", "float", doc = "dsz (cm)"),
+        dxy = Var("dxy()", "float", doc = "dxy (cm)"),
+        dz = Var("dz()", "float", doc = "dz (cm)"),
+        qoverpErr = Var("qoverpError()", "float", doc = ""),
+        ptErr = Var("ptError()", "float", doc = ""),
+        lambdaErr = Var("lambdaError()", "float", doc = ""),
+        dszErr = Var("dszError()", "float", doc = ""),
+        etaErr = Var("etaError()", "float", doc = ""),
+        phiErr = Var("phiError()", "float", doc = ""),
+        dxyErr = Var("dxyError()", "float", doc = ""),
+        dzErr = Var("dzError()", "float", doc = ""),
+        chi2 = Var("chi2()", "float", doc = ""),
+        ndof = Var("ndof()", "int16", doc = ""),
+        normalizedChi2 = Var("normalizedChi2()", "float", doc = ""),
+        nLostHits = Var("lost()", "int16", doc = ""),
+        nFoundHits = Var("found()", "int16", doc = ""),
         nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
         nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
-        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = "")
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
     )
 )
 
@@ -202,11 +166,74 @@ l2MuTableVtx = l2MuTable.clone(
     doc = cms.string("Standalone Muon tracks updated at vertex")
 )
 
+tpSelectorMuon = cms.PSet(
+    pdgId = cms.vint32(13, -13),
+    tip = cms.double(3.5),
+    lip = cms.double(30.0),
+    minHit = cms.int32(0),
+    ptMin = cms.double(0.9),
+    ptMax = cms.double(1e100),
+    minRapidity = cms.double(-2.4),
+    maxRapidity = cms.double(2.4),
+    signalOnly = cms.bool(True),
+    intimeOnly = cms.bool(True),  # discard OOT PU
+    stableOnly = cms.bool(True),  # discard decays in flight from the signal event
+    chargedOnly = cms.bool(True)
+)
+
+muonPixelTracksV = trackingAssocValueMapsProducer.clone(
+    trackCollection =  cms.InputTag("hltPhase2L3FromL1TkMuonPixelTracks"),
+    associators = cms.InputTag("Phase2tpToMuonPixelTracksAssociation"),
+    trackingParticles = cms.InputTag("mix", "MergedTrackTruth"),
+    tpSelectorPSet = tpSelectorMuon,
+    storeTPKinematics = cms.bool(True),
+)
+
+muonPixelTracksTable = l2MuTable.clone(
+    src = cms.InputTag("hltPhase2L3FromL1TkMuonPixelTracks"),
+    name = cms.string("muon_pixel_tracks"),
+    doc = cms.string("L3 Muon Pixel Tracks"),
+    externalVariables = cms.PSet(
+        matched   = cms.PSet(src = cms.InputTag("muonPixelTracksV","matched"),
+                             doc = cms.string("1 if matched to a TrackingParticle"),
+                             type = cms.string("uint8")),
+        duplicate = cms.PSet(src = cms.InputTag("muonPixelTracksV","duplicate"),
+                             doc = cms.string("1 if multiple reco tracks map to same TP"),
+                             type = cms.string("uint8")),
+        tpPdgId  = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpPdgId"),
+                             doc = cms.string("pdgId of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpCharge = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpCharge"),
+                             doc = cms.string("charge of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpPt     = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpPt"),
+                             doc = cms.string("pt of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpEta    = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpEta"),
+                             doc = cms.string("eta of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpPhi    = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpPhi"),
+                             doc = cms.string("phi of matched TrackingParticle"),
+                             type = cms.string("float"))
+    )
+)
+
+l3TkIOSingleIterTable = l2MuTable.clone(
+        src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
+        name = cms.string("l3_tk_IO_SingleIter"),
+        doc = cms.string("L3 Tracker Muon tracks Inside-Out Single Iteration")
+)
+
+l3TkIOSingleIterHPTable = l2MuTable.clone(
+        src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity"),
+        name = cms.string("l3_tk_IO_SingleIter_HP"),
+        doc = cms.string("L3 Tracker Muon tracks Inside-Out Single Iteration High Purity")
+)
 # L3 IO inner tracks
 l3TkIOTable = l2MuTable.clone(
     src = cms.InputTag("hltIter2Phase2L3FromL1TkMuonMerged"),
     name = cms.string("l3_tk_IO"),
-    doc = cms.string("L3 Tracker Muon tracks Inside-Out")
+    doc = cms.string("L3 Tracker Muon tracks Inside-Out") 
 )
 
 # L3 OI inner tracks
@@ -272,15 +299,20 @@ l3TkOIFilteredTable = l2MuTable.clone(
     doc = cms.string("L3 Tracker Muons Outside-In filtered (quality cuts and match with L1TkMu)")
 )
 
+from Validation.RecoMuon.associators_cff import muonAssociationHLT_seq
+
 # Default Phase 2 HLT muon ntuples producers sequence (Inside-Out first)
 hltMuonTriggerProducers = cms.Sequence(
-    recoMuonValidationHLT_seq
+    cms.SequencePlaceholder("TPmu")
+    + muonAssociationHLT_seq 
     + hltLocalRecoMuon_seq
     + l1TkMuTable
-    + l2SeedFromL1TkMuonTable
     + l2MuTable
     + l2MuTableVtx
-    + l3TkIOTable
+    + muonPixelTracksV
+    + muonPixelTracksTable
+    + l3TkIOSingleIterTable
+    + l3TkIOSingleIterHPTable
     + l2MuToReuseTable
     + l3TkIOFilteredTable
     + l3TkOITable
@@ -295,7 +327,6 @@ _hltMuonTriggerProducersOIFirst = cms.Sequence(
     recoMuonValidationHLT_seq
     + hltLocalRecoMuon_seq
     + l1TkMuTable
-    + l2SeedFromL1TkMuonTable
     + l2MuTable
     + l2MuTableVtx
     + l3TkOITable
