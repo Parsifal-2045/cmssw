@@ -159,8 +159,9 @@ l2SeedFromL1TkMuonTable = cms.EDProducer(
         nHits = Var(
             "nHits()", "int16", doc = "number of DT/CSC segments propagated to the seed"
         ),
-        eta = Var("l1TkMu().phEta()", "float", doc = "associated L1TkMu #eta"),
-        phi = Var("l1TkMu().phPhi()", "float", doc = "associated L1TkMu #phi"),
+        hasL1TkMu = Var("l1TkMu().has_value()", "bool", doc = "flag indicating if a L1TkMu is associated"),
+        eta = Var("?l1TkMu().has_value()? l1TkMu().value().phEta() : l1SAMu().value.phEta()", "float", doc = "associated L1TkMu #eta"),
+        phi = Var("?l1TkMu().has_value()? l1TkMu().value().phPhi() : l1SAMu().value.phPhi()", "float", doc = "associated L1TkMu #phi"),
         localX = Var(
             "startingState().parameters().position().x()",
             "float",

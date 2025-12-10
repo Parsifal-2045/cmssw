@@ -27,6 +27,16 @@ L2MuonTrajectorySeed::L2MuonTrajectorySeed(PTrajectoryStateOnDet const& ptsos,
   theL1TParticle = l1Ref;
 }
 
+// Phase 2 Constructors
+
+L2MuonTrajectorySeed::L2MuonTrajectorySeed(PTrajectoryStateOnDet const& ptsos,
+                                           RecHitContainer const& rh,
+                                           PropagationDirection dir,
+                                           l1t::SAMuonRef l1SAMuRef)
+    : TrajectorySeed(ptsos, rh, dir) {
+  theL1SAMu = l1SAMuRef;
+}
+
 L2MuonTrajectorySeed::L2MuonTrajectorySeed(PTrajectoryStateOnDet const& ptsos,
                                            RecHitContainer const& rh,
                                            PropagationDirection dir,
