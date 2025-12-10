@@ -140,7 +140,10 @@ void Phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
       // Extract L1TkMu from L2 Muon
       edm::RefToBase<TrajectorySeed> seedRef = l2MuRef->seedRef();
       edm::Ref<L2MuonTrajectorySeedCollection> l2Seed = seedRef.castTo<edm::Ref<L2MuonTrajectorySeedCollection>>();
-      l1t::TrackerMuonRef l1TkMuRef = l2Seed->l1TkMu();
+      l1t::TrackerMuonRef l1TkMuRef = edm::Ref<l1t::TrackerMuonCollection>();
+      if (l2Seed->l1TkMu().has_value()) {
+        l1TkMuRef = l2Seed->l1TkMu().value();
+      }
 
       // Check validity of cast (actually found a L1TkMu)
       if (l1TkMuRef.isNonnull()) {
@@ -168,8 +171,13 @@ void Phase2HLTMuonSelectorForL3::produce(edm::Event& iEvent, const edm::EventSet
           }
         }  // End loop over L3 Tracks
       } else {
-        LogDebug(metname) << "Found L2 muon without an associated L1TkMu";
+        if (l2Seed->l1SAMu().has_value()) {
+          LogDebug(metname) << "Found Standalone Muon with L1SAMu associated, but not L1TkMu";
+        } else {
+          throw cms::Exception("InvalidInput") << "L2 Muon seed has no L1 SA/Tk Muon associated!";
+        }
       }
+
       if (reuseL2) {
         LogDebug(metname) << "Found a L2 muon to be reused";
         L2MuToReuse->push_back(*l2MuRef);

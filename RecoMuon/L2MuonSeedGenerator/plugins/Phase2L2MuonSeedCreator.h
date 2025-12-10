@@ -23,6 +23,7 @@
  */
 
 #include "DataFormats/MuonSeed/interface/L2MuonTrajectorySeed.h"
+#include "DataFormats/L1TMuonPhase2/interface/SAMuon.h"
 #include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
 
 #include "FWCore/Framework/interface/stream/EDProducer.h"
@@ -69,7 +70,7 @@ class GeomDet;
 class MagneticField;
 class MuonTransientTrackingRecHit;
 
-enum Type { barrel, overlap, endcap };
+enum MuonRegion { barrel, overlap, endcap };
 
 class Phase2L2MuonSeedCreator : public edm::stream::EDProducer<> {
 public:
@@ -87,7 +88,10 @@ public:
 
 private:
   // Tokens
+  const edm::EDGetTokenT<l1t::SAMuonCollection> l1SAMuCollToken_;
   const edm::EDGetTokenT<l1t::TrackerMuonCollection> l1TkMuCollToken_;
+  const edm::EDGetTokenT<l1t::SAMuonCollection> l1SADisplacedMuCollToken_;
+
   const edm::EDGetTokenT<CSCSegmentCollection> cscSegmentCollToken_;
   const edm::EDGetTokenT<DTRecSegment4DCollection> dtSegmentCollToken_;
 
@@ -97,7 +101,6 @@ private:
 
   // Miminum and maximum pt momentum of a track
   const double minMomentum_;
-  const double maxMomentum_;
 
   // Parameters to match L1 stubs to DT/CSC segments
   const double matchingPhiWindow_;
@@ -118,6 +121,46 @@ private:
   std::unique_ptr<MeasurementEstimator> estimator_;
 
   const std::string propagatorName_;
+
+  const bool useL1SAMuons_;  // whether to use L1 Standalone Muons in addition to L1Tk Muons
+
+  // Methods
+
+  // Get L1 Tracker Muon and L1 Muon kinematics
+  template <typename L1MuRefType>
+  std::tuple<float, float, float, int, float, float, float, float, float, MuonRegion> getKinematics(
+      L1MuRefType l1MuRef) const;
+
+  // Match L1 stubs (Tk or SA) to DT/CSC segments
+  template <typename L1RefType>
+  const std::tuple<std::map<DTChamberId, std::pair<int, int>>, std::map<CSCDetId, std::pair<int, int>>, bool, bool>
+  matchStubs(const L1RefType L1Mu,
+             const DTRecSegment4DCollection& dtSegments,
+             const CSCSegmentCollection& cscSegments,
+             const float eta,
+             const float theta,
+             const MuonRegion muonRegion) const;
+
+  // Produce TrajectorySeed
+  template <typename L1MuRefType>
+  const std::optional<L2MuonTrajectorySeed> makeTrajectorySeed(
+      const edm::EventSetup& iSetup,
+      const L1MuRefType L1Mu,
+      const bool atLeastOneMatch,
+      const bool bestInDt,
+      const std::map<DTChamberId, std::pair<int, int>>& matchesInBarrel,
+      const std::map<CSCDetId, std::pair<int, int>>& matchesInEndcap,
+      const DTRecSegment4DCollection& dtSegments,
+      const CSCSegmentCollection& cscSegments,
+      const float cosTheta,
+      const float sinTheta,
+      const float cosPhi,
+      const float sinPhi,
+      const float pt,
+      const float eta,
+      const float phi,
+      const int charge,
+      const edm::ESHandle<MagneticField>& magneticFieldHandle) const;
 
   // In DT station 4 the top and bottom sectors are made of two chambers
   // due to material requirements. Online is not split:
