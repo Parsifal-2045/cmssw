@@ -37,9 +37,7 @@ public:
       : BFieldToken_{iC.esConsumes()},
         l1TkMuToken_{iC.consumes(iConfig.getParameter<edm::InputTag>("L1TkMuonInputCollection"))},
         l1TkMuMinPt_{iConfig.getParameter<double>("L1TkMuMinPt")},
-        l1TkMuMaxEta_{iConfig.getParameter<double>("L1TkMuMaxEta")},
-        minPtBarrel_{iConfig.getParameter<double>("setMinPtBarrelTo")},
-        minPtEndcap_{iConfig.getParameter<double>("setMinPtEndcapTo")} {
+        l1TkMuMaxEta_{iConfig.getParameter<double>("L1TkMuMaxEta")} {
     edm::ParameterSet regPSet = iConfig.getParameter<edm::ParameterSet>("RegionPSet");
 
     // operation mode
@@ -120,22 +118,32 @@ public:
     // L1Tk muon selection parameters
     desc.add<double>("L1TkMuMinPt", 0.0);
     desc.add<double>("L1TkMuMaxEta", 2.5);
-    desc.add<double>("setMinPtBarrelTo", 0.0);
-    desc.add<double>("setMinPtEndcapTo", 0.0);
 
     // Tracking region parameters
     edm::ParameterSetDescription descRegion;
     descRegion.add<std::string>("mode", "BeamSpotSigma");
-    descRegion.add<int>("maxNRegions", 10);
+    descRegion.add<int>("maxNRegions", 1000);
     descRegion.add<edm::InputTag>("beamSpot", edm::InputTag("hltOnlineBeamSpot"));
     descRegion.add<edm::InputTag>("vertexCollection", edm::InputTag("notUsed"));
     descRegion.add<int>("maxNVertices", 1);
-    descRegion.add<double>("ptMin", 0.0);
+    descRegion.add<double>("ptMin", 0.9);
     descRegion.add<double>("originRadius", 0.2);
     descRegion.add<double>("zErrorBeamSpot", 24.2);
-    descRegion.add<std::vector<double>>("ptRanges", {0.0, 5.0, 10.0, 15.0, 20.0, 1e+64});
-    descRegion.add<std::vector<double>>("deltaEtas", {0.015, 0.01, 0.01, 0.01, 0.01});
-    descRegion.add<std::vector<double>>("deltaPhis", {0.05, 0.05, 0.02, 0.02, 0.01});
+    descRegion.add<std::vector<double>>("ptRanges", {0, 2, 5, 10, 20, 100, 1e+64});
+    descRegion.add<std::vector<double>>("deltaEtas",
+                                        {0.381562344259246178,
+                                         0.400000000000000022,
+                                         0.356785877308460897,
+                                         0.370628483752130478,
+                                         0.189668085845357853,
+                                         0.361631833260902369});
+    descRegion.add<std::vector<double>>("deltaPhis",
+                                        {0.231714560700229083,
+                                         0.358006276029556370,
+                                         0.387586985166598452,
+                                         0.400000000000000022,
+                                         0.318285114337861774,
+                                         0.266571364011164214});
     descRegion.add<double>("nSigmaZVertex", 3.);
     descRegion.add<double>("zErrorVertex", 0.2);
     descRegion.add<double>("nSigmaZBeamSpot", 4.);
@@ -209,18 +217,12 @@ public:
     int nRegions = 0;
     for (size_t l1TkMuIndex = 0; l1TkMuIndex < L1TkMuCollH->size() && nRegions < maxNRegions_; ++l1TkMuIndex) {
       l1t::TrackerMuonRef l1TkMu(L1TkMuCollH, l1TkMuIndex);
-      // Physical info of the L1Tk muon
-      float pt = l1TkMu->phPt();
-      const float eta = l1TkMu->phEta();
+      auto trkPtr = l1TkMu->trkPtr();
+      // Physical info of the L1Tk muon track
+      float pt = trkPtr->momentum().perp();
+      const float eta = trkPtr->momentum().eta();
       if (pt < l1TkMuMinPt_ || std::abs(eta) > l1TkMuMaxEta_) {
         continue;
-      }
-      const bool barrel = eta < 1.2;
-      if (barrel && pt < minPtBarrel_) {
-        pt = minPtBarrel_;
-      }
-      if (!barrel && pt < minPtEndcap_) {
-        pt = minPtEndcap_;
       }
       // set deltaEta and deltaPhi from L1Tk muon pt
       auto deltaEta = deltaEtas_.at(0);
@@ -230,9 +232,7 @@ public:
         deltaEta = deltaEtas_.at(lowEdge - ptRanges_.begin() - 1);
         deltaPhi = deltaPhis_.at(lowEdge - ptRanges_.begin() - 1);
       }
-      // direction of the L1Tk muon
-      const auto trk = l1TkMu->trkPtr();
-      GlobalVector direction(trk->momentum().x(), trk->momentum().y(), trk->momentum().z());
+      GlobalVector direction(trkPtr->momentum().x(), trkPtr->momentum().y(), trkPtr->momentum().z());
 
       for (size_t j = 0; j < origins.size() && nRegions < maxNRegions_; ++j) {
         result.push_back(std::make_unique<RectangularEtaPhiTrackingRegion>(direction,
@@ -273,8 +273,6 @@ private:
 
   const double l1TkMuMinPt_;
   const double l1TkMuMaxEta_;
-  const double minPtBarrel_;
-  const double minPtEndcap_;
 
   int maxNVertices_;
   int maxNRegions_;
