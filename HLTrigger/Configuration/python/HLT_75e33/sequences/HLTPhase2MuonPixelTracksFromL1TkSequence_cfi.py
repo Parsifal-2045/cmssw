@@ -19,12 +19,14 @@ HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
 )
 
 from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
+from ..modules.hltPhase2MuonPixelTracksDNNSelector_cfi import *
 _HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
     HLTPhase2PixelTracksAndVerticesSequence.copyAndExclude(
         [hltPhase2PixelTracksAndHighPtStepTrackingRegions]
     )
     + hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions 
     + hltPhase2L3FromL1TkMuonPixelTracks
+    + hltPhase2MuonPixelTracksDNNSelector
 )
 
 from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension

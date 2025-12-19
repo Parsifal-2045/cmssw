@@ -15,7 +15,7 @@ hltIter0Phase2L3FromL1TkMuonPixelSeedsFromPixelTracks = cms.EDProducer("SeedGene
 )
 
 _hltIter0Phase2L3FromL1TkMuonPixelSeedsFromPixelTracks = cms.EDProducer("SeedGeneratorFromProtoTracksEDProducer",
-    InputCollection = cms.InputTag("hltPhase2L3FromL1TkMuonPixelTracks"),
+    InputCollection = cms.InputTag("hltPhase2MuonPixelTracksDNNSelector"),#"hltPhase2L3FromL1TkMuonPixelTracks"),
     InputVertexCollection = cms.InputTag(''),
     SeedCreatorPSet = cms.PSet(
         refToPSet_ = cms.string('hltPhase2SeedFromProtoTracks')
