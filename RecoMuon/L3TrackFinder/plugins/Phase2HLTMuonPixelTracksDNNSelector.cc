@@ -33,8 +33,6 @@ private:
   edm::EDGetTokenT<l1t::TrackerMuonCollection> l1TkMuonsToken_;
 
   // Scaler parameters (loaded from config)
-  const std::vector<double> scalerMean_;
-  const std::vector<double> scalerScale_;
   std::vector<int> prunedFeatureIndices_;
 
   // Model parameters
@@ -47,21 +45,12 @@ MuonPixelTracksDNNSelector::MuonPixelTracksDNNSelector(const edm::ParameterSet& 
                                                        const cms::Ort::ONNXRuntime* cache)
     : tracksToken_(consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("tracks"))),
       l1TkMuonsToken_(consumes<l1t::TrackerMuonCollection>(iConfig.getParameter<edm::InputTag>("l1TkMuons"))),
-      scalerMean_(iConfig.getParameter<std::vector<double>>("scalerMean")),
-      scalerScale_(iConfig.getParameter<std::vector<double>>("scalerScale")),
       decisionThreshold_(iConfig.getParameter<double>("decisionThreshold")),
       usePrunedFeatures_(iConfig.getParameter<bool>("usePrunedFeatures")),
       nFeatures_(iConfig.getParameter<int>("nFeatures")) {
   if (usePrunedFeatures_) {
     auto indices = iConfig.getParameter<std::vector<int>>("prunedFeatureIndices");
     prunedFeatureIndices_ = indices;
-  }
-
-  // Validate scaler dimensions
-  if (scalerMean_.size() != static_cast<size_t>(nFeatures_) || scalerScale_.size() != static_cast<size_t>(nFeatures_)) {
-    throw cms::Exception("Configuration")
-        << "Scaler dimensions mismatch: expected " << nFeatures_ << " features, got mean=" << scalerMean_.size()
-        << " scale=" << scalerScale_.size();
   }
 
   produces<reco::TrackCollection>();
@@ -214,12 +203,6 @@ void MuonPixelTracksDNNSelector::produce(edm::Event& iEvent, const edm::EventSet
 
   for (const auto& track : *tracks) {
     auto features = extractFeatures(track, *l1TkMuons);
-
-    // Apply standardization
-    for (size_t i = 0; i < features.size(); ++i) {
-      features[i] = (features[i] - scalerMean_[i]) / scalerScale_[i];
-    }
-
     inputData.insert(inputData.end(), features.begin(), features.end());
   }
 
@@ -228,10 +211,6 @@ void MuonPixelTracksDNNSelector::produce(edm::Event& iEvent, const edm::EventSet
   std::vector<std::vector<int64_t>> inputShapes = {
       {static_cast<int64_t>(tracks->size()), static_cast<int64_t>(nFeatures_)}};
   cms::Ort::FloatArrays inputTensor({inputData});
-
-  //std::vector<int64_t> inputShape = {static_cast<int64_t>(tracks->size()), static_cast<int64_t>(nFeatures_)};
-  //cms::Ort::FloatArrays inputTensor;
-  //inputTensor.emplace_back(inputData);
 
   auto outputs = globalCache()->run({"input"}, inputTensor, inputShapes, {"output"}, 1);
 
@@ -247,7 +226,8 @@ void MuonPixelTracksDNNSelector::produce(edm::Event& iEvent, const edm::EventSet
     }
   }
 
-  //std::cout << "Selected " << selectedTracks->size() << " out of " << tracks->size() << " tracks." << std::endl;
+  std::cout << "MuonPixelTracksDNNSelector - Selected " << selectedTracks->size() << " out of " << tracks->size()
+            << " tracks." << std::endl;
 
   iEvent.put(std::move(selectedTracks));
   iEvent.put(std::move(scores), "scores");
@@ -258,8 +238,6 @@ void MuonPixelTracksDNNSelector::fillDescriptions(edm::ConfigurationDescriptions
   desc.add<edm::InputTag>("tracks", edm::InputTag("hltPhase2L3FromL1TkMuonPixelTracks"));
   desc.add<edm::InputTag>("l1TkMuons", edm::InputTag("l1tTkMuonsGmt"));
   desc.add<std::string>("modelPath", "RecoMuon/L3TrackFinder/data/muon_pixeltrack_selector.onnx");
-  desc.add<std::vector<double>>("scalerMean", {});
-  desc.add<std::vector<double>>("scalerScale", {});
   desc.add<std::vector<int>>("prunedFeatureIndices", {});
   desc.add<double>("decisionThreshold", 0.5);
   desc.add<bool>("usePrunedFeatures", true);
