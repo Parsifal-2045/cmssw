@@ -24,7 +24,7 @@ _HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
     HLTPhase2PixelTracksAndVerticesSequence.copyAndExclude(
         [hltPhase2PixelTracksAndHighPtStepTrackingRegions]
     )
-    + hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions 
+    #+ hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions # used by TrackSelectorByRegion
     + hltPhase2L3FromL1TkMuonPixelTracks
     + hltPhase2MuonPixelTracksDNNSelector
 )

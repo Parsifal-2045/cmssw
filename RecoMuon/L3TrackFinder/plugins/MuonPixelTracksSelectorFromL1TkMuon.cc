@@ -36,11 +36,11 @@ private:
   const edm::EDGetTokenT<reco::TrackCollection> tkToken_;
   // Track selection parameters
   const double l1TkMuMinPt_;
-  const double l1TkMuMaxEta_;
   const double tkMinPt_;
-  const bool cutOnSharedPt_;
-  const double maxPtDiff_;
+  const double tkMaxEta_;
+  const double maxDz_;
   const double maxDr_;
+  const double maxChi2_;
 };
 
 MuonPixelTracksSelectorFromL1TkMuon::MuonPixelTracksSelectorFromL1TkMuon(const edm::ParameterSet& iConfig)
@@ -48,11 +48,11 @@ MuonPixelTracksSelectorFromL1TkMuon::MuonPixelTracksSelectorFromL1TkMuon(const e
           iConfig.getParameter<edm::InputTag>("L1TkMuonInputCollection"))},
       tkToken_{consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("TrackInputCollection"))},
       l1TkMuMinPt_{iConfig.getParameter<double>("L1TkMuMinPt")},
-      l1TkMuMaxEta_{iConfig.getParameter<double>("L1TkMuMaxEta")},
       tkMinPt_{iConfig.getParameter<double>("trackMinPt")},
-      cutOnSharedPt_{iConfig.getParameter<bool>("cutOnSharedPt")},
-      maxPtDiff_{iConfig.getParameter<double>("maxNormalisedPtDifference")},
-      maxDr_{iConfig.getParameter<double>("maxDr")} {
+      tkMaxEta_{iConfig.getParameter<double>("trackMaxEta")},
+      maxDz_{iConfig.getParameter<double>("maxDz")},
+      maxDr_{iConfig.getParameter<double>("maxDr")},
+      maxChi2_{iConfig.getParameter<double>("maxChi2")} {
   produces<reco::TrackCollection>();
 }
 
@@ -78,7 +78,7 @@ void MuonPixelTracksSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm:
   // Loop over L1TkMuons
   for (size_t l1TkMuIndex = 0; l1TkMuIndex != l1TkMuCollectionH->size(); ++l1TkMuIndex) {
     l1t::TrackerMuonRef l1TkMuRef(l1TkMuCollectionH, l1TkMuIndex);
-    double l1TkMuEta, l1TkMuPhi, l1TkMuPt;
+    float l1TkMuEta, l1TkMuPhi, l1TkMuPt, l1TkMuZ0;
     auto trkPtr = l1TkMuRef->trkPtr();
 
     if (!trkPtr.isNull()) {
@@ -86,16 +86,20 @@ void MuonPixelTracksSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm:
       l1TkMuEta = trkPtr->momentum().eta();
       l1TkMuPhi = trkPtr->momentum().phi();
       l1TkMuPt = trkPtr->momentum().perp();
+      l1TkMuZ0 = trkPtr->z0();
     } else {
       // Fallback to standalone muon coordinates
+      std::cout << "L1TkMuon has no tracker pointer, using muon system coordinates";
       l1TkMuEta = l1TkMuRef->phEta();
       l1TkMuPhi = l1TkMuRef->phPhi();
       l1TkMuPt = l1TkMuRef->phPt();
-      std::cout << "L1TkMuon has no tracker pointer, using muon system coordinates";
+      l1TkMuZ0 = l1TkMuRef->phZ0();
     }
 
     // Basic kinematic selection
-    if (l1TkMuPt < l1TkMuMinPt_ || std::abs(l1TkMuEta) > l1TkMuMaxEta_) {
+    if (l1TkMuPt < l1TkMuMinPt_) {
+      std::cout << "MuonPixelTracksSelectorFromL1TkMuon: L1Tk muon with pT = " << l1TkMuPt << " and eta = " << l1TkMuEta
+                << " fails kinematic selection\n";
       continue;
     }
     // Loop over tracks
@@ -107,35 +111,56 @@ void MuonPixelTracksSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm:
 
       reco::TrackRef tkRef(tkCollectionH, tkIndex);
       // Basic kinematic selection
-      if (tkRef->pt() < tkMinPt_ || std::abs(tkRef->eta()) > l1TkMuMaxEta_) {
+      if (tkRef->pt() < tkMinPt_ || std::abs(tkRef->eta()) > tkMaxEta_) {
         continue;
       }
+
+      // Check impact parameter match to reject PU tracks
+      if (std::abs(tkRef->dz() - l1TkMuZ0) > maxDz_) {
+        continue;
+      }
+
       // Check match in dR
       float dR2 = deltaR2(l1TkMuEta, l1TkMuPhi, tkRef->eta(), tkRef->phi());
       if (dR2 < maxDr_ * maxDr_) {
-        // If requested, check match in shared pT
-        if (cutOnSharedPt_) {
-          float normPtDiff = std::abs(l1TkMuPt - tkRef->pt()) / l1TkMuPt;
-          if (normPtDiff <= maxPtDiff_) {
-            selectedTracksIndices.insert(tkIndex);
-            outputTracks->push_back(*tkRef);
-            std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Track with index " << tkIndex
-                      << " matched to L1Tk muon with dR = " << sqrt(dR2)
-                      << " and normalised pT difference = " << normPtDiff << '\n';
-          }
-        } else {
-          std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Track with index " << tkIndex
-                    << " matched to L1Tk muon with dR = " << sqrt(dR2) << '\n'
-                    << "Normalised pT difference = " << std::abs(l1TkMuPt - tkRef->pt()) / l1TkMuPt << '\n';
+#if 1
+        int l1TkMuCharge = l1TkMuRef->phCharge();
+        float l1TkMuQoverPt = float(l1TkMuCharge) / l1TkMuPt;
+
+        float tkQoverPt = float(tkRef->charge()) / tkRef->pt();
+
+        // sigma(1/x) ~ sigma(x) / x^2
+        float tkQoverPtError = tkRef->ptError() / (tkRef->pt() * tkRef->pt());
+
+        float curvDiff = l1TkMuQoverPt - tkQoverPt;
+        float chi2Curv = (curvDiff * curvDiff) / (tkQoverPtError * tkQoverPtError);
+
+        if (chi2Curv < maxChi2_) {
           selectedTracksIndices.insert(tkIndex);
           outputTracks->push_back(*tkRef);
+          std::cout << "Track with index " << tkIndex << " matched to L1Tk muon ---  dR = " << sqrt(dR2)
+                    << ", chi2 qOverPt = " << chi2Curv << ", track z0 =  " << tkRef->dz()
+                    << ", L1TkMu z0 = " << l1TkMuZ0 << '\n';
         }
+#endif
+#if 0
+        // Check match in shared pT
+        float ptDiff = l1TkMuPt - tkRef->pt();
+        float chi2Pt = ptDiff * ptDiff / (tkRef->ptError() * tkRef->ptError());
+        if (chi2Pt < maxChi2_) {
+          selectedTracksIndices.insert(tkIndex);
+          outputTracks->push_back(*tkRef);
+          std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Track with index " << tkIndex
+                    << " matched to L1Tk muon with dR = " << sqrt(dR2) << " , chi2 pT = " << chi2Pt
+                    << ", track z0 =  " << tkRef->dz() << ", L1TkMu z0 = " << l1TkMuZ0 << '\n';
+        }
+#endif
       }
     }  // End loop over tracks
   }  // End loop over L1Tk muons
 
   std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Selected " << outputTracks->size() << " tracks out of "
-            << tkCollectionH->size() << " input tracks. Using " << l1TkMuCollectionH->size() << " L1 Tracker Muons\n";
+            << tkCollectionH->size() << " input tracks, using " << l1TkMuCollectionH->size() << " L1 Tracker Muons\n";
 
   if (outputTracks->size() < l1TkMuCollectionH->size()) {
     std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Warning! Fewer tracks selected (" << outputTracks->size()
@@ -150,15 +175,15 @@ void MuonPixelTracksSelectorFromL1TkMuon::fillDescriptions(edm::ConfigurationDes
 
   desc.add<edm::InputTag>("L1TkMuonInputCollection", edm::InputTag("l1tTkMuonsGmt"));
   // L1Tk muon selection parameters
-  desc.add<double>("L1TkMuMinPt", 0.9);
-  desc.add<double>("L1TkMuMaxEta", 2.5);
+  desc.add<double>("L1TkMuMinPt", 0);
 
   // Track selection parameters
   desc.add<edm::InputTag>("TrackInputCollection", edm::InputTag("generalTracks"));
   desc.add<double>("trackMinPt", 0.9);
-  desc.add<bool>("cutOnSharedPt", false);
-  desc.add<double>("maxNormalisedPtDifference", 0.1);
-  desc.add<double>("maxDr", 0.3);
+  desc.add<double>("trackMaxEta", 3.0);
+  desc.add<double>("maxChi2", 9);
+  desc.add<double>("maxDr", 0.4);
+  desc.add<double>("maxDz", 1.0);
   descriptions.addWithDefaultLabel(desc);
 }
 
