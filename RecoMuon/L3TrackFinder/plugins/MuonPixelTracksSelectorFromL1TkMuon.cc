@@ -58,25 +58,61 @@ MuonPixelTracksSelectorFromL1TkMuon::MuonPixelTracksSelectorFromL1TkMuon(const e
 
 void MuonPixelTracksSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
   const std::string metname = "RecoMuon|L3TrackFinder|MuonPixelTracksSelectorFromL1TkMuon";
+
+  // Output collection
+  std::unique_ptr<reco::TrackCollection> outputTracks = std::make_unique<reco::TrackCollection>();
+
   // Get input collections
   auto const l1TkMuCollectionH = iEvent.getHandle(l1TkMuToken_);
   auto const tkCollectionH = iEvent.getHandle(tkToken_);
   if (!l1TkMuCollectionH.isValid() || !tkCollectionH.isValid() || l1TkMuCollectionH->empty() ||
       tkCollectionH->empty()) {
     LogDebug(metname) << "Input collection not valid or empty! Returning empty collection." << '\n';
+    iEvent.put(std::move(outputTracks));
+    //std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Input collection not valid or empty! Returning empty collection."
+    //          << '\n';
     return;
   }
-  // Output collection
+
+  // Keep track of already selected tracks to avoid duplicates
   std::unordered_set<size_t> selectedTracksIndices;
-  selectedTracksIndices.reserve(l1TkMuCollectionH->size() * 4);
+  selectedTracksIndices.reserve(l1TkMuCollectionH->size() * 2);  // rough estimate
 
-  std::unique_ptr<reco::TrackCollection> outputTracks = std::make_unique<reco::TrackCollection>();
-  outputTracks->reserve(l1TkMuCollectionH->size() * 4);
+  outputTracks->reserve(l1TkMuCollectionH->size() * 2);  // rough estimate
 
-  std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Starting selection of tracks from " << tkCollectionH->size()
-            << " input tracks and " << l1TkMuCollectionH->size() << " L1Tk muons" << '\n';
+  //std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Starting selection of tracks from " << tkCollectionH->size()
+  //          << " input tracks and " << l1TkMuCollectionH->size() << " L1Tk muons" << '\n';
   // Loop over L1TkMuons
   for (size_t l1TkMuIndex = 0; l1TkMuIndex != l1TkMuCollectionH->size(); ++l1TkMuIndex) {
+    /*
+    bool skipL1TkMu = true;
+
+    for (auto stub : l1TkMuCollectionH->at(l1TkMuIndex).stubs()) {
+      if (!stub.isNull()) {
+        if (stub->type() == 0) {
+          if (stub->quality() >= 2) {
+            skipL1TkMu = false;
+            break;
+          }
+        } else if (stub->type() == 1) {
+          if (stub->quality() >= 3) {
+            skipL1TkMu = false;
+            break;
+          }
+        } else {
+          edm::LogError("MuonPixelTracksSelectorFromL1TkMuon") << "Encountered stub with unknown type " << stub->type()
+                                                               << " in L1TkMuon with index " << l1TkMuIndex << "\n";
+        }
+      }
+    }
+
+    if (skipL1TkMu) {
+      std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Skipping L1Tk muon with index " << l1TkMuIndex
+                << " since it has no stubs with high enough quality\n";
+      continue;
+    }
+    */
+
     l1t::TrackerMuonRef l1TkMuRef(l1TkMuCollectionH, l1TkMuIndex);
     float l1TkMuEta, l1TkMuPhi, l1TkMuPt, l1TkMuZ0;
     auto trkPtr = l1TkMuRef->trkPtr();
@@ -138,9 +174,9 @@ void MuonPixelTracksSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm:
         if (chi2Curv < maxChi2_) {
           selectedTracksIndices.insert(tkIndex);
           outputTracks->push_back(*tkRef);
-          std::cout << "Track with index " << tkIndex << " matched to L1Tk muon ---  dR = " << sqrt(dR2)
-                    << ", chi2 qOverPt = " << chi2Curv << ", track z0 =  " << tkRef->dz()
-                    << ", L1TkMu z0 = " << l1TkMuZ0 << '\n';
+          //std::cout << "Track with index " << tkIndex << " matched to L1Tk muon ---  dR = " << sqrt(dR2)
+          //          << ", chi2 qOverPt = " << chi2Curv << ", track z0 =  " << tkRef->dz()
+          //          << ", L1TkMu z0 = " << l1TkMuZ0 << '\n';
         }
 #endif
 #if 0
@@ -159,13 +195,9 @@ void MuonPixelTracksSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm:
     }  // End loop over tracks
   }  // End loop over L1Tk muons
 
-  std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Selected " << outputTracks->size() << " tracks out of "
-            << tkCollectionH->size() << " input tracks, using " << l1TkMuCollectionH->size() << " L1 Tracker Muons\n";
+  //std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Selected " << outputTracks->size() << " tracks out of "
+  //          << tkCollectionH->size() << " input tracks, using " << l1TkMuCollectionH->size() << " L1 Tracker Muons\n";
 
-  if (outputTracks->size() < l1TkMuCollectionH->size()) {
-    std::cout << "MuonPixelTracksSelectorFromL1TkMuon: Warning! Fewer tracks selected (" << outputTracks->size()
-              << ") than L1TkMu in event (" << l1TkMuCollectionH->size() << ")\n";
-  }
   // Put output in the event
   iEvent.put(std::move(outputTracks));
 }

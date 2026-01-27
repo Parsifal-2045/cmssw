@@ -18,13 +18,14 @@ HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
     + hltPhase2L3FromL1TkMuonTrimmedPixelVertices
 )
 
-from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
 from ..modules.hltPhase2MuonPixelTracksDNNSelector_cfi import *
+from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
+
 _HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
     HLTPhase2PixelTracksAndVerticesSequence.copyAndExclude(
         [hltPhase2PixelTracksAndHighPtStepTrackingRegions]
     )
-    #+ hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions # used by TrackSelectorByRegion
+    # + hltPhase2L3FromL1TkMuonPixelTracksTrackingRegions # used by TrackSelectorByRegion
     + hltPhase2L3FromL1TkMuonPixelTracks
     + hltPhase2MuonPixelTracksDNNSelector
 )
@@ -34,4 +35,3 @@ phase2CAExtension.toReplaceWith(
     HLTPhase2MuonPixelTracksFromL1TkSequence,
     _HLTPhase2MuonPixelTracksFromL1TkSequence
 )
-
