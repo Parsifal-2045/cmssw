@@ -1,40 +1,40 @@
 /**
- * PixelTrackDNNSelector.cc
- * 
+ * MuonIOTracksDNNSelector.cc
+ *
  * CMSSW EDProducer for DNN-based muon pixel track selection.
  * This module implements feature extraction matching the Python training exactly.
- * 
+ *
  * Feature order (must match training):
  * ====================================
  * LOG FEATURES (log10(|x| + 1e-6)):
- *   0: muon_pixel_tracks_p
- *   1: muon_pixel_tracks_pt
- *   2: muon_pixel_tracks_ptErr
- *   3: muon_pixel_tracks_chi2
- *   4: muon_pixel_tracks_normalizedChi2
- *   5: muon_pixel_tracks_etaErr
- *   6: muon_pixel_tracks_phiErr
- *   7: muon_pixel_tracks_dszErr
- *   8: muon_pixel_tracks_dxyErr
- *   9: muon_pixel_tracks_dzErr
- *  10: muon_pixel_tracks_qoverpErr
- *  11: muon_pixel_tracks_lambdaErr
- * 
+ *   0: track_p
+ *   1: track_pt
+ *   2: track_ptErr
+ *   3: track_chi2
+ *   4: track_normalizedChi2
+ *   5: track_etaErr
+ *   6: track_phiErr
+ *   7: track_dszErr
+ *   8: track_dxyErr
+ *   9: track_dzErr
+ *  10: track_qoverpErr
+ *  11: track_lambdaErr
+ *
  * PLAIN FEATURES (no transform):
- *  12: muon_pixel_tracks_eta
- *  13: muon_pixel_tracks_nPixelHits
- *  14: muon_pixel_tracks_nTrkLays
- *  15: muon_pixel_tracks_nFoundHits
- *  16: muon_pixel_tracks_nLostHits
- * 
+ *  12: track_eta
+ *  13: track_nPixelHits
+ *  14: track_nTrkLays
+ *  15: track_nFoundHits
+ *  16: track_nLostHits
+ *
  * DERIVED FEATURES:
- *  17: muon_pixel_tracks_impact3D        (log10(dxy^2 + dz^2 + eps))
- *  18: muon_pixel_tracks_impactSignificance (log10(sqrt((dxy/dxyErr)^2 + (dz/dzErr)^2) + eps))
- *  19: muon_pixel_tracks_chi2PerHit      (log10(chi2 / max(nFoundHits, 1) + eps))
- *  20: muon_pixel_tracks_hitEfficiency   (nFoundHits / max(nFoundHits + nLostHits, 1))
- *  21: muon_pixel_tracks_sigmaPtOverPt   (log10(ptErr / pt + eps))
- *  22: muon_pixel_tracks_relUncertaintyProduct (log10((ptErr/pt) * (qoverpErr/|qoverp|) + eps))
- * 
+ *  17: track_impact3D        (log10(dxy^2 + dz^2 + eps))
+ *  18: track_impactSignificance (log10(sqrt((dxy/dxyErr)^2 + (dz/dzErr)^2) + eps))
+ *  19: track_chi2PerHit      (log10(chi2 / max(nFoundHits, 1) + eps))
+ *  20: track_hitEfficiency   (nFoundHits / max(nFoundHits + nLostHits, 1))
+ *  21: track_sigmaPtOverPt   (log10(ptErr / pt + eps))
+ *  22: track_relUncertaintyProduct (log10((ptErr/pt) * (qoverpErr/|qoverp|) + eps))
+ *
  * L1TkMuon MATCHING FEATURES (if useL1TkMuFeatures=true):
  *  23-26: Stub features (if available): nStubs, nStubs_Endcap, nStubs_Barrel, stubQual_max
  *  27: L1TkMu_hasMatch     (1.0 if matched, 0.0 otherwise)
@@ -42,7 +42,7 @@
  *  29: L1TkMu_dPtNorm      (log10(|pt - l1_pt|/l1_pt + eps), imputed with 1.0)
  *  30: L1TkMu_chi2Pt       (log10((pt - l1_pt)^2 / ptErr^2 + eps), imputed with 10.0)
  *  31: L1TkMu_matchingScore (log10(min_dR2 * (1 + dPtNorm) + eps), imputed with 0.2)
- * 
+ *
  * LOW pT INDICATOR:
  *  32: is_low_pt           (1 / (1 + exp(clip((pt - 5.0) * 2.0, -20, 20))))
  */
@@ -69,10 +69,10 @@
 #include <algorithm>
 #include <limits>
 
-class PixelTrackDNNSelector : public edm::stream::EDProducer<edm::GlobalCache<cms::Ort::ONNXRuntime>> {
+class MuonIOTracksDNNSelector : public edm::stream::EDProducer<edm::GlobalCache<cms::Ort::ONNXRuntime>> {
 public:
-  explicit PixelTrackDNNSelector(const edm::ParameterSet&, const cms::Ort::ONNXRuntime*);
-  ~PixelTrackDNNSelector() override = default;
+  explicit MuonIOTracksDNNSelector(const edm::ParameterSet&, const cms::Ort::ONNXRuntime*);
+  ~MuonIOTracksDNNSelector() override = default;
 
   static void fillDescriptions(edm::ConfigurationDescriptions&);
   static std::unique_ptr<cms::Ort::ONNXRuntime> initializeGlobalCache(const edm::ParameterSet&);
@@ -81,11 +81,7 @@ public:
 private:
   void produce(edm::Event&, const edm::EventSetup&) override;
 
-  // Feature extraction - matches Python build_dataset() exactly
   std::vector<float> extractFeatures(const reco::Track& track, const l1t::TrackerMuonCollection& l1TkMuons) const;
-
-  // Helper: compute deltaPhi with proper wrapping
-  static float deltaPhi(float phi1, float phi2);
 
   // Input tokens
   edm::EDGetTokenT<reco::TrackCollection> tracksToken_;
@@ -97,19 +93,19 @@ private:
   const bool useStubFeatures_;
   const int nFeatures_;
 
-  // L1 Matching parameters (from Python)
+  // L1 Matching parameters
   static constexpr float kMatchDR2Cut = 0.09f;    // 0.3^2
   static constexpr float kMatchChi2PtCut = 9.0f;  // 3 sigma
   static constexpr float kEpsilon = 1e-6f;
 
-  // Imputation values for non-matched L1 features (from Python)
+  // Imputation values for non-matched L1 features
   static constexpr float kImputeDR2 = 0.1f;
   static constexpr float kImputeDPtNorm = 1.0f;
   static constexpr float kImputeChi2Pt = 10.0f;
   static constexpr float kImputeMatchScore = 0.2f;
 };
 
-PixelTrackDNNSelector::PixelTrackDNNSelector(const edm::ParameterSet& iConfig, const cms::Ort::ONNXRuntime* cache)
+MuonIOTracksDNNSelector::MuonIOTracksDNNSelector(const edm::ParameterSet& iConfig, const cms::Ort::ONNXRuntime* cache)
     : tracksToken_(consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("tracks"))),
       l1TkMuonsToken_(consumes<l1t::TrackerMuonCollection>(iConfig.getParameter<edm::InputTag>("l1TkMuons"))),
       decisionThreshold_(iConfig.getParameter<double>("decisionThreshold")),
@@ -120,32 +116,18 @@ PixelTrackDNNSelector::PixelTrackDNNSelector(const edm::ParameterSet& iConfig, c
   produces<std::vector<float>>("scores");
 }
 
-std::unique_ptr<cms::Ort::ONNXRuntime> PixelTrackDNNSelector::initializeGlobalCache(const edm::ParameterSet& iConfig) {
+std::unique_ptr<cms::Ort::ONNXRuntime> MuonIOTracksDNNSelector::initializeGlobalCache(const edm::ParameterSet& iConfig) {
   edm::FileInPath modelPath(iConfig.getParameter<std::string>("modelPath"));
   return std::make_unique<cms::Ort::ONNXRuntime>(modelPath.fullPath());
 }
 
-void PixelTrackDNNSelector::globalEndJob(const cms::Ort::ONNXRuntime* cache) {}
+void MuonIOTracksDNNSelector::globalEndJob(const cms::Ort::ONNXRuntime* cache) {}
 
-float PixelTrackDNNSelector::deltaPhi(float phi1, float phi2) {
-  // Matches Python: (dphi + pi) % 2pi - pi
-  float dphi = phi1 - phi2;
-  // Wrap to [-pi, pi]
-  while (dphi > M_PI)
-    dphi -= 2.0f * M_PI;
-  while (dphi < -M_PI)
-    dphi += 2.0f * M_PI;
-  return dphi;
-}
-
-std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& track,
-                                                          const l1t::TrackerMuonCollection& l1TkMuons) const {
+std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& track,
+                                                            const l1t::TrackerMuonCollection& l1TkMuons) const {
   std::vector<float> features;
   features.reserve(nFeatures_);
 
-  // ========================================
-  // Extract raw track quantities
-  // ========================================
   const float p = track.p();
   const float pt = track.pt();
   const float ptErr = track.ptError();
@@ -170,10 +152,6 @@ std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& tra
   const int nFoundHits = track.numberOfValidHits();
   const int nLostHits = track.numberOfLostHits();
 
-  // ========================================
-  // LOG FEATURES (12 features)
-  // Order matches Python log_features list exactly
-  // ========================================
   features.push_back(std::log10(std::abs(p) + kEpsilon));               // 0: p
   features.push_back(std::log10(std::abs(pt) + kEpsilon));              // 1: pt
   features.push_back(std::log10(std::abs(ptErr) + kEpsilon));           // 2: ptErr
@@ -187,55 +165,38 @@ std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& tra
   features.push_back(std::log10(std::abs(qoverpErr) + kEpsilon));       // 10: qoverpErr
   features.push_back(std::log10(std::abs(lambdaErr) + kEpsilon));       // 11: lambdaErr
 
-  // ========================================
-  // PLAIN FEATURES (5 features)
-  // Order matches Python plain_features list exactly
-  // ========================================
   features.push_back(static_cast<float>(eta));         // 12: eta
   features.push_back(static_cast<float>(nPixelHits));  // 13: nPixelHits
   features.push_back(static_cast<float>(nTrkLays));    // 14: nTrkLays
   features.push_back(static_cast<float>(nFoundHits));  // 15: nFoundHits
   features.push_back(static_cast<float>(nLostHits));   // 16: nLostHits
 
-  // ========================================
-  // DERIVED FEATURES (6 features)
-  // ========================================
-
   // 17: Impact Parameter 3D (log)
-  // Python: ip3d = trk_dxy**2 + trk_dz**2
   const float impact3D = dxy * dxy + dz * dz;
   features.push_back(std::log10(impact3D + kEpsilon));
 
   // 18: Impact Significance (log)
-  // Python: sip2d = sqrt((dxy/max(dxyErr,eps))^2 + (dz/max(dzErr,eps))^2)
   const float dxySignificance = dxy / std::max(dxyErr, kEpsilon);
   const float dzSignificance = dz / std::max(dzErr, kEpsilon);
   const float impactSignificance = std::sqrt(dxySignificance * dxySignificance + dzSignificance * dzSignificance);
   features.push_back(std::log10(impactSignificance + kEpsilon));
 
   // 19: Chi2 per hit (log)
-  // Python: chi2_hit = trk_chi2 / np.maximum(trk_nFound, 1)
   const float chi2PerHit = chi2 / std::max(nFoundHits, 1);
   features.push_back(std::log10(chi2PerHit + kEpsilon));
 
   // 20: Hit Efficiency (linear, NOT log)
-  // Python: hit_eff = trk_nFound / np.maximum(trk_nFound + trk_nLost, 1)
   const float hitEfficiency = static_cast<float>(nFoundHits) / std::max(nFoundHits + nLostHits, 1);
   features.push_back(hitEfficiency);
 
   // 21: SigmaPt / Pt (log)
-  // Python: sigmaPtOverPt = trk_ptErr / np.maximum(trk_pt, eps)
   const float sigmaPtOverPt = ptErr / std::max(pt, kEpsilon);
   features.push_back(std::log10(sigmaPtOverPt + kEpsilon));
 
   // 22: Relative Uncertainty Product (log)
-  // Python: (ptErr/pt) * (qoverpErr / max(|qoverp|, eps))
   const float relUncertaintyProduct = sigmaPtOverPt * (qoverpErr / std::max(std::abs(qoverp), kEpsilon));
   features.push_back(std::log10(relUncertaintyProduct + kEpsilon));
 
-  // ========================================
-  // L1TkMuon MATCHING FEATURES
-  // ========================================
   if (useL1TkMuFeatures_) {
     // Find best L1 match (minimum deltaR2)
     float minDR2 = std::numeric_limits<float>::max();
@@ -255,7 +216,6 @@ std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& tra
       float chi2pT = (pt - l1Pt) * (pt - l1Pt) / (ptErr * ptErr);
       if (chi2pT > 9.0)
         continue;
-      // Compute deltaR2 using proper deltaPhi
       const float dR2 = reco::deltaR2(eta, phi, l1Eta, l1Phi);
 
       if (dR2 < minDR2) {
@@ -271,19 +231,14 @@ std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& tra
     float matchingScore = kImputeMatchScore;
 
     if (matchedL1Pt > 0) {
-      // Python: dPt_matrix = np.abs(t_pt - l1_pt) / l1_pt
       dPtNorm = std::abs(pt - matchedL1Pt) / matchedL1Pt;
 
-      // Python: ratio_matrix = (t_pt - l1_pt)**2 / t_ptErr**2
       const float ptDiff = pt - matchedL1Pt;
       chi2Pt = (ptDiff * ptDiff) / (ptErr * ptErr);
 
-      // Python: matched_score = min_dR2 * (1.0 + matched_dPt)
       matchingScore = minDR2 * (1.0f + dPtNorm);
     }
 
-    // Determine if this is a "good" match (Python matching criteria)
-    // Python: has_match = (min_dR2 < 0.09) & (chi2Pt < 9.0) & exists
     hasL1Match = (minDR2 < kMatchDR2Cut) && (chi2Pt < kMatchChi2PtCut) && (matchedL1Pt > 0);
 
     // Add stub features if enabled
@@ -340,18 +295,13 @@ std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& tra
       features.push_back(std::log10(std::abs(matchingScore) + kEpsilon));
     } else {
       // Imputed values (from Python fill_value parameters)
-      features.push_back(std::log10(std::abs(kImputeDR2) + kEpsilon));         // 0.1
-      features.push_back(std::log10(std::abs(kImputeDPtNorm) + kEpsilon));     // 1.0
-      features.push_back(std::log10(std::abs(kImputeChi2Pt) + kEpsilon));      // 10.0
-      features.push_back(std::log10(std::abs(kImputeMatchScore) + kEpsilon));  // 0.2
+      features.push_back(std::log10(std::abs(kImputeDR2) + kEpsilon));         
+      features.push_back(std::log10(std::abs(kImputeDPtNorm) + kEpsilon));     
+      features.push_back(std::log10(std::abs(kImputeChi2Pt) + kEpsilon));      
+      features.push_back(std::log10(std::abs(kImputeMatchScore) + kEpsilon)); 
     }
   }
 
-  // ========================================
-  // LOW pT INDICATOR (last feature)
-  // ========================================
-  // Python: exponent = (pt - 5.0) * 2.0; exponent = clip(exponent, -20, 20)
-  //         low_pt_indicator = 1.0 / (1.0 + exp(exponent))
   float exponent = (pt - 5.0f) * 2.0f;
   exponent = std::clamp(exponent, -20.0f, 20.0f);
   const float lowPtIndicator = 1.0f / (1.0f + std::exp(exponent));
@@ -360,7 +310,7 @@ std::vector<float> PixelTrackDNNSelector::extractFeatures(const reco::Track& tra
   return features;
 }
 
-void PixelTrackDNNSelector::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
+void MuonIOTracksDNNSelector::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
   auto selectedTracks = std::make_unique<reco::TrackCollection>();
   auto scores = std::make_unique<std::vector<float>>();
 
@@ -394,11 +344,10 @@ void PixelTrackDNNSelector::produce(edm::Event& iEvent, const edm::EventSetup& i
   auto outputs = globalCache()->run({"input"}, inputTensor, inputShapes, {"output"}, 1);
 
   // Model outputs probabilities directly (sigmoid is in the network)
-  // No need to apply sigmoid here if model exports with sigmoid
   const auto& probs = outputs[0];
 
-  std::cout << "PixelTrackDNNSelector - Processing " << tracks->size() << " tracks with threshold "
-            << decisionThreshold_ << "\n";
+  //std::cout << "MuonIOTracksDNNSelector - Processing " << tracks->size() << " tracks with threshold "
+  //          << decisionThreshold_ << "\n";
 
   for (size_t i = 0; i < tracks->size(); ++i) {
     float prob = probs[i];
@@ -415,14 +364,14 @@ void PixelTrackDNNSelector::produce(edm::Event& iEvent, const edm::EventSetup& i
     }
   }
 
-  std::cout << "PixelTrackDNNSelector - Selected " << selectedTracks->size() << " out of " << tracks->size()
-            << " tracks\n";
+  //std::cout << "MuonIOTracksDNNSelector - Selected " << selectedTracks->size() << " out of " << tracks->size()
+  //          << " tracks\n";
 
   iEvent.put(std::move(selectedTracks));
   iEvent.put(std::move(scores), "scores");
 }
 
-void PixelTrackDNNSelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
+void MuonIOTracksDNNSelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
 
   desc.add<edm::InputTag>("tracks", edm::InputTag("hltPhase2L3FromL1TkMuonPixelTracks"))
@@ -442,4 +391,4 @@ void PixelTrackDNNSelector::fillDescriptions(edm::ConfigurationDescriptions& des
 }
 
 #include "FWCore/Framework/interface/MakerMacros.h"
-DEFINE_FWK_MODULE(PixelTrackDNNSelector);
+DEFINE_FWK_MODULE(MuonIOTracksDNNSelector);
