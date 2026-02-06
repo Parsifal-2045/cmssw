@@ -49,14 +49,28 @@ HLTPhase2L3MuonGeneralTracksSequence = cms.Sequence(
     +hltPhase2L3MuonGeneralTracks
     )
 
-from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
 from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
-_HLTPhase2L3MuonGeneralTracksSequence = cms.Sequence(
+_HLTPhase2L3MuonPixelTracksSequence = cms.Sequence(
     HLTPhase2PixelTracksAndVerticesSequence
     +hltPhase2L3MuonPixelTracksAndHighPtTripletTrackingRegions
     +hltPhase2L3MuonGeneralTracks
 )
+
+from ..sequences.HLTTrackingSequence_cfi import *
+_HLTPhase2L3MuonGeneralTracksSequence = cms.Sequence(
+    HLTTrackingSequence
+    +hltPhase2L3MuonPixelTracksAndHighPtTripletTrackingRegions
+    +hltPhase2L3MuonGeneralTracks
+)
+
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
 phase2CAExtension.toReplaceWith(
+    HLTPhase2L3MuonGeneralTracksSequence,
+    _HLTPhase2L3MuonPixelTracksSequence
+)
+
+from Configuration.ProcessModifiers.trackingLST_cff import trackingLST
+(phase2CAExtension & trackingLST).toReplaceWith(
     HLTPhase2L3MuonGeneralTracksSequence,
     _HLTPhase2L3MuonGeneralTracksSequence
 )

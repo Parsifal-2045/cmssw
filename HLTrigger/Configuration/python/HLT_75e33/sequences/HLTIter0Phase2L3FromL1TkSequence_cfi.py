@@ -22,3 +22,15 @@ phase2CAExtension.toReplaceWith(
         hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity]
     )
 )
+
+from ..sequences.HLTTrackingSequence_cfi import HLTTrackingSequence
+_HLTIter0Phase2L3FromL1TkSequence = cms.Sequence(
+    HLTTrackingSequence
+    + hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks
+    + hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity
+)
+
+(phase2CAExtension & trackingLST).toReplaceWith(
+    HLTIter0Phase2L3FromL1TkSequence,
+    _HLTIter0Phase2L3FromL1TkSequence
+)

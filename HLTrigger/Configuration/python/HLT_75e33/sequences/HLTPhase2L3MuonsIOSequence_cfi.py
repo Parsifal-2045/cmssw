@@ -15,3 +15,12 @@ phase2CAExtension.toReplaceWith(
     HLTPhase2L3MuonsIOSequence,
     HLTPhase2L3MuonsIOSequence.copyAndExclude([HLTIter2Phase2L3FromL1TkSequence])
 )
+
+from Configuration.ProcessModifiers.trackingLST_cff import trackingLST
+(phase2CAExtension & trackingLST).toReplaceWith(
+    HLTPhase2L3MuonsIOSequence,
+    HLTPhase2L3MuonsIOSequence.copyAndExclude([
+        HLTPhase2MuonPixelTracksFromL1TkSequence,
+        HLTIter2Phase2L3FromL1TkSequence
+    ])
+)

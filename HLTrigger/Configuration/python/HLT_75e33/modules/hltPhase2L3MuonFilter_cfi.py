@@ -21,6 +21,12 @@ phase2CAExtension.toModify(
     l3Tracks = "hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"#"hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity"
 )
 
+from Configuration.ProcessModifiers.trackingLST_cff import trackingLST
+(phase2CAExtension & trackingLST).toModify(
+    hltPhase2L3MuonFilter,
+    l3Tracks = "hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity"
+)
+
 from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3MuonsOIFirst
 phase2L3MuonsOIFirst.toModify(
     hltPhase2L3MuonFilter,
