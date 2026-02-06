@@ -15,12 +15,12 @@ hltPhase2L3FromL1TkMuonPixelTracks = cms.EDProducer("PixelTrackProducer",
 #    tracks = cms.InputTag("hltPhase2PixelTracksCAExtension")
 #)
 
-from RecoMuon.L3TrackFinder.MuonPixelTracksSelectorFromL1TkMuon import MuonPixelTracksSelectorFromL1TkMuon as _MuonPixelTracksSelectorFromL1TkMuon
-_hltPhase2L3FromL1TkMuonPixelTracks = _MuonPixelTracksSelectorFromL1TkMuon(
+from RecoMuon.L3TrackFinder.MuonTracksSelectorFromL1TkMuon import MuonTracksSelectorFromL1TkMuon as _MuonTracksSelectorFromL1TkMuon
+_hltPhase2L3FromL1TkMuonPixelTracks = _MuonTracksSelectorFromL1TkMuon(
     TrackInputCollection = "hltPhase2PixelTracksCAExtension",
     trackMaxEta = 3.0,
     maxDz = 1,
-    maxDr = 0.4,
+    maxDr = 0.1,
     maxChi2 = 9
 )
 
