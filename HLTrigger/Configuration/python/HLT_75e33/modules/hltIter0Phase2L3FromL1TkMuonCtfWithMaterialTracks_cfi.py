@@ -17,3 +17,14 @@ hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks = cms.EDProducer("TrackProduce
     useHitsSplitting = cms.bool(False),
     useSimpleMF = cms.bool(False)
 )
+
+from RecoMuon.L3TrackFinder.MuonTracksSelectorFromL1TkMuon import MuonTracksSelectorFromL1TkMuon as _MuonTracksSelectorFromL1TkMuon
+_hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks = _MuonTracksSelectorFromL1TkMuon(
+    TrackInputCollection = "hltGeneralTracks",
+)
+
+from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
+phase2MuonGeneralTracksSelector.toReplaceWith(
+    hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks,
+    _hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks
+)

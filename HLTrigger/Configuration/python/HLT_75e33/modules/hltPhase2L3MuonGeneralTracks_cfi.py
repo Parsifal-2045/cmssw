@@ -32,9 +32,22 @@ _hltPhase2L3MuonPixelTracks = cms.EDProducer("TrackSelectorByRegion",
     tracks = cms.InputTag("hltPhase2PixelTracks")
 )
 
+_hltPhase2L3MuonGeneralTracks = cms.EDProducer("TrackSelectorByRegion",
+    produceMask = cms.bool(False),
+    produceTrackCollection = cms.bool(True),
+    regions = cms.InputTag("hltPhase2L3MuonPixelTracksAndHighPtTripletTrackingRegions"),
+    tracks = cms.InputTag("hltGeneralTracks")
+)
+
 from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
 from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
 (phase2MuonPixelTracksSelector & phase2CAExtension).toReplaceWith(
     hltPhase2L3MuonGeneralTracks,
     _hltPhase2L3MuonPixelTracks
+)
+
+from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
+phase2MuonGeneralTracksSelector.toReplaceWith(
+    hltPhase2L3MuonGeneralTracks,
+    _hltPhase2L3MuonGeneralTracks
 )

@@ -16,3 +16,12 @@ from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtensi
     HLTPhase2L3MuonsIOSequence,
     HLTPhase2L3MuonsIOSequence.copyAndExclude([HLTIter2Phase2L3FromL1TkSequence])
 )
+
+from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
+phase2MuonGeneralTracksSelector.toReplaceWith(
+    HLTPhase2L3MuonsIOSequence,
+    HLTPhase2L3MuonsIOSequence.copyAndExclude(
+        [HLTPhase2MuonPixelTracksFromL1TkSequence,
+         HLTIter2Phase2L3FromL1TkSequence]
+    )
+)

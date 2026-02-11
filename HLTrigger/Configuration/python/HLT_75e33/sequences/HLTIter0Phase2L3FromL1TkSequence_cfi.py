@@ -23,3 +23,16 @@ from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtensi
             hltIter0Phase2L3FromL1TkMuonTrackCutClassifier]
     )
 )
+
+from ..sequences.HLTTrackingSequence_cfi import *
+_HLTIter0Phase2L3FromL1TkSequenceGeneralTracks = cms.Sequence(
+    HLTTrackingSequence
+    + hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks
+    + hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity
+)
+
+from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
+phase2MuonGeneralTracksSelector.toReplaceWith(
+    HLTIter0Phase2L3FromL1TkSequence,
+    _HLTIter0Phase2L3FromL1TkSequenceGeneralTracks
+)
