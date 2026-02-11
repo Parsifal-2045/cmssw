@@ -68,7 +68,6 @@ hltMuonMultiTrackValidator = MTVhlt.clone(
 
 _hltMuonMultiTrackValidator = MTVhlt.clone(
     associatormap = (
-        'Phase2tpToL2SeedAssociation',
         'Phase2tpToL2MuonAssociation',
         'Phase2tpToL2MuonUpdAssociation',
         'Phase2tpToL3IOTkAssociation',
@@ -79,7 +78,6 @@ _hltMuonMultiTrackValidator = MTVhlt.clone(
         'Phase2tpToL3MuonIdAssociation'
     ),
     label = (
-        'hltPhase2L2MuonSeedTracks',
         'hltL2MuonsFromL1TkMuon',
         'hltL2MuonsFromL1TkMuon:UpdatedAtVtx',
         'hltIter2Phase2L3FromL1TkMuonMerged',
@@ -90,7 +88,6 @@ _hltMuonMultiTrackValidator = MTVhlt.clone(
         'hltPhase2L3MuonIdTracks'
     ),
     muonHistoParameters = (
-        staSeedMuonHistoParameters,
         staMuonHistoParameters,
         staUpdMuonHistoParameters,
         trkMuonHistoParameters,
