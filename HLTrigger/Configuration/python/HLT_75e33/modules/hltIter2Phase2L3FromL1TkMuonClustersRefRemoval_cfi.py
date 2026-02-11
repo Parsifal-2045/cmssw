@@ -11,3 +11,10 @@ hltIter2Phase2L3FromL1TkMuonClustersRefRemoval = cms.EDProducer("TrackClusterRem
     trackClassifier = cms.InputTag("","QualityMasks"),
     trajectories = cms.InputTag("hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity")
 )
+
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2MuonPixelTracksSelector & phase2CAExtension).toModify(
+    hltIter2Phase2L3FromL1TkMuonClustersRefRemoval,
+    TrackQuality = 'undefQuality'
+)

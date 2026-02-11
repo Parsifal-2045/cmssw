@@ -291,6 +291,13 @@ l3TkIOTable = l2MuTable.clone(
     doc = cms.string("L3 Tracker Muon tracks Inside-Out")
 )
 
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2MuonPixelTracksSelector & phase2CAExtension).toModify(
+    l3TkIOTable,
+    src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity")
+)
+
 # Muon OI inner tracks (with MC truth info)
 muonOITracksV = trackingAssocValueMapsProducer.clone(
     trackCollection =  cms.InputTag("hltPhase2L3OIMuCtfWithMaterialTracks"),

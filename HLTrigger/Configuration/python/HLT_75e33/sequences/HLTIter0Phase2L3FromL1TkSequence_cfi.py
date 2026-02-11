@@ -13,3 +13,13 @@ HLTIter0Phase2L3FromL1TkSequence = cms.Sequence(
     + hltIter0Phase2L3FromL1TkMuonTrackCutClassifier
     + hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity
 )
+
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2MuonPixelTracksSelector & phase2CAExtension).toReplaceWith(
+    HLTIter0Phase2L3FromL1TkSequence,
+    HLTIter0Phase2L3FromL1TkSequence.copyAndExclude(
+            [hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks,
+            hltIter0Phase2L3FromL1TkMuonTrackCutClassifier]
+    )
+)
