@@ -122,6 +122,13 @@ l1TkMuTable = cms.EDProducer(
     )
 )
 
+# L1Tk Muon stubs
+l1TkMuStubTable = cms.EDProducer(
+    "L1TkMuStubFlatTableProducer",
+    src = cms.InputTag("l1tTkMuonsGmt"),
+    name = cms.string("L1TkMuStub")
+)
+
 # L2 offline seeds
 l2SeedTable = cms.EDProducer(
     "SimpleTrajectorySeedFlatTableProducer",
