@@ -114,6 +114,20 @@ from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3Muon
 (~phase2L3MuonsOIFirst).toModify(_hltMuonMultiTrackValidator, _modify_for_IO_first)
 phase2L3MuonsOIFirst.toModify(_hltMuonMultiTrackValidator, _modify_for_OI_first)
 
+def _modify_for_singleIterIO(validator):
+    # Find the index by track collection label name
+    label_to_replace = 'hltIter2Phase2L3FromL1TkMuonMerged'
+    try:
+        idx = list(validator.label).index(label_to_replace)
+        # Replace both associator and label at that index
+        validator.associatormap[idx] = 'Phase2tpToL3Iter0TkAssociation'
+        validator.label[idx] = 'hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity'
+    except ValueError:
+        pass
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2MuonPixelTracksSelector & phase2CAExtension).toModify(_hltMuonMultiTrackValidator, _modify_for_singleIterIO)
+
 # Check that the associators and labels are consistent
 # All MTV clones are DQMEDAnalyzers
 from DQMServices.Core.DQMEDAnalyzer import DQMEDAnalyzer

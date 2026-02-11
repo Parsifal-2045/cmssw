@@ -13,3 +13,11 @@ hltIter0Phase2L3FromL1TkMuonPixelSeedsFromPixelTracks = cms.EDProducer("SeedGene
     usePV = cms.bool(False),
     useProtoTrackKinematics = cms.bool(False)
 )
+
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2MuonPixelTracksSelector & phase2CAExtension).toModify(
+    hltIter0Phase2L3FromL1TkMuonPixelSeedsFromPixelTracks,
+    InputCollection=cms.InputTag("hltPhase2MuonPixelTracksDNNSelector"),
+    InputVertexCollection=cms.InputTag(""),
+)

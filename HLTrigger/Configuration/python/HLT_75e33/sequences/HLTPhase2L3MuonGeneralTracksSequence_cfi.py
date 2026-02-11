@@ -48,3 +48,17 @@ HLTPhase2L3MuonGeneralTracksSequence = cms.Sequence(
     +hltPhase2L3MuonHighPtTripletStepTracksSelectionHighPurity
     +hltPhase2L3MuonGeneralTracks
     )
+
+from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
+_HLTPhase2L3MuonPixelTracksSequence = cms.Sequence(
+    HLTPhase2PixelTracksAndVerticesSequence
+    +hltPhase2L3MuonPixelTracksAndHighPtTripletTrackingRegions
+    +hltPhase2L3MuonGeneralTracks
+)
+
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
+(phase2MuonPixelTracksSelector & phase2CAExtension).toReplaceWith(
+    HLTPhase2L3MuonGeneralTracksSequence,
+    _HLTPhase2L3MuonPixelTracksSequence
+)
