@@ -24,7 +24,8 @@ phase2L3MuonsOIFirst.toModify(
 
 from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
 from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
-(phase2MuonPixelTracksSelector & phase2CAExtension).toModify(
+from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
+((phase2MuonPixelTracksSelector & phase2CAExtension) | phase2MuonGeneralTracksSelector).toModify(
     hltPhase2L3MuonFilter,
     l3Tracks = "hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity",
 )

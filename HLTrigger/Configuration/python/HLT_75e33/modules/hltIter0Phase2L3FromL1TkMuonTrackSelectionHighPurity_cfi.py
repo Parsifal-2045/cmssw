@@ -9,7 +9,7 @@ hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity = cms.EDProducer("TrackColl
     originalSource = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks")
 )
 
-_hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity = cms.EDProducer("TrackProducer",
+_hltSingleIterL3FromL1TkMuonPixelTrackSelection = cms.EDProducer("TrackProducer",
     AlgorithmName = cms.string('hltIter0'),
     Fitter = cms.string('FlexibleKFFittingSmoother'),
     GeometricInnerState = cms.bool(True),
@@ -27,9 +27,25 @@ _hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity = cms.EDProducer("TrackPro
     useSimpleMF = cms.bool(False)
 )
 
+_hltSingleIterL3FromL1TkMuonGeneralTrackSelectionHighPurity = cms.EDProducer("MuonIOTracksDNNSelector",
+    tracks = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
+    l1TkMuons = cms.InputTag("l1tTkMuonsGmt"),
+    decisionThreshold = cms.double(0.9456754326820374),
+    useL1TkMuFeatures = cms.bool(True),
+    useStubFeatures = cms.bool(True),
+    nFeatures = cms.int32(36),
+    modelPath = cms.string("RecoMuon/L3TrackFinder/data/general_track_selector.onnx")
+)
+
 from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
 from Configuration.ProcessModifiers.phase2CAExtension_cff import phase2CAExtension
 (phase2MuonPixelTracksSelector & phase2CAExtension).toReplaceWith(
     hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity,
-    _hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity
+    _hltSingleIterL3FromL1TkMuonPixelTrackSelection
+)
+
+from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
+phase2MuonGeneralTracksSelector.toReplaceWith(
+    hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity,
+    _hltSingleIterL3FromL1TkMuonGeneralTrackSelectionHighPurity
 )
