@@ -253,9 +253,33 @@ Phase2tpToL2MuonUpdAssociation = MABHhlt.clone(
     UseTracker = False,
     UseMuon = True
 )
-# L3 IO inner tracks
+# Muon PixelTracks
+Phase2tpToMuonPixelTracksAssociation = MABHhlt.clone(
+    tracksTag = 'hltPhase2L3FromL1TkMuonPixelTracks',
+    UseTracker = True,
+    UseMuon = False
+)
+# Iter0 tracks no HP
+Phase2tpToL3Iter0NoHPTkAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks',
+    UseTracker = True,
+    UseMuon = False
+)
+# Iter0 tracks HP
+Phase2tpToL3Iter0TkAssociation = MABHhlt.clone(
+    tracksTag = 'hltIter0Phase2L3FromL1TkMuonTrackSelectionHighPurity',
+    UseTracker = True,
+    UseMuon = False
+)
+# L3 IO inner tracks merged (iter0+iter2)
 Phase2tpToL3IOTkAssociation = MABHhlt.clone(
     tracksTag = 'hltIter2Phase2L3FromL1TkMuonMerged',
+    UseTracker = True,
+    UseMuon = False
+)
+# L3 OI inner tracks no HP
+Phase2tpToL3OINoHPTkAssociation = MABHhlt.clone(
+    tracksTag = 'hltPhase2L3OIMuCtfWithMaterialTracks',
     UseTracker = True,
     UseMuon = False
 )
@@ -434,7 +458,9 @@ muonAssociationReduced_seq = cms.Sequence(
 _muonAssociationHLT_seq_IO_first = cms.Sequence(
     hltPhase2L2MuonSeedTracks+Phase2tpToL2SeedAssociation
     +Phase2tpToL2MuonAssociation+Phase2tpToL2MuonUpdAssociation
-    +Phase2tpToL3IOTkAssociation+Phase2tpToL3OITkAssociation
+    +Phase2tpToMuonPixelTracksAssociation+Phase2tpToL3Iter0NoHPTkAssociation
+    +Phase2tpToL3Iter0TkAssociation+Phase2tpToL3IOTkAssociation
+    +Phase2tpToL3OINoHPTkAssociation+Phase2tpToL3OITkAssociation
     +Phase2tpToL2MuonToReuseAssociation+Phase2tpToL3IOTkFilteredAssociation
     +Phase2tpToL3TkMergedAssociation+Phase2tpToL3GlbMuonMergedAssociation
     +hltPhase2L3MuonNoIdTracks+Phase2tpToL3MuonNoIdAssociation

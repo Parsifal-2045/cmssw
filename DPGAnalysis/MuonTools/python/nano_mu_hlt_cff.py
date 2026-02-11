@@ -7,6 +7,7 @@ from DPGAnalysis.MuonTools.common_cff import *
 from PhysicsTools.NanoAOD.l1trig_cff import *
 
 from PhysicsTools.NanoAOD.simpleCandidateFlatTableProducer_cfi import simpleCandidateFlatTableProducer
+from PhysicsTools.NanoAOD.trackingAssocValueMapsProducer_cfi import trackingAssocValueMapsProducer
 
 from Validation.RecoMuon.muonValidationHLT_cff import *
 
@@ -209,11 +210,122 @@ l2MuTableVtx = l2MuTable.clone(
     doc = cms.string("Standalone Muon tracks updated at vertex")
 )
 
+# Muon PixelTracks (with MC truth info)
+muonPixelTracksV = trackingAssocValueMapsProducer.clone(
+    trackCollection =  cms.InputTag("hltPhase2L3FromL1TkMuonPixelTracks"),
+    associator = cms.InputTag("Phase2tpToMuonPixelTracksAssociation"),
+    trackingParticles = cms.InputTag("mix", "MergedTrackTruth"),
+    storeTPKinematics = cms.bool(True),
+    useMuonAssociators = cms.bool(True)
+)
+muonPixelTracksTable = l2MuTable.clone(
+    src = cms.InputTag("hltPhase2L3FromL1TkMuonPixelTracks"),
+    name = cms.string("muon_pixel_tracks"),
+    doc = cms.string("L3 Muon Pixel Tracks"),
+    externalVariables = cms.PSet(
+        matched   = cms.PSet(src = cms.InputTag("muonPixelTracksV","matched"),
+                             doc = cms.string("1 if matched to a TrackingParticle"),
+                             type = cms.string("uint8")),
+        duplicate = cms.PSet(src = cms.InputTag("muonPixelTracksV","duplicate"),
+                             doc = cms.string("1 if multiple reco tracks map to same TP"),
+                             type = cms.string("uint8")),
+        tpPdgId  = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpPdgId"),
+                             doc = cms.string("pdgId of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpCharge = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpCharge"),
+                             doc = cms.string("charge of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpPt     = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpPt"),
+                             doc = cms.string("pt of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpEta    = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpEta"),
+                             doc = cms.string("eta of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpPhi    = cms.PSet(src = cms.InputTag("muonPixelTracksV","tpPhi"),
+                             doc = cms.string("phi of matched TrackingParticle"),
+                             type = cms.string("float"))
+    )
+)
+
+# Muon General Tracks (with MC truth info)
+muonGeneralTracksV = trackingAssocValueMapsProducer.clone(
+    trackCollection =  cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
+    associator = cms.InputTag("Phase2tpToL3Iter0NoHPTkAssociation"),
+    trackingParticles = cms.InputTag("mix", "MergedTrackTruth"),
+    storeTPKinematics = cms.bool(True),
+    useMuonAssociators = cms.bool(True)
+)
+muonGeneralTracksTable = l2MuTable.clone(
+    src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
+    name = cms.string("muon_general_tracks"),
+    doc = cms.string("L3 Muon General Tracks"),
+    externalVariables = cms.PSet(
+        matched   = cms.PSet(src = cms.InputTag("muonGeneralTracksV","matched"),
+                             doc = cms.string("1 if matched to a TrackingParticle"),
+                             type = cms.string("uint8")),
+        duplicate = cms.PSet(src = cms.InputTag("muonGeneralTracksV","duplicate"),
+                             doc = cms.string("1 if multiple reco tracks map to same TP"),
+                             type = cms.string("uint8")),
+        tpPdgId  = cms.PSet(src = cms.InputTag("muonGeneralTracksV","tpPdgId"),
+                             doc = cms.string("pdgId of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpCharge = cms.PSet(src = cms.InputTag("muonGeneralTracksV","tpCharge"),
+                             doc = cms.string("charge of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpPt     = cms.PSet(src = cms.InputTag("muonGeneralTracksV","tpPt"),
+                             doc = cms.string("pt of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpEta    = cms.PSet(src = cms.InputTag("muonGeneralTracksV","tpEta"),
+                             doc = cms.string("eta of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpPhi    = cms.PSet(src = cms.InputTag("muonGeneralTracksV","tpPhi"),
+                             doc = cms.string("phi of matched TrackingParticle"),
+                             type = cms.string("float"))
+    )
+)
+
 # L3 IO inner tracks
 l3TkIOTable = l2MuTable.clone(
     src = cms.InputTag("hltIter2Phase2L3FromL1TkMuonMerged"),
     name = cms.string("l3_tk_IO"),
     doc = cms.string("L3 Tracker Muon tracks Inside-Out")
+)
+
+# Muon OI inner tracks (with MC truth info)
+muonOITracksV = trackingAssocValueMapsProducer.clone(
+    trackCollection =  cms.InputTag("hltPhase2L3OIMuCtfWithMaterialTracks"),
+    associator = cms.InputTag("Phase2tpToL3OINoHPTkAssociation"),
+    trackingParticles = cms.InputTag("mix", "MergedTrackTruth"),
+    storeTPKinematics = cms.bool(True),
+    useMuonAssociators = cms.bool(True)
+)
+l3TkOINoHPTable = l2MuTable.clone(
+    src = cms.InputTag("hltPhase2L3OIMuCtfWithMaterialTracks"),
+    name = cms.string("l3_tk_OI_noHP"),
+    doc = cms.string("L3 Tracker Muon tracks Outside-In (before HighPurity selection)"),
+    externalVariables = cms.PSet(
+        matched   = cms.PSet(src = cms.InputTag("muonOITracksV","matched"),
+                             doc = cms.string("1 if matched to a TrackingParticle"),
+                             type = cms.string("uint8")),
+        duplicate = cms.PSet(src = cms.InputTag("muonOITracksV","duplicate"),
+                             doc = cms.string("1 if multiple reco tracks map to same TP"),
+                             type = cms.string("uint8")),
+        tpPdgId  = cms.PSet(src = cms.InputTag("muonOITracksV","tpPdgId"),
+                             doc = cms.string("pdgId of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpCharge = cms.PSet(src = cms.InputTag("muonOITracksV","tpCharge"),
+                             doc = cms.string("charge of matched TrackingParticle"),
+                             type = cms.string("int16")),
+        tpPt     = cms.PSet(src = cms.InputTag("muonOITracksV","tpPt"),
+                             doc = cms.string("pt of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpEta    = cms.PSet(src = cms.InputTag("muonOITracksV","tpEta"),
+                             doc = cms.string("eta of matched TrackingParticle"),
+                             type = cms.string("float")),
+        tpPhi    = cms.PSet(src = cms.InputTag("muonOITracksV","tpPhi"),
+                             doc = cms.string("phi of matched TrackingParticle"),
+                             type = cms.string("float"))
+    )
 )
 
 # L3 OI inner tracks
