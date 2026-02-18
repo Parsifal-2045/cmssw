@@ -1,6 +1,7 @@
 import FWCore.ParameterSet.Config as cms
 
 from ..sequences.HLTL2MuonsFromL1TkSequence_cfi import *
+from ..sequences.HLTDisplacedMuonsSequence_cfi import *
 from ..sequences.HLTPhase2L3MuonsIOSequence_cfi import *
 from ..sequences.HLTPhase2L3MuonsOISequence_cfi import *
 from ..sequences.HLTPhase2MuonIdSequence_cfi import *
@@ -27,3 +28,8 @@ _HLTMuonsSequenceOIFirst = cms.Sequence(
 from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3MuonsOIFirst
 phase2L3MuonsOIFirst.toReplaceWith(HLTMuonsSequence, _HLTMuonsSequenceOIFirst)
 
+_HLTMuonsSequenceWithDisplaced = HLTMuonsSequence.copy()
+_HLTMuonsSequenceWithDisplaced += HLTDisplacedMuonsSequence
+
+from Configuration.ProcessModifiers.phase2DisplacedMuons_cff import phase2DisplacedMuons
+phase2DisplacedMuons.toReplaceWith(HLTMuonsSequence, _HLTMuonsSequenceWithDisplaced)

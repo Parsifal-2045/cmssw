@@ -27,13 +27,18 @@ postProcessorMuonTrackHLTComp = DQMEDHarvester("DQMGenericClient",
     outputFileName=cms.untracked.string(""),
 )
 
-recoMuonPostProcessorsHLT = cms.Sequence(
-    postProcessorMuonTrackHLT + postProcessorMuonTrackHLTSummary + postProcessorMuonTrackHLTComp 
+postProcessorDisplacedMuonsHLT = postProcessorMuonTrack.clone(
+    subDirs = ["HLT/Muon/Displaced/*"]
 )
 
-from Configuration.Eras.Modifier_phase2_muon_cff import phase2_muon
+postProcessorDisplacedMuonsHLTSummary = postProcessorMuonTrackSummary.clone(
+    subDirs=cms.untracked.vstring("HLT/Muon/Displaced/")
+)
 
-phase2_muon.toReplaceWith(
-    recoMuonPostProcessorsHLT,
-    recoMuonPostProcessorsHLT.copyAndExclude(["postProcessorMuonTrackHLTComp"]),
+recoMuonPostProcessorsHLT = cms.Sequence(
+    postProcessorMuonTrackHLT
+    + postProcessorMuonTrackHLTSummary
+    + postProcessorDisplacedMuonsHLT
+    + postProcessorDisplacedMuonsHLTSummary
+    + postProcessorMuonTrackHLTComp
 )

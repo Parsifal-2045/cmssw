@@ -102,6 +102,20 @@ _hltMuonMultiTrackValidator = MTVhlt.clone(
     )
 )
 
+hltDisplacedMuonMultiTrackValidator = MTVhlt.clone(
+    dirName = 'HLT/Muon/Displaced/',
+    muonTPSelector = displacedMuonTPSet,
+    associatormap = (
+        'Phase2tpToDisplacedStandaloneMuonsAssociation',
+    ),
+    label = (
+        'hltDisplacedStandaloneMuons',
+    ),
+    muonHistoParameters = (
+        displacedStaMuonHistoParameters,
+    )
+)
+
 def _insert_next_to_label(
     validator,
     target_label,
@@ -246,6 +260,15 @@ phase2_muon.toReplaceWith(hltMuonMultiTrackValidator, _hltMuonMultiTrackValidato
 #
 
 muonValidationHLT_seq = cms.Sequence(muonAssociationHLT_seq + hltMuonMultiTrackValidator)
+
+from Configuration.ProcessModifiers.phase2DisplacedMuons_cff import phase2DisplacedMuons
+_muonValidationHLT_seq_withDisplaced = muonValidationHLT_seq.copy()
+_muonValidationHLT_seq_withDisplaced += hltDisplacedMuonMultiTrackValidator
+
+phase2DisplacedMuons.toReplaceWith(
+    muonValidationHLT_seq,
+    _muonValidationHLT_seq_withDisplaced
+)
 
 recoMuonValidationHLT_seq = cms.Sequence(
     cms.SequencePlaceholder("TPmu") +
