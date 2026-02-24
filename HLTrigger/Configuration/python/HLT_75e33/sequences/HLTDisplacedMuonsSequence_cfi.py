@@ -9,9 +9,17 @@ hltMaskedMuonHits = _MuonSegmentRemover(
 
 from ..modules.hltDisplacedStandaloneMuonSeeds_cfi import *
 from ..modules.hltDisplacedStandaloneMuons_cfi import *
+from ..modules.hltDisplacedMuonsSiClusters_cfi import *
+from ..modules.hltDisplacedMuonsOISeeds_cfi import *
+from ..modules.hltDisplacedMuonsOITrackCandidates_cfi import *
+from ..modules.hltDisplacedMuonsOITracks_cfi import *
 
 HLTDisplacedMuonsSequence = cms.Sequence(
     hltMaskedMuonHits
     + hltDisplacedStandaloneMuonSeeds
     + hltDisplacedStandaloneMuons
+    + hltDisplacedMuonsSiClusters
+    + hltDisplacedMuonsOISeeds
+    + hltDisplacedMuonsOITrackCandidates
+    + hltDisplacedMuonsOITracks
 )
