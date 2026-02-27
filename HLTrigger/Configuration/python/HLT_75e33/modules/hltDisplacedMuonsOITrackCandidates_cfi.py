@@ -5,7 +5,7 @@ hltDisplacedMuonsOITrackCandidates = cms.EDProducer("CkfTrackCandidateMaker",
     NavigationSchool = cms.string('SimpleNavigationSchool'),
     RedundantSeedCleaner = cms.string('CachingSeedCleanerBySharedInput'),
     TrajectoryBuilderPSet = cms.PSet(
-        refToPSet_ = cms.string('HLTPSetMuonCkfTrajectoryBuilder')
+        refToPSet_ = cms.string('HLTPSetDisplacedMuonCkfTrajectoryBuilder')
     ),
     TrajectoryCleaner = cms.string('hltESPTrajectoryCleanerBySharedHits'),
     TransientInitialStateEstimatorParameters = cms.PSet(
@@ -15,8 +15,10 @@ hltDisplacedMuonsOITrackCandidates = cms.EDProducer("CkfTrackCandidateMaker",
     ),
     cleanTrajectoryAfterInOut = cms.bool(False),
     doSeedingRegionRebuilding = cms.bool(False),
-    maxNSeeds = cms.uint32(100000),
-    maxSeedsBeforeCleaning = cms.uint32(1000),
+    maxNSeeds = cms.uint32(100),
+    maxSeedsBeforeCleaning = cms.uint32(25),
+    numHitsForSeedCleaner    = cms.int32(4),
+    onlyPixelHitsForSeedCleaner = cms.bool(False),
     phase2clustersToSkip = cms.InputTag("hltDisplacedMuonsSiClusters"),
     src = cms.InputTag("hltDisplacedMuonsOISeeds"),
     useHitsSplitting = cms.bool(False)

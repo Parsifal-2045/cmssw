@@ -107,13 +107,16 @@ hltDisplacedMuonMultiTrackValidator = MTVhlt.clone(
     muonTPSelector = displacedMuonTPSet,
     associatormap = (
         'Phase2tpToDisplacedStandaloneMuonsAssociation',
+        'Phase2tpToDisplacedStandaloneMuonsSelectionAssociation',
         'Phase2tpToDisplacedMuonsOITracksAssociation',
     ),
     label = (
         'hltDisplacedStandaloneMuons',
+        'hltDisplacedStandaloneMuonsSelection',
         'hltDisplacedMuonsOITracks',
     ),
     muonHistoParameters = (
+        displacedStaMuonHistoParameters,
         displacedStaMuonHistoParameters,
         displacedTrkMuonHistoParameters,
     )

@@ -223,6 +223,8 @@ fragment.load("HLTrigger/Configuration/HLT_75e33/psets/tobTecStepInOutTrajectory
 fragment.load("HLTrigger/Configuration/HLT_75e33/psets/tobTecStepTrajectoryFilter_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/psets/TrajectoryFilterForConversions_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/psets/TrajectoryFilterForElectrons_cfi")
+fragment.load("HLTrigger/Configuration/HLT_75e33/psets/HLTPSetDisplacedMuonCkfTrajectoryBuilder_cfi")
+fragment.load("HLTrigger/Configuration/HLT_75e33/psets/HLTPSetDisplacedMuonCkfTrajectoryFilter_cfi")
 
 fragment.load("HLTrigger/Configuration/HLT_75e33/sequences/HLTCalolocalrecoSequence_cfi")
 fragment.load("HLTrigger/Configuration/HLT_75e33/sequences/HLTCaloTowersRecSequence_cfi")
