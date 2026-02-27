@@ -14,6 +14,9 @@ from ..modules.hltDisplacedMuonsSiClusters_cfi import *
 from ..modules.hltDisplacedMuonsOISeeds_cfi import *
 from ..modules.hltDisplacedMuonsOITrackCandidates_cfi import *
 from ..modules.hltDisplacedMuonsOITracks_cfi import *
+from ..modules.hltDisplacedGlobalMuons_cfi import *
+from ..modules.hltDisplacedMuonsNoId_cfi import *
+from ..modules.hltDisplacedMuons_cfi import *
 
 HLTDisplacedMuonsSequence = cms.Sequence(
     hltMaskedMuonHits
@@ -24,4 +27,7 @@ HLTDisplacedMuonsSequence = cms.Sequence(
     + hltDisplacedMuonsOISeeds
     + hltDisplacedMuonsOITrackCandidates
     + hltDisplacedMuonsOITracks
+    + hltDisplacedGlobalMuons
+    + hltDisplacedMuonsNoId
+    + hltDisplacedMuons
 )

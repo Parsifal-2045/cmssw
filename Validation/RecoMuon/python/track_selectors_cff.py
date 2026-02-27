@@ -88,6 +88,24 @@ hltPhase2L3MuonIdTracks = SimMuon.MCTruth.MuonTrackProducer_cfi.muonTrackProduce
     ignoreMissingMuonCollection = True
 )
 
+# Displaced tracks
+hltDisplacedMuonNoIdTracks = SimMuon.MCTruth.MuonTrackProducer_cfi.muonTrackProducer.clone(
+    muonsTag = "hltDisplacedMuonsNoId",
+    inputDTRecSegment4DCollection = cms.InputTag("hltMaskedMuonHits"),
+    inputCSCSegmentCollection = cms.InputTag("hltMaskedMuonHits"),
+    selectionTags = ['All'],
+    trackType = "recomuonTrack",
+    ignoreMissingMuonCollection = True
+)
+hltDisplacedMuonIdTracks = SimMuon.MCTruth.MuonTrackProducer_cfi.muonTrackProducer.clone(
+    muonsTag = "hltDisplacedMuons",
+    inputDTRecSegment4DCollection = cms.InputTag("hltMaskedMuonHits"),
+    inputCSCSegmentCollection = cms.InputTag("hltMaskedMuonHits"),
+    selectionTags = ['All'],
+    trackType = "recomuonTrack",
+    ignoreMissingMuonCollection = True
+)
+
 #
 # Configuration for Seed track extractor
 #

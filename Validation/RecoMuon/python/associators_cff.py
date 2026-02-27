@@ -253,6 +253,7 @@ Phase2tpToL2MuonUpdAssociation = MABHhlt.clone(
     UseTracker = False,
     UseMuon = True
 )
+
 # HLT displaced standalone muons
 Phase2tpToDisplacedStandaloneMuonsAssociation = MABHhlt.clone(
     tracksTag = 'hltDisplacedStandaloneMuons',
@@ -269,6 +270,26 @@ Phase2tpToDisplacedMuonsOITracksAssociation = MABHhlt.clone(
     tracksTag = 'hltDisplacedMuonsOITracks',
     UseTracker = True,
     UseMuon = False
+)
+# HLT displaced global muons
+Phase2tpToDisplacedGlobalMuonsAssociation = MABHhlt.clone(
+    tracksTag = 'hltDisplacedGlobalMuons',
+    UseTracker = True,
+    UseMuon = True
+)
+# HLT displaced muons no ID
+Phase2tpToDisplacedMuonsNoIdAssociation = MABHhlt.clone(
+    tracksTag = 'hltDisplacedMuonNoIdTracks',
+    UseTracker = True,
+    UseMuon = True,
+    rejectBadGlobal = False
+)
+# HLT displaced muons ID
+Phase2tpToDisplacedMuonsIdAssociation = MABHhlt.clone(
+    tracksTag = 'hltDisplacedMuonIdTracks',
+    UseTracker = True,
+    UseMuon = True,
+    rejectBadGlobal = False
 )
 
 # Muon PixelTracks
@@ -479,6 +500,9 @@ _muonAssociationHLT_seq_IO_first = cms.Sequence(
     +Phase2tpToDisplacedStandaloneMuonsAssociation
     +Phase2tpToDisplacedStandaloneMuonsSelectionAssociation
     +Phase2tpToDisplacedMuonsOITracksAssociation
+    +Phase2tpToDisplacedGlobalMuonsAssociation
+    +hltDisplacedMuonNoIdTracks+Phase2tpToDisplacedMuonsNoIdAssociation
+    +hltDisplacedMuonIdTracks+Phase2tpToDisplacedMuonsIdAssociation
     +Phase2tpToMuonPixelTracksAssociation+Phase2tpToL3Iter0NoHPTkAssociation
     +Phase2tpToL3Iter0TkAssociation+Phase2tpToL3IOTkAssociation
     +Phase2tpToL3OINoHPTkAssociation+Phase2tpToL3OITkAssociation
@@ -497,6 +521,9 @@ _muonAssociationHLT_seq_OI_first = cms.Sequence(
     +Phase2tpToDisplacedStandaloneMuonsAssociation
     +Phase2tpToDisplacedStandaloneMuonsSelectionAssociation
     +Phase2tpToDisplacedMuonsOITracksAssociation
+    +Phase2tpToDisplacedGlobalMuonsAssociation
+    +hltDisplacedMuonNoIdTracks+Phase2tpToDisplacedMuonsNoIdAssociation
+    +hltDisplacedMuonIdTracks+Phase2tpToDisplacedMuonsIdAssociation
     +Phase2tpToL3OITkAssociation+Phase2tpToL3OITkFilteredAssociation
     +Phase2tpToL3IOTkAssociation+Phase2tpToL3TkMergedAssociation
     +Phase2tpToL3GlbMuonMergedAssociation
