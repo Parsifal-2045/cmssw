@@ -24,7 +24,13 @@ _hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks = _MuonTracksSelectorFromL1Tk
 )
 
 from Configuration.ProcessModifiers.phase2MuonGeneralTracksSelector_cff import phase2MuonGeneralTracksSelector
-phase2MuonGeneralTracksSelector.toReplaceWith(
+from Configuration.ProcessModifiers.trackingLST_cff import trackingLST
+(phase2MuonGeneralTracksSelector & ~ trackingLST).toReplaceWith(
     hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks,
     _hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks
+)
+
+(phase2MuonGeneralTracksSelector & trackingLST).toModify(
+    hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks,
+    src = "hltIOMuonsTrackCandidates" 
 )
