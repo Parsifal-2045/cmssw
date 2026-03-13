@@ -17,7 +17,7 @@
 #include "CAHitNtupletGeneratorKernels.h"
 #include "CAHitNtupletGeneratorKernelsImpl.h"
 
-// #define GPU_DEBUG
+#define GPU_DEBUG
 // #define NTUPLE_DEBUG
 // #define CA_STATS
 
@@ -247,10 +247,31 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const auto rescale = numberOfBlocks / 65536;
     blockSize *= (rescale + 1);
     numberOfBlocks = cms::alpakatools::divide_up_by(3 * maxDoublets / 4, blockSize);
+
+    std::cout << "=== Kernel_connect Configuration ===" << std::endl;
+    std::cout << "maxDoublets     = " << maxDoublets << std::endl;
+    std::cout << "3*maxDoublets/4 = " << (3 * maxDoublets / 4) << std::endl;
+    std::cout << "Initial blockSize  = " << (nthTot / stride) << std::endl;
+    std::cout << "Initial numBlocks  = " << cms::alpakatools::divide_up_by(3 * maxDoublets / 4, nthTot / stride)
+              << std::endl;
+    std::cout << "rescale         = " << rescale << std::endl;
+    std::cout << "Final blockSize = " << blockSize << std::endl;
+    std::cout << "Final numBlocks = " << numberOfBlocks << std::endl;
+    std::cout << "Total threads   = " << (numberOfBlocks * blockSize) << std::endl;
+    std::cout << "Grid dimensions = {" << numberOfBlocks << ", 1}" << std::endl;
+    std::cout << "Block dimensions = {" << blockSize << ", " << stride << "}" << std::endl;
+
     assert(numberOfBlocks < 65536);
     assert(blockSize > 0 && 0 == blockSize % 16);
     const Vec2D blks{numberOfBlocks, 1u};
     const Vec2D thrs{blockSize, stride};
+
+    // Verify total thread count
+    const uint64_t totalThreads = static_cast<uint64_t>(numberOfBlocks) * blockSize;
+    const uint64_t targetThreads = 3ULL * maxDoublets / 4;
+    std::cout << "Thread coverage: " << totalThreads << " >= " << targetThreads << " ? "
+              << (totalThreads >= targetThreads ? "YES" : "NO") << std::endl;
+
     const auto kernelConnectWorkDiv = cms::alpakatools::make_workdiv<Acc2D>(blks, thrs);
 
     alpaka::exec<Acc2D>(queue,
@@ -266,12 +287,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         this->device_hitToCell_->data(),
                         this->device_cellToNeighbors_->data(),
                         this->m_params.algoParams_);
+    alpaka::wait(queue);
+    std::cout << "Kernel_connect -> Done!" << std::endl;
+
+    // Diagnostics
+    std::cout << "avgCellsPerCell = " << m_params.algoParams_.avgCellsPerCell_ << std::endl;
+    std::cout << "maxDoublets = " << maxDoublets << std::endl;
+    std::cout << "Allocated nCellsToCells = " << (maxDoublets * m_params.algoParams_.avgCellsPerCell_) << std::endl;
 
     CellToCell::template launchFinalize<Acc1D>(this->device_cellToNeighborsView_, queue);
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
-    std::cout << "Kernel_connect -> Done!" << std::endl;
+    std::cout << "Launch finalize -> Done!" << std::endl;
 #endif
 
     auto threadsPerBlock = 1024;

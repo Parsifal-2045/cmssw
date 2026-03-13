@@ -245,10 +245,12 @@ namespace cms::alpakatools {
 
     template <alpaka::concepts::Acc TAcc, typename TQueue>
     ALPAKA_FN_INLINE static void launchFinalize(View view, TQueue &queue) {
+      printf("OneToManyAssocRandomAccess::launchFinalize with view %p\n", (void *)&view);
       // View stores a base pointer, we need to upcast back...
       auto h = static_cast<OneToManyAssocRandomAccess *>(view.assoc);
       ALPAKA_ASSERT_ACC(h);
       if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        printf("No requires_single_thread_per_block_v\n");
         Counter *poff = (Counter *)((char *)(h) + offsetof(OneToManyAssocRandomAccess, off));
         auto nOnes = OneToManyAssocRandomAccess::ctNOnes();
         if constexpr (OneToManyAssocRandomAccess::ctNOnes() == kDynamicSize) {
@@ -262,6 +264,39 @@ namespace cms::alpakatools {
         auto nthreads = 1024;
         auto nblocks = (nOnes + nthreads - 1) / nthreads;
         auto workDiv = cms::alpakatools::make_workdiv<TAcc>(nblocks, nthreads);
+
+        // Diagnostics
+        auto warpSize = alpaka::getPreferredWarpSize(alpaka::getDev(queue));
+        auto dynSharedMemBytes = (warpSize + nblocks) * sizeof(Counter);
+
+        std::cout << "=== launchFinalize Dynamic Memory Check ===" << std::endl;
+        std::cout << "nOnes: " << nOnes << std::endl;
+        std::cout << "nthreads: " << nthreads << std::endl;
+        std::cout << "nblocks: " << nblocks << std::endl;
+        std::cout << "warpSize: " << warpSize << std::endl;
+        std::cout << "sizeof(Counter): " << sizeof(Counter) << std::endl;
+        std::cout << "Required dynamic shared memory: " << dynSharedMemBytes << " bytes ("
+                  << (dynSharedMemBytes / 1024.0) << " KB)" << std::endl;
+
+        // Query device properties
+        auto dev = alpaka::getDev(queue);
+        auto devProps = alpaka::getAccDevProps<TAcc>(dev);
+        std::cout << "Device name: " << alpaka::getName(dev) << std::endl;
+        std::cout << "Max shared memory per block (static): " << devProps.m_sharedMemSizeBytes << " bytes ("
+                  << (devProps.m_sharedMemSizeBytes / 1024.0) << " KB)" << std::endl;
+
+        // Check available dynamic shared memory
+        auto maxDynSharedMem = devProps.m_sharedMemSizeBytes;
+        std::cout << "Assuming max dynamic shared memory: " << maxDynSharedMem << " bytes ("
+                  << (maxDynSharedMem / 1024.0) << " KB)" << std::endl;
+
+        if (dynSharedMemBytes > maxDynSharedMem) {
+          std::cout << "ERROR: Required dynamic shared memory (" << dynSharedMemBytes << " bytes) exceeds maximum ("
+                    << maxDynSharedMem << " bytes)!" << std::endl;
+          std::cout << "Overflow by: " << (dynSharedMemBytes - maxDynSharedMem) << " bytes ("
+                    << ((dynSharedMemBytes - maxDynSharedMem) / 1024.0) << " KB)" << std::endl;
+        }
+        printf("Launching prefix scan with %d blocks of %d threads for %u ones\n", nblocks, nthreads, nOnes);
         alpaka::exec<TAcc>(queue,
                            workDiv,
                            multiBlockPrefixScan<Counter>(),
@@ -272,6 +307,7 @@ namespace cms::alpakatools {
                            ppsws,
                            alpaka::getPreferredWarpSize(alpaka::getDev(queue)));
       } else {
+        printf("requires_single_thread_per_block_v\n");
         h->finalize();
       }
     }
