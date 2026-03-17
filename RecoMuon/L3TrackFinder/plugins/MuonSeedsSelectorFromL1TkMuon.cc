@@ -8,11 +8,10 @@
  *
  *  1. Loose geometric pre-selection (dR cone)
  *  2. Quality evaluation based on seed intrinsic properties (hit counting, layer quality)
- *  3. Hit-by-hit consistency check with L1TkMuon direction
- *  4. Arbitration: keep only the N best seeds per L1TkMuon
+ *  3. Hit-by-hit consistency check with L1TkMuon tracker stubs (OT hits only)
+ *  4. Arbitration: keep only the N best seeds per L1TkMuon based on a combined quality metric
  *
  *  Adapted from MuonTracksSelectorFromL1TkMuon
- *  Inspired by MuonIdProducer::fillArbitrationInfo
  *  
  *  \author Luca Ferragina (INFN BO), 2026
  */
@@ -75,19 +74,14 @@ private:
 
   // Evaluate seed quality based on hits
   SeedQuality evaluateSeedQuality(const TrajectorySeed& seed,
-                                  size_t seedIndex,
-                                  float deltaR2,
-                                  float normPtDiff,
+                                  const size_t seedIndex,
+                                  const float deltaR2,
+                                  const float l1TkMuPt,
+                                  const float normPtDiff,
                                   const std::vector<DetId>& stubDetIds,
                                   const GlobalTrackingGeometry* geometry,
                                   const MagneticField* magField,
                                   const TrackerTopology* tkTopo) const;
-
-  // Check if a hit is consistent with L1TkMu direction
-  bool isHitConsistent(const TrackingRecHit& hit,
-                       float l1TkMuEta,
-                       float l1TkMuPhi,
-                       const GlobalTrackingGeometry* geometry) const;
 
   bool isHitConsistent(const TrackingRecHit& hit,
                        const std::vector<DetId>& stubDetIds,
@@ -102,9 +96,10 @@ private:
 
   // Selection parameters
   const float l1TkMuMinPt_;
-  // Kinimatics matching parameters
+  // Kinematics matching parameters
   const float maxDrForPreselection_;
-  const float maxPtCompatibility_;
+  const float pTCompatibility_;
+  const float maxSeedPtForCompatibilityCheck_;
   // Hits parameters
   const int minNHits_;
   const int minNPixelHits_;
@@ -123,7 +118,9 @@ MuonSeedsSelectorFromL1TkMuon::MuonSeedsSelectorFromL1TkMuon(const edm::Paramete
       tkTopoToken_{esConsumes<TrackerTopology, TrackerTopologyRcd>()},
       l1TkMuMinPt_{static_cast<float>(iConfig.getParameter<double>("L1TkMuMinPt"))},
       maxDrForPreselection_{static_cast<float>(iConfig.getParameter<double>("maxDrForPreselection"))},
-      maxPtCompatibility_{static_cast<float>(iConfig.getParameter<double>("maxPtCompatibility"))},
+      pTCompatibility_{static_cast<float>(iConfig.getParameter<double>("pTCompatibility"))},
+      maxSeedPtForCompatibilityCheck_{
+          static_cast<float>(iConfig.getParameter<double>("maxSeedPtForCompatibilityCheck"))},
       minNHits_{iConfig.getParameter<int>("minNHits")},
       minNPixelHits_{iConfig.getParameter<int>("minNPixelHits")},
       minNConsistentHits_{iConfig.getParameter<int>("minNConsistentHits")},
@@ -155,6 +152,7 @@ MuonSeedsSelectorFromL1TkMuon::SeedQuality MuonSeedsSelectorFromL1TkMuon::evalua
     const TrajectorySeed& seed,
     const size_t seedIndex,
     const float deltaR2,
+    const float l1TkMuPt,
     const float normPtDiff,
     const std::vector<DetId>& stubDetIds,
     const GlobalTrackingGeometry* geometry,
@@ -218,41 +216,18 @@ MuonSeedsSelectorFromL1TkMuon::SeedQuality MuonSeedsSelectorFromL1TkMuon::evalua
   float termDR = squal.dR2 / (maxDrForPreselection_ * maxDrForPreselection_);
 
   // Term 2: Hit consistency (only for OT hits)
-  float fractionConsistent = squal.nOTHits > 0 ? static_cast<float>(squal.nConsistentHits) / squal.nOTHits : 0.0f;
-  float termConsistency = (1.0f - fractionConsistent) * (1.0f - fractionConsistent);
+  float termConsistency = squal.nOTHits > 0 ? static_cast<float>(squal.nConsistentHits) / squal.nOTHits : 0.0f;
 
   // Term 3: Total hit quality
   float termNHits = squal.nHits > 0 ? 1.0f / squal.nHits : 1e6;
 
+  // Term 4: normalized pT difference (only for low pT L1Tk Muons)
+  float termPtDiff = seedTSOS.globalMomentum().perp() < maxSeedPtForCompatibilityCheck_
+                         ? squal.normalizedPtDiff / pTCompatibility_
+                         : 0.0f;
+
   // Combined quality: sum of terms (lower is better)
-  squal.quality = termDR + termConsistency + termNHits;
-
-  /*
-  // Attempt at chi-2 like quality metric
-  // Term 1: deltaR normalized to maximum allowed
-  float termDR = squal.dR2 / (maxDrForPreselection_ * maxDrForPreselection_);
-
-  // Term 2: Hit consistency as a "chi-square"
-  float fractionConsistent = squal.nHits > 0 ? static_cast<float>(squal.nConsistentHits) / squal.nHits : 0.0f;
-  float termConsistency = (1.0f - fractionConsistent) * (1.0f - fractionConsistent);
-
-  // Term 3: Number of hits (more hits -> better quality)
-  float termNHits = 1.0f / squal.nHits;
-
-  // Term 4: Number of pixel hits (more pixel hits -> better quality)
-  float termNPixelHits = 1.0f / (1.0f + squal.nPixelHits);
-
-  // Combined quality: sum of chi-square-like terms
-  // Good seeds have quality close to 0, bad seeds have large quality
-  squal.quality = termDR + termConsistency + termNHits + termNPixelHits;
-*/
-  // Original combined quality metric (lower is better)
-  // More hits -> better
-  // More pixel hits -> better
-  // More consistent hits -> better
-  // Smaller dR2 -> better
-  //squal.quality = -weightNHits_ * squal.nHits - weightNPixelHits_ * squal.nPixelHits -
-  //                weightNConsistentHits_ * squal.nConsistentHits + weightDR_ * squal.dR2;
+  squal.quality = termDR - termConsistency + termNHits + termPtDiff;
 
   LogDebug(metname) << "Seed " << seedIndex << " quality evaluation:"
                     << "\n  nHits=" << squal.nHits << " nPixelHits=" << squal.nPixelHits
@@ -292,7 +267,8 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
   // Store indices of matched seeds
   std::set<size_t> seedsToKeep;
 
-  std::cout << "Processing " << l1TkMuCollectionH->size() << " L1TkMuons and " << seedCollectionH->size() << " seeds\n";
+  LogDebug(metname) << "Processing " << l1TkMuCollectionH->size() << " L1TkMuons and " << seedCollectionH->size()
+                    << " seeds";
 
   // Loop over L1TkMuons
   for (size_t l1TkMuIndex = 0; l1TkMuIndex != l1TkMuCollectionH->size(); ++l1TkMuIndex) {
@@ -309,13 +285,20 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
       l1TkMuEta = trkPtr->momentum().eta();
       l1TkMuPhi = trkPtr->momentum().phi();
       l1TkMuPt = trkPtr->momentum().perp();
+      // Skip L1TkMu below pT threshold
+      if (l1TkMuPt < l1TkMuMinPt_) {
+        LogDebug(metname) << "Skipping L1TkMuon " << l1TkMuIndex << " with pT=" << l1TkMuPt << " below threshold of "
+                          << l1TkMuMinPt_;
+        continue;
+      }
 
-      std::cout << "Processing L1TkMuon " << l1TkMuIndex << " with eta=" << l1TkMuEta << ", phi=" << l1TkMuPhi
-                << ", pT=" << l1TkMuPt << ". Found TTTrack with " << trkPtr->getStubRefs().size() << " stubs:\n";
+      LogDebug(metname) << "Processing L1TkMuon " << l1TkMuIndex << " with eta=" << l1TkMuEta << ", phi=" << l1TkMuPhi
+                        << ", pT=" << l1TkMuPt << ". Found TTTrack with " << trkPtr->getStubRefs().size() << " stubs:";
+
       for (const auto& stubRef : trkPtr->getStubRefs()) {
         auto stubDetId = stubRef->getDetId();
         stubDetIds.push_back(stubDetId);
-        std::cout << "  Stub detId: " << stubDetId.rawId() << " (subdet " << stubDetId.subdetId() << ")\n";
+        LogDebug(metname) << "  Stub detId: " << stubDetId.rawId() << " (subdet " << stubDetId.subdetId() << ")\n";
       }
 
     } else {
@@ -326,11 +309,6 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
       l1TkMuEta = l1TkMuRef->phEta();
       l1TkMuPhi = l1TkMuRef->phPhi();
       l1TkMuPt = l1TkMuRef->phPt();
-    }
-
-    // Basic kinematic selection on L1TkMu
-    if (l1TkMuPt < l1TkMuMinPt_) {
-      continue;
     }
 
     // Vector to hold seed quality information for this L1TkMu
@@ -375,28 +353,22 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
                         << " pT=" << seedPt << " dR2 to L1TkMu " << l1TkMuIndex << " is " << dR2
                         << ", normalised pT difference=" << normPtDiff;
 
-      if (normPtDiff > maxPtCompatibility_) {
+      if (seedPt < maxSeedPtForCompatibilityCheck_ && normPtDiff > pTCompatibility_) {
         LogDebug(metname) << "Seed " << seedIndex
                           << " rejected: pT difference with L1TkMu is too large (|seedPt - l1TkMuPt|/l1TkMuPt = "
-                          << normPtDiff << " > " << maxPtCompatibility_ << ")";
+                          << normPtDiff << " > " << pTCompatibility_;
         continue;
       }
 
       // Evaluate seed quality
-      SeedQuality squal = evaluateSeedQuality(seed, seedIndex, dR2, normPtDiff, stubDetIds, geometry, magField, tkTopo);
+      SeedQuality squal =
+          evaluateSeedQuality(seed, seedIndex, dR2, l1TkMuPt, normPtDiff, stubDetIds, geometry, magField, tkTopo);
 
       if (squal.quality > maxCombinedQuality_) {
-        std::cout << "Seed " << seedIndex << " rejected: poor combined quality (" << squal.quality << " > "
-                  << maxCombinedQuality_ << ")";
+        LogDebug(metname) << "Seed " << seedIndex << " rejected: poor combined quality (" << squal.quality << " > "
+                          << maxCombinedQuality_ << ")\n";
         continue;
       }
-
-      // Reject low consistency (if OT hits are present)
-      //if (squal.nOTHits > minNConsistentHits_ && squal.nConsistentHits < minNConsistentHits_) {
-      //  std::cout << "Seed " << seedIndex << " rejected: only " << squal.nConsistentHits
-      //            << " consistent hits (min required is " << minNConsistentHits_ << ")\n";
-      //  continue;
-      //}
 
       // Selection passed, add to candidate list for arbitration
       // Prefer seeds with pixel hits and compatibility with L1TkMu stubs
@@ -407,28 +379,6 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
       }
       LogDebug(metname) << "Seed " << seedIndex << " passed pre-selection for L1TkMu " << l1TkMuIndex
                         << " with quality " << squal.quality;
-      /*
-      // Loop over recHits in seeds
-      int nMatchingHits = 0;
-      for (auto const& recHit : seed.recHits()) {
-        auto seedHitId = recHit.geographicalId();
-        if (seedHitId.subdetId() != StripSubdetector::TOB && seedHitId.subdetId() != StripSubdetector::TID) {
-          // Only consider strip hits for matching to L1TkMu stubs
-          std::cout << "Skipping non-OT hit\n";
-          continue;
-        }
-        auto stackId = tkTopo->stack(seedHitId);
-        std::cout << "  Seed " << seedIndex << " has hit with detId " << seedHitId << "in stack " << stackId << "\n";
-
-        if (std::find(stubDetIds.begin(), stubDetIds.end(), stackId) != stubDetIds.end()) {
-          nMatchingHits++;
-        }
-      }
-      if (nMatchingHits != 0) {
-        std::cout << "  Seed " << seedIndex << " has " << nMatchingHits << " matching hits with L1TkMu " << l1TkMuIndex
-                  << ". Total seed hits " << seed.nHits() << "\n";
-      }
-      */
     }  // End loop on seeds
 
     // Arbitration: first take best seeds with pixels and OT hits consistent with L1 stubs
@@ -473,20 +423,23 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
                           << ", dR2=" << candidate.dR2 << ", normPtDiff=" << candidate.normalizedPtDiff << ")";
       }
     }
+    if (finalSeeds.empty()) {
+      std::cout << "WARNING - L1TkMu " << l1TkMuIndex << ": no candidate seeds passed selection\n";
+    }
     // Add selected seeds to output
     for (const auto& seed : finalSeeds) {
       seedsToKeep.insert(seed.seedIndex);
 
-      std::cout << "L1TkMu " << l1TkMuIndex << " keeping seed " << seed.seedIndex << " with quality=" << seed.quality
-                << " (nHits=" << seed.nHits << ", nPixel=" << seed.nPixelHits
-                << ", nConsistent=" << seed.nConsistentHits << ", dR2=" << seed.dR2
-                << ", normPtDiff=" << seed.normalizedPtDiff << ")\n";
+      LogDebug(metname) << "L1TkMu " << l1TkMuIndex << " keeping seed " << seed.seedIndex
+                        << " with quality=" << seed.quality << " (nHits=" << seed.nHits
+                        << ", nPixel=" << seed.nPixelHits << ", nConsistent=" << seed.nConsistentHits
+                        << ", dR2=" << seed.dR2 << ", normPtDiff=" << seed.normalizedPtDiff << ")";
     }
 
   }  // End L1TkMuon loop
 
-  std::cout << "Seed selection from " << l1TkMuCollectionH->size() << " L1TkMuons and " << seedCollectionH->size()
-            << " input seeds: selected " << seedsToKeep.size() << " seeds\n";
+  LogDebug(metname) << "Seed selection from " << l1TkMuCollectionH->size() << " L1TkMuons and "
+                    << seedCollectionH->size() << " input seeds: selected " << seedsToKeep.size() << " seeds";
 
   // Fill output collection with selected seeds
   outputSeeds->reserve(seedsToKeep.size());
@@ -511,9 +464,10 @@ void MuonSeedsSelectorFromL1TkMuon::fillDescriptions(edm::ConfigurationDescripti
   // Geometric matching parameters
   desc.add<double>("maxDrForPreselection", 0.4)
       ->setComment("Maximum deltaR for loose pre-selection of seeds (cone around L1TkMuon)");
-  desc.add<double>("maxPtCompatibility", 0.5)
+  desc.add<double>("pTCompatibility", 0.5)
       ->setComment("Maximum allowed relative pT difference between seed and L1TkMuon (|seedPt - l1TkMuPt|/l1TkMuPt)");
-
+  desc.add<double>("maxSeedPtForCompatibilityCheck", 25.0)
+      ->setComment("Maximum L1Tk Muon pT for which to apply the pT compatibility check with seeds");
   // Seed quality requirements
   desc.add<int>("minNHits", 4)->setComment("Minimum number of hits in seed");
   desc.add<int>("minNPixelHits", 2)->setComment("Minimum number of pixel hits in seed");
@@ -521,11 +475,11 @@ void MuonSeedsSelectorFromL1TkMuon::fillDescriptions(edm::ConfigurationDescripti
       ->setComment("Minimum number of OT hits consistent with L1TkMuon TTTrack stubs");
 
   // Quality metric parameters
-  desc.add<double>("maxCombinedQuality", 5.0)
+  desc.add<double>("maxCombinedQuality", 2.5)
       ->setComment("Maximum combined quality metric for seed to be considered (lower is better)");
 
   // Arbitration
-  desc.add<uint32_t>("nSeedsToKeep", 3)
+  desc.add<uint32_t>("nSeedsToKeep", 2)
       ->setComment("Maximum number of seeds to keep per L1TkMuon based on quality ranking");
 
   descriptions.addWithDefaultLabel(desc);
