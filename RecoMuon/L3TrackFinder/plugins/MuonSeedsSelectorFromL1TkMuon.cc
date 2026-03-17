@@ -10,9 +10,10 @@
  *  2. Quality evaluation based on seed intrinsic properties (hit counting, layer quality)
  *  3. Hit-by-hit consistency check with L1TkMuon tracker stubs (OT hits only)
  *  4. Arbitration: keep only the N best seeds per L1TkMuon based on a combined quality metric
- *
- *  Adapted from MuonTracksSelectorFromL1TkMuon
  *  
+ *  For high-pT L1Tk Muons and seeds only dR check is performed and all seeds with pT above
+ *  threshold found in the cone are kept (no arbitration or other limits)
+ *
  *  \author Luca Ferragina (INFN BO), 2026
  */
 
@@ -46,6 +47,7 @@
 #include "Geometry/CommonDetUnit/interface/GlobalTrackingGeometry.h"
 
 #include <set>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 
@@ -58,34 +60,67 @@ public:
   void produce(edm::Event&, const edm::EventSetup&) override;
 
 private:
-  struct SeedQuality {
+  struct SeedInfo {
+    // DetIds of the OT stacks crossed by the seed hits, used for consistency check with L1TkMu stubs
+    std::vector<DetId> otStackIds;
+
+    // Index of the seed in the input collection
     size_t seedIndex;
-    float quality;
+
+    // Kinematics
+    float eta;
+    float phi;
+    float pt;
+
+    // Hits
     int nHits;
     int nPixelHits;
     int nOTHits;
     int nConsistentHits;
+
+    // Flag seeds to be skipped based on basic criteria (e.g. invalid TSOS)
+    bool skip = false;
+  };
+
+  struct SeedQuality {
+    // Index of the seed in the input collection
+    size_t seedIndex;
+
+    // Kinematics matching
     float dR2;
     float normalizedPtDiff;
 
-    // Lower quality is better
+    // Hits
+    int nHits;
+    int nPixelHits;
+    int nOTHits;
+    int nConsistentHits;
+
+    // Quality terms
+    float termDr;
+    float termConsistency;
+    float termNHits;
+    float termPtDiff;
+    float quality;
+
     bool operator<(const SeedQuality& other) const { return quality < other.quality; }
   };
 
-  // Evaluate seed quality based on hits
-  SeedQuality evaluateSeedQuality(const TrajectorySeed& seed,
-                                  const size_t seedIndex,
-                                  const float deltaR2,
-                                  const float l1TkMuPt,
-                                  const float normPtDiff,
-                                  const std::vector<DetId>& stubDetIds,
-                                  const GlobalTrackingGeometry* geometry,
-                                  const MagneticField* magField,
-                                  const TrackerTopology* tkTopo) const;
+  // Cache seed information to avoid redundant calculations during quality evaluation
+  SeedInfo fillSeedInfo(const TrajectorySeed& seed,
+                        const size_t seedIndex,
+                        const GlobalTrackingGeometry* geometry,
+                        const MagneticField* magField,
+                        const TrackerTopology* tkTopo) const;
 
-  bool isHitConsistent(const TrackingRecHit& hit,
-                       const std::vector<DetId>& stubDetIds,
-                       const TrackerTopology* tkTopo) const;
+  // Check how many OT hits in a seed are consistent with L1TkMu stubs
+  int countConsistentHits(const std::vector<DetId>& hitIds, const std::unordered_set<DetId>& stubDetIds) const;
+
+  // Compute seed quality based on kinematic matching and hit consistency with L1TkMu stubs
+  SeedQuality evaluateSeedQuality(const SeedInfo& sinfo,
+                                  const float deltaR2,
+                                  const float normPtDiff,
+                                  const std::unordered_set<DetId>& stubDetIds) const;
 
   // Tokens
   const edm::EDGetTokenT<l1t::TrackerMuonCollection> l1TkMuToken_;
@@ -96,15 +131,13 @@ private:
 
   // Selection parameters
   const float l1TkMuMinPt_;
-  // Kinematics matching parameters
   const float maxDrForPreselection_;
   const float pTCompatibility_;
-  const float maxSeedPtForCompatibilityCheck_;
-  // Hits parameters
-  const int minNHits_;
+  const float maxPtForCompatibilityCheck_;
+
+  // Arbitration parameters
   const int minNPixelHits_;
   const int minNConsistentHits_;
-
   const float maxCombinedQuality_;
   const size_t nSeedsToKeep_;
 };
@@ -119,9 +152,7 @@ MuonSeedsSelectorFromL1TkMuon::MuonSeedsSelectorFromL1TkMuon(const edm::Paramete
       l1TkMuMinPt_{static_cast<float>(iConfig.getParameter<double>("L1TkMuMinPt"))},
       maxDrForPreselection_{static_cast<float>(iConfig.getParameter<double>("maxDrForPreselection"))},
       pTCompatibility_{static_cast<float>(iConfig.getParameter<double>("pTCompatibility"))},
-      maxSeedPtForCompatibilityCheck_{
-          static_cast<float>(iConfig.getParameter<double>("maxSeedPtForCompatibilityCheck"))},
-      minNHits_{iConfig.getParameter<int>("minNHits")},
+      maxPtForCompatibilityCheck_{static_cast<float>(iConfig.getParameter<double>("maxPtForCompatibilityCheck"))},
       minNPixelHits_{iConfig.getParameter<int>("minNPixelHits")},
       minNConsistentHits_{iConfig.getParameter<int>("minNConsistentHits")},
       maxCombinedQuality_{static_cast<float>(iConfig.getParameter<double>("maxCombinedQuality"))},
@@ -129,107 +160,119 @@ MuonSeedsSelectorFromL1TkMuon::MuonSeedsSelectorFromL1TkMuon(const edm::Paramete
   produces<TrajectorySeedCollection>();
 }
 
-bool MuonSeedsSelectorFromL1TkMuon::isHitConsistent(const TrackingRecHit& hit,
-                                                    const std::vector<DetId>& stubDetIds,
-                                                    const TrackerTopology* tkTopo) const {
-  if (!hit.isValid())
-    return false;
-  DetId hitId = hit.geographicalId();
-  if (hitId.subdetId() != StripSubdetector::TOB && hitId.subdetId() != StripSubdetector::TID) {
-    // Only consider strip hits for matching to L1TkMu stubs
-    return false;
-  }
-  auto stackId = tkTopo->stack(hitId);
-
-  bool consistent = std::find(stubDetIds.begin(), stubDetIds.end(), stackId) != stubDetIds.end();
-  if (consistent) {
-    LogDebug(metname) << "    Hit with detId " << hitId << " is consistent with L1TkMu stub in stack " << stackId;
-  }
-  return consistent;
-}
-
-MuonSeedsSelectorFromL1TkMuon::SeedQuality MuonSeedsSelectorFromL1TkMuon::evaluateSeedQuality(
+MuonSeedsSelectorFromL1TkMuon::SeedInfo MuonSeedsSelectorFromL1TkMuon::fillSeedInfo(
     const TrajectorySeed& seed,
     const size_t seedIndex,
-    const float deltaR2,
-    const float l1TkMuPt,
-    const float normPtDiff,
-    const std::vector<DetId>& stubDetIds,
     const GlobalTrackingGeometry* geometry,
     const MagneticField* magField,
     const TrackerTopology* tkTopo) const {
-  const std::string metname = "RecoMuon|L3TrackFinder|MuonSeedsSelectorFromL1TkMuon";
+  SeedInfo info;
+  info.seedIndex = seedIndex;
+  info.nHits = seed.nHits();
+  info.otStackIds.reserve(seed.nHits());
 
-  SeedQuality squal;
-  squal.seedIndex = seedIndex;
-  squal.nHits = 0;
-  squal.nPixelHits = 0;
-  squal.nOTHits = 0;
-  squal.nConsistentHits = 0;
-  squal.quality = 0.0;
-  squal.dR2 = deltaR2;
-  squal.normalizedPtDiff = normPtDiff;
-
-  // Get seed state
+  // Check if seed has valid starting state and can be converted to global kinematics
   const GeomDet* seedDet = geometry->idToDet(seed.startingState().detId());
   if (!seedDet) {
-    // Invalid seed
-    squal.quality = 1e6;
-    return squal;
+    info.skip = true;
+    return info;
   }
 
   TrajectoryStateOnSurface seedTSOS =
       trajectoryStateTransform::transientState(seed.startingState(), &(seedDet->surface()), magField);
-
   if (!seedTSOS.isValid()) {
-    // Invalid seed
-    squal.quality = 1e6;
-    return squal;
+    info.skip = true;
+    return info;
   }
 
-  // Hit counting and consistency evaluation
-  int nPixel = 0, nOT = 0;
+  info.eta = seedTSOS.globalMomentum().eta();
+  info.phi = seedTSOS.globalMomentum().phi();
+  info.pt = seedTSOS.globalMomentum().perp();
+
+  info.nPixelHits = 0;
+  info.nOTHits = 0;
+  info.nConsistentHits = -1;
+
   for (auto const& recHit : seed.recHits()) {
+    if (!recHit.isValid())
+      continue;
+
     DetId hitId = recHit.geographicalId();
+
     if (hitId.subdetId() == PixelSubdetector::PixelBarrel || hitId.subdetId() == PixelSubdetector::PixelEndcap) {
-      LogDebug(metname) << " Found pixel hit " << hitId.rawId() << " in seed " << seedIndex;
-      nPixel++;
+      info.nPixelHits++;
     } else if (hitId.subdetId() == StripSubdetector::TOB || hitId.subdetId() == StripSubdetector::TID) {
-      LogDebug(metname) << " Found OT hit " << hitId.rawId() << " in seed " << seedIndex;
-      nOT++;
-      if (isHitConsistent(recHit, stubDetIds, tkTopo)) {
-        squal.nConsistentHits++;
-      }
+      info.nOTHits++;
+      // Compute and insert stack ID for consistency check with L1TkMu stubs
+      // TTStub detId corresponds to the stack (PS or SS) where the stub was created
+      // The recHit detId corresponds to the specific sensor where the hit was recorded (P or S)
+      // We need to convert the recHit detId to the corresponding stack detId to compare with L1TkMu stubs
+      info.otStackIds.push_back(tkTopo->stack(hitId));
     } else {
-      edm::LogWarning(metname) << "Seed has hit with unexpected subdetector ID " << hitId.subdetId() << " (det "
-                               << hitId.det() << ")";
+      edm::LogWarning("MuonSeedsSelectorFromL1TkMuon")
+          << "Seed has hit with unexpected subdetector ID " << hitId.subdetId() << " (det " << hitId.det() << ")";
+    }
+  }
+  if (info.nHits != info.nPixelHits + info.nOTHits) {
+    edm::LogWarning("MuonSeedsSelectorFromL1TkMuon")
+        << "Seed hit counting inconsistency: total nHits=" << info.nHits << " but pixelHits=" << info.nPixelHits
+        << " and otHits=" << info.nOTHits;
+  }
+
+  return info;
+}
+
+int MuonSeedsSelectorFromL1TkMuon::countConsistentHits(const std::vector<DetId>& hitIds,
+                                                       const std::unordered_set<DetId>& stubDetIds) const {
+  int nConsistent = 0;
+  for (const auto& hitId : hitIds) {
+    if (stubDetIds.count(hitId) > 0) {
+      nConsistent++;
     }
   }
 
-  squal.nHits = nPixel + nOT;
-  squal.nPixelHits = nPixel;
-  squal.nOTHits = nOT;
+  return nConsistent;
+}
 
-  // Chi-square-like quality metric (lower is better, 0 is perfect)
+MuonSeedsSelectorFromL1TkMuon::SeedQuality MuonSeedsSelectorFromL1TkMuon::evaluateSeedQuality(
+    const SeedInfo& sinfo,
+    const float deltaR2,
+    const float normPtDiff,
+    const std::unordered_set<DetId>& stubDetIds) const {
+  const std::string metname = "RecoMuon|L3TrackFinder|MuonSeedsSelectorFromL1TkMuon";
 
+  SeedQuality squal;
+  squal.seedIndex = sinfo.seedIndex;
+
+  squal.nHits = sinfo.nHits;
+  squal.nPixelHits = sinfo.nPixelHits;
+  squal.nOTHits = sinfo.nOTHits;
+  squal.nConsistentHits = countConsistentHits(sinfo.otStackIds, stubDetIds);
+
+  squal.dR2 = deltaR2;
+  squal.normalizedPtDiff = normPtDiff;
+
+  // Quality metric (lower is better, 0 is perfect)
   // Term 1: deltaR normalized to maximum allowed
-  float termDR = squal.dR2 / (maxDrForPreselection_ * maxDrForPreselection_);
+  float termDr = squal.dR2 / (maxDrForPreselection_ * maxDrForPreselection_);
+  squal.termDr = termDr;
 
   // Term 2: Hit consistency (only for OT hits)
   float termConsistency = squal.nOTHits > 0 ? static_cast<float>(squal.nConsistentHits) / squal.nOTHits : 0.0f;
+  squal.termConsistency = termConsistency;
 
   // Term 3: Total hit quality
   float termNHits = squal.nHits > 0 ? 1.0f / squal.nHits : 1e6;
+  squal.termNHits = termNHits;
 
   // Term 4: normalized pT difference (only for low pT L1Tk Muons)
-  float termPtDiff = seedTSOS.globalMomentum().perp() < maxSeedPtForCompatibilityCheck_
-                         ? squal.normalizedPtDiff / pTCompatibility_
-                         : 0.0f;
+  float termPtDiff = squal.normalizedPtDiff / pTCompatibility_;
+  squal.termPtDiff = termPtDiff;
 
   // Combined quality: sum of terms (lower is better)
-  squal.quality = termDR - termConsistency + termNHits + termPtDiff;
+  squal.quality = sinfo.pt <= maxPtForCompatibilityCheck_ ? termDr - termConsistency + termNHits + termPtDiff : termDr;
 
-  LogDebug(metname) << "Seed " << seedIndex << " quality evaluation:"
+  LogDebug(metname) << "Seed " << squal.seedIndex << " quality evaluation:"
                     << "\n  nHits=" << squal.nHits << " nPixelHits=" << squal.nPixelHits
                     << " nConsistentHits=" << squal.nConsistentHits << " dR2=" << squal.dR2
                     << "\n  combined quality=" << squal.quality;
@@ -270,6 +313,18 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
   LogDebug(metname) << "Processing " << l1TkMuCollectionH->size() << " L1TkMuons and " << seedCollectionH->size()
                     << " seeds";
 
+  // Cache seeds info
+  std::vector<SeedInfo> seedsInfo;
+  seedsInfo.reserve(seedCollectionH->size());
+  for (size_t seedIndex = 0; seedIndex != seedCollectionH->size(); ++seedIndex) {
+    SeedInfo info = fillSeedInfo((*seedCollectionH)[seedIndex], seedIndex, geometry, magField, tkTopo);
+    if (!info.skip) {
+      seedsInfo.push_back(info);
+    } else {
+      LogDebug(metname) << "Skipping seed " << seedIndex << " due to invalid TSOS or geometry";
+    }
+  }
+
   // Loop over L1TkMuons
   for (size_t l1TkMuIndex = 0; l1TkMuIndex != l1TkMuCollectionH->size(); ++l1TkMuIndex) {
     l1t::TrackerMuonRef l1TkMuRef(l1TkMuCollectionH, l1TkMuIndex);
@@ -277,8 +332,7 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
     // Get L1TkMu parameters
     float l1TkMuEta, l1TkMuPhi, l1TkMuPt;
     auto trkPtr = l1TkMuRef->trkPtr();
-    std::vector<DetId> stubDetIds;
-    stubDetIds.reserve(trkPtr->getStubRefs().size());
+    std::unordered_set<DetId> stubDetIds;
 
     if (!trkPtr.isNull()) {
       // Prefer tracker-based coordinates
@@ -297,8 +351,8 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
 
       for (const auto& stubRef : trkPtr->getStubRefs()) {
         auto stubDetId = stubRef->getDetId();
-        stubDetIds.push_back(stubDetId);
-        LogDebug(metname) << "  Stub detId: " << stubDetId.rawId() << " (subdet " << stubDetId.subdetId() << ")\n";
+        stubDetIds.insert(stubDetId);
+        LogDebug(metname) << "  Stub detId: " << stubDetId.rawId() << " (subdet " << stubDetId.subdetId() << ")";
       }
 
     } else {
@@ -315,127 +369,116 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
     std::vector<SeedQuality> candidateSeedsWithPriority;
     std::vector<SeedQuality> candidateSeeds;
 
-    for (size_t seedIndex = 0; seedIndex != seedCollectionH->size(); ++seedIndex) {
-      const TrajectorySeed& seed = (*seedCollectionH)[seedIndex];
-
-      // Skip seeds with too few hits
-      if (static_cast<int>(seed.nHits()) < minNHits_) {
-        continue;
-      }
-
-      // Convert seed state to TSOS
-      const GeomDet* seedDet = geometry->idToDet(seed.startingState().detId());
-      if (!seedDet) {
-        continue;
-      }
-
-      TrajectoryStateOnSurface seedTSOS =
-          trajectoryStateTransform::transientState(seed.startingState(), &(seedDet->surface()), magField);
-
-      if (!seedTSOS.isValid()) {
-        continue;
-      }
-
-      // Get seed kinematics
-      float seedEta = seedTSOS.globalMomentum().eta();
-      float seedPhi = seedTSOS.globalMomentum().phi();
-      float seedPt = seedTSOS.globalMomentum().perp();
-
+    //Loop over cached seed information
+    for (const auto& sinfo : seedsInfo) {
       // Loose dR cone for pre-selection
-      float dR2 = deltaR2(l1TkMuEta, l1TkMuPhi, seedEta, seedPhi);
+      float dR2 = deltaR2(l1TkMuEta, l1TkMuPhi, sinfo.eta, sinfo.phi);
 
       if (dR2 > maxDrForPreselection_ * maxDrForPreselection_) {
         continue;
       }
+      if (sinfo.pt > maxPtForCompatibilityCheck_) {
+        LogDebug(metname)
+            << "Seed " << sinfo.seedIndex << " geometrically compatible with L1TkMu " << l1TkMuIndex
+            << " with pT above threshold for compatibility check, skipping all other compatibility requirements";
+        seedsToKeep.insert(sinfo.seedIndex);
+        continue;
+      }
 
-      float normPtDiff = std::abs(seedPt - l1TkMuPt) / l1TkMuPt;
-      LogDebug(metname) << "Processing seed " << seedIndex << ": eta=" << seedEta << " phi=" << seedPhi
-                        << " pT=" << seedPt << " dR2 to L1TkMu " << l1TkMuIndex << " is " << dR2
+      float normPtDiff = std::abs(sinfo.pt - l1TkMuPt) / l1TkMuPt;
+
+      LogDebug(metname) << "Processing seed " << sinfo.seedIndex << ": eta=" << sinfo.eta << " phi=" << sinfo.phi
+                        << " pT=" << sinfo.pt << " dR2 to L1TkMu " << l1TkMuIndex << " is " << dR2
                         << ", normalised pT difference=" << normPtDiff;
 
-      if (seedPt < maxSeedPtForCompatibilityCheck_ && normPtDiff > pTCompatibility_) {
-        LogDebug(metname) << "Seed " << seedIndex
+      if (normPtDiff > pTCompatibility_) {
+        LogDebug(metname) << "Seed " << sinfo.seedIndex
                           << " rejected: pT difference with L1TkMu is too large (|seedPt - l1TkMuPt|/l1TkMuPt = "
                           << normPtDiff << " > " << pTCompatibility_;
         continue;
       }
 
+      LogDebug(metname) << "Seed " << sinfo.seedIndex << " passed pre-selection for L1TkMu " << l1TkMuIndex
+                        << " with dR2=" << dR2 << " and normalized pT difference=" << normPtDiff;
+
       // Evaluate seed quality
-      SeedQuality squal =
-          evaluateSeedQuality(seed, seedIndex, dR2, l1TkMuPt, normPtDiff, stubDetIds, geometry, magField, tkTopo);
+      SeedQuality squal = evaluateSeedQuality(sinfo, dR2, normPtDiff, stubDetIds);
 
       if (squal.quality > maxCombinedQuality_) {
-        LogDebug(metname) << "Seed " << seedIndex << " rejected: poor combined quality (" << squal.quality << " > "
-                          << maxCombinedQuality_ << ")\n";
+        LogDebug(metname) << "Seed " << sinfo.seedIndex << " rejected: poor combined quality (" << squal.quality
+                          << " > " << maxCombinedQuality_ << ")";
         continue;
       }
 
       // Selection passed, add to candidate list for arbitration
       // Prefer seeds with pixel hits and compatibility with L1TkMu stubs
-      if (squal.nPixelHits > minNPixelHits_ && squal.nConsistentHits >= minNConsistentHits_) {
+      if (squal.nPixelHits >= minNPixelHits_ && squal.nConsistentHits >= minNConsistentHits_) {
         candidateSeedsWithPriority.push_back(squal);
       } else {
         candidateSeeds.push_back(squal);
       }
-      LogDebug(metname) << "Seed " << seedIndex << " passed pre-selection for L1TkMu " << l1TkMuIndex
-                        << " with quality " << squal.quality;
+      LogDebug(metname) << "Seed " << sinfo.seedIndex << " passed selection for L1TkMu " << l1TkMuIndex
+                        << " with quality " << squal.quality << " (nHits=" << squal.nHits
+                        << ", nPixelHits=" << squal.nPixelHits << ", nConsistentHits=" << squal.nConsistentHits
+                        << ", dR2=" << squal.dR2 << ", normPtDiff=" << squal.normalizedPtDiff << ")";
     }  // End loop on seeds
 
-    // Arbitration: first take best seeds with pixels and OT hits consistent with L1 stubs
-    std::vector<SeedQuality> finalSeeds;
-    finalSeeds.reserve(nSeedsToKeep_);
+    // Only arbitrate low pT seeds, high pT seeds already added to output collection
+    if (l1TkMuPt <= maxPtForCompatibilityCheck_) {
+      // Arbitration: first take best seeds with pixels and OT hits consistent with L1 stubs
+      std::vector<SeedQuality> finalSeeds;
+      finalSeeds.reserve(nSeedsToKeep_);
+      if (!candidateSeedsWithPriority.empty()) {
+        // Partial sort to get only the best nSeedsToKeep_
+        size_t nToSort = std::min(nSeedsToKeep_, candidateSeedsWithPriority.size());
+        std::partial_sort(candidateSeedsWithPriority.begin(),
+                          candidateSeedsWithPriority.begin() + nToSort,
+                          candidateSeedsWithPriority.end());
 
-    if (!candidateSeedsWithPriority.empty()) {
-      // Partial sort to get only the best nSeedsToKeep_
-      size_t nToSort = std::min(nSeedsToKeep_, candidateSeedsWithPriority.size());
-      std::partial_sort(candidateSeedsWithPriority.begin(),
-                        candidateSeedsWithPriority.begin() + nToSort,
-                        candidateSeedsWithPriority.end());
+        LogDebug(metname) << "L1TkMu " << l1TkMuIndex << ": found " << candidateSeedsWithPriority.size()
+                          << " candidate seeds with priority, keeping best " << nToSort;
 
-      LogDebug(metname) << "L1TkMu " << l1TkMuIndex << ": found " << candidateSeedsWithPriority.size()
-                        << " candidate seeds with priority, keeping best " << nToSort;
+        for (size_t i = 0; i < nToSort; ++i) {
+          finalSeeds.push_back(candidateSeedsWithPriority[i]);
+          auto candidate = candidateSeedsWithPriority[i];
 
-      for (size_t i = 0; i < nToSort; ++i) {
-        finalSeeds.push_back(candidateSeedsWithPriority[i]);
-        auto candidate = candidateSeedsWithPriority[i];
+          LogDebug(metname) << "  Keeping priority seed " << candidate.seedIndex
+                            << " with quality=" << candidate.quality << " (nHits=" << candidate.nHits
+                            << ", nPixel=" << candidate.nPixelHits << ", nConsistent=" << candidate.nConsistentHits
+                            << ", dR2=" << candidate.dR2 << ", normPtDiff=" << candidate.normalizedPtDiff << ")";
+        }
+      }
+      if (finalSeeds.size() < nSeedsToKeep_ and not candidateSeeds.empty()) {
+        size_t nRemaining = nSeedsToKeep_ - finalSeeds.size();
+        size_t nToSort = std::min(nRemaining, candidateSeeds.size());
+        std::partial_sort(candidateSeeds.begin(), candidateSeeds.begin() + nToSort, candidateSeeds.end());
 
-        LogDebug(metname) << "  Keeping priority seed " << candidate.seedIndex << " with quality=" << candidate.quality
-                          << " (nHits=" << candidate.nHits << ", nPixel=" << candidate.nPixelHits
-                          << ", nConsistent=" << candidate.nConsistentHits << ", dR2=" << candidate.dR2
-                          << ", normPtDiff=" << candidate.normalizedPtDiff << ")";
+        LogDebug(metname) << "L1TkMu " << l1TkMuIndex << ": found " << candidateSeeds.size()
+                          << " additional candidate seeds, keeping best " << nToSort;
+
+        for (size_t i = 0; i < nToSort; ++i) {
+          finalSeeds.push_back(candidateSeeds[i]);
+          auto candidate = candidateSeeds[i];
+
+          LogDebug(metname) << "  Keeping additional seed " << candidate.seedIndex
+                            << " with quality=" << candidate.quality << " (nHits=" << candidate.nHits
+                            << ", nPixel=" << candidate.nPixelHits << ", nConsistent=" << candidate.nConsistentHits
+                            << ", dR2=" << candidate.dR2 << ", normPtDiff=" << candidate.normalizedPtDiff << ")";
+        }
+      }
+      if (finalSeeds.empty()) {
+        LogDebug(metname) << "L1TkMu " << l1TkMuIndex << ": no candidate seed passed selection";
+      }
+      // Add selected seeds to output
+      for (const auto& seed : finalSeeds) {
+        seedsToKeep.insert(seed.seedIndex);
+
+        LogDebug(metname) << "L1TkMu " << l1TkMuIndex << " keeping seed " << seed.seedIndex
+                          << " with quality=" << seed.quality << " (nHits=" << seed.nHits
+                          << ", nPixel=" << seed.nPixelHits << ", nConsistent=" << seed.nConsistentHits
+                          << ", dR2=" << seed.dR2 << ", normPtDiff=" << seed.normalizedPtDiff << ")";
       }
     }
-    if (finalSeeds.size() < nSeedsToKeep_ and not candidateSeeds.empty()) {
-      size_t nRemaining = nSeedsToKeep_ - finalSeeds.size();
-      size_t nToSort = std::min(nRemaining, candidateSeeds.size());
-      std::partial_sort(candidateSeeds.begin(), candidateSeeds.begin() + nToSort, candidateSeeds.end());
-
-      LogDebug(metname) << "L1TkMu " << l1TkMuIndex << ": found " << candidateSeeds.size()
-                        << " additional candidate seeds, keeping best " << nToSort;
-
-      for (size_t i = 0; i < nToSort; ++i) {
-        finalSeeds.push_back(candidateSeeds[i]);
-        auto candidate = candidateSeeds[i];
-
-        LogDebug(metname) << "  Keeping additional seed " << candidate.seedIndex
-                          << " with quality=" << candidate.quality << " (nHits=" << candidate.nHits
-                          << ", nPixel=" << candidate.nPixelHits << ", nConsistent=" << candidate.nConsistentHits
-                          << ", dR2=" << candidate.dR2 << ", normPtDiff=" << candidate.normalizedPtDiff << ")";
-      }
-    }
-    if (finalSeeds.empty()) {
-      std::cout << "WARNING - L1TkMu " << l1TkMuIndex << ": no candidate seeds passed selection\n";
-    }
-    // Add selected seeds to output
-    for (const auto& seed : finalSeeds) {
-      seedsToKeep.insert(seed.seedIndex);
-
-      LogDebug(metname) << "L1TkMu " << l1TkMuIndex << " keeping seed " << seed.seedIndex
-                        << " with quality=" << seed.quality << " (nHits=" << seed.nHits
-                        << ", nPixel=" << seed.nPixelHits << ", nConsistent=" << seed.nConsistentHits
-                        << ", dR2=" << seed.dR2 << ", normPtDiff=" << seed.normalizedPtDiff << ")";
-    }
-
   }  // End L1TkMuon loop
 
   LogDebug(metname) << "Seed selection from " << l1TkMuCollectionH->size() << " L1TkMuons and "
@@ -461,26 +504,30 @@ void MuonSeedsSelectorFromL1TkMuon::fillDescriptions(edm::ConfigurationDescripti
   // L1TkMuon selection
   desc.add<double>("L1TkMuMinPt", 0.0)->setComment("Minimum pT for L1TkMuons to be considered for matching");
 
-  // Geometric matching parameters
+  // Matching parameters
   desc.add<double>("maxDrForPreselection", 0.4)
       ->setComment("Maximum deltaR for loose pre-selection of seeds (cone around L1TkMuon)");
   desc.add<double>("pTCompatibility", 0.5)
       ->setComment("Maximum allowed relative pT difference between seed and L1TkMuon (|seedPt - l1TkMuPt|/l1TkMuPt)");
-  desc.add<double>("maxSeedPtForCompatibilityCheck", 25.0)
-      ->setComment("Maximum L1Tk Muon pT for which to apply the pT compatibility check with seeds");
-  // Seed quality requirements
-  desc.add<int>("minNHits", 4)->setComment("Minimum number of hits in seed");
-  desc.add<int>("minNPixelHits", 2)->setComment("Minimum number of pixel hits in seed");
-  desc.add<int>("minNConsistentHits", 4)
-      ->setComment("Minimum number of OT hits consistent with L1TkMuon TTTrack stubs");
+  desc.add<double>("maxPtForCompatibilityCheck", 25.0)
+      ->setComment(
+          "Maximum pT for which to apply the full compatibility check with L1TkMu. Above threshold keep all seeds in "
+          "dR window.");
 
-  // Quality metric parameters
-  desc.add<double>("maxCombinedQuality", 2.5)
+  // Quality
+  desc.add<double>("maxCombinedQuality", 2.0)
       ->setComment("Maximum combined quality metric for seed to be considered (lower is better)");
 
   // Arbitration
+  desc.add<int>("minNPixelHits", 2)
+      ->setComment("Minimum number of pixel hits for seed to be prioritised in arbitration");
+  desc.add<int>("minNConsistentHits", 4)
+      ->setComment(
+          "Minimum number of OT hits consistent with L1TkMuon TTTrack stubs for seed to be prioritised in arbitration");
   desc.add<uint32_t>("nSeedsToKeep", 2)
-      ->setComment("Maximum number of seeds to keep per L1TkMuon based on quality ranking");
+      ->setComment(
+          "Maximum number of seeds to keep per L1TkMuon based on quality ranking (does not apply to L1TkMu above "
+          "maxPtForCompatibilityCheck, for which all seeds passing pre-selection are kept)");
 
   descriptions.addWithDefaultLabel(desc);
 }
