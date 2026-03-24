@@ -203,11 +203,46 @@ l2MuTable = cms.EDProducer(
     )
 )
 
+l2MuTableTraining = l2MuTable.clone(
+    variables = cms.PSet(
+        p = Var("p()", "float", doc = "p (GeV)"),
+        qoverp = Var("qoverp()", "float", doc = "q/p"),
+        pt = Var("pt()", "float", doc = "p_T (GeV)"),
+        eta = Var("eta()", "float", doc = "#eta"),
+        phi = Var("phi()", "float", doc = "#phi (rad)"),
+        dsz = Var("dsz()", "float", doc = "dsz (cm)"),
+        dxy = Var("dxy()", "float", doc = "dxy (cm)"),
+        dz = Var("dz()", "float", doc = "dz (cm)"),
+        qoverpErr = Var("qoverpError()", "float", doc = ""),
+        ptErr = Var("ptError()", "float", doc = ""),
+        lambdaErr = Var("lambdaError()", "float", doc = ""),
+        dszErr = Var("dszError()", "float", doc = ""),
+        etaErr = Var("etaError()", "float", doc = ""),
+        phiErr = Var("phiError()", "float", doc = ""),
+        dxyErr = Var("dxyError()", "float", doc = ""),
+        dzErr = Var("dzError()", "float", doc = ""),
+        chi2 = Var("chi2()", "float", doc = ""),
+        ndof = Var("ndof()", "int16", doc = ""),
+        normalizedChi2 = Var("normalizedChi2()", "float", doc = ""),
+        nLostHits = Var("lost()", "int16", doc = ""),
+        nFoundHits = Var("found()", "int16", doc = ""),
+        nPixelHits = Var("hitPattern().numberOfValidPixelHits()", "int16", doc = ""),
+        nTrkLays = Var("hitPattern().trackerLayersWithMeasurement()", "int16", doc = ""),
+        nMuHits = Var("hitPattern().numberOfValidMuonHits()", "int16", doc = ""),
+    )
+)
+
 # L2 standalone muons updated at vertex
 l2MuTableVtx = l2MuTable.clone(
     src = cms.InputTag("hltL2MuonsFromL1TkMuon:UpdatedAtVtx"),
     name = cms.string("l2_mu_vtx"),
     doc = cms.string("Standalone Muon tracks updated at vertex")
+)
+
+l2MuTableVtxTraining = l2MuTableTraining.clone(
+    src = cms.InputTag("hltL2MuonsFromL1TkMuon:UpdatedAtVtx"),
+    name = cms.string("l2_mu_vtx"),
+    doc = cms.string("Standalone Muon tracks updated at vertex"),
 )
 
 # Muon PixelTracks (with MC truth info)
@@ -218,7 +253,7 @@ muonPixelTracksV = trackingAssocValueMapsProducer.clone(
     storeTPKinematics = cms.bool(True),
     useMuonAssociators = cms.bool(True)
 )
-muonPixelTracksTable = l2MuTable.clone(
+muonPixelTracksTableTraining = l2MuTableTraining.clone(
     src = cms.InputTag("hltPhase2L3FromL1TkMuonPixelTracks"),
     name = cms.string("muon_pixel_tracks"),
     doc = cms.string("L3 Muon Pixel Tracks"),
@@ -255,7 +290,7 @@ muonGeneralTracksV = trackingAssocValueMapsProducer.clone(
     storeTPKinematics = cms.bool(True),
     useMuonAssociators = cms.bool(True)
 )
-muonGeneralTracksTable = l2MuTable.clone(
+muonGeneralTracksTableTraining = l2MuTableTraining.clone(
     src = cms.InputTag("hltIter0Phase2L3FromL1TkMuonCtfWithMaterialTracks"),
     name = cms.string("muon_general_tracks"),
     doc = cms.string("L3 Muon General Tracks"),
@@ -307,9 +342,9 @@ muonOITracksV = trackingAssocValueMapsProducer.clone(
     storeTPKinematics = cms.bool(True),
     useMuonAssociators = cms.bool(True)
 )
-l3TkOINoHPTable = l2MuTable.clone(
+l3TkOITableTraining = l2MuTableTraining.clone(
     src = cms.InputTag("hltPhase2L3OIMuCtfWithMaterialTracks"),
-    name = cms.string("l3_tk_OI_noHP"),
+    name = cms.string("l3_tk_OI"),
     doc = cms.string("L3 Tracker Muon tracks Outside-In (before HighPurity selection)"),
     externalVariables = cms.PSet(
         matched   = cms.PSet(src = cms.InputTag("muonOITracksV","matched"),
@@ -378,6 +413,13 @@ l2MuToReuseTable = l2MuTable.clone(
     doc = cms.string("Standlone Muon tracks to reuse (not matched with L3 Tracker Muon)")
 )
 
+# L2 muons to reuse (IO first) with more parameters for training
+l2MuToReuseTableTraining = l2MuTableTraining.clone(
+    src = cms.InputTag("hltPhase2L3MuonFilter:L2MuToReuse"),
+    name = cms.string("l2_mu_to_reuse"),
+    doc = cms.string("Standlone Muon tracks to reuse (not matched with L3 Tracker Muon)"),
+)
+
 # L3 IO tracks filtered (IO first)
 l3TkIOFilteredTable = l2MuTable.clone(
     src = cms.InputTag("hltPhase2L3MuonFilter:L3IOTracksFiltered"),
@@ -433,6 +475,19 @@ _hltMuonTriggerProducersOIFirst = cms.Sequence(
     + l3GlbMuTable
     + l3MuTkNoIdTable
     + l3MuTkIdTable
+)
+
+hltMuonTriggerProducersForTraining = cms.Sequence(
+    recoMuonValidationHLT_seq
+    + hltLocalRecoMuon_seq
+    + l1TkMuTable
+    + l1TkMuStubTable
+    + l2MuTableVtxTraining
+    + muonGeneralTracksV
+    + muonGeneralTracksTableTraining
+    + l2MuToReuseTableTraining
+    + muonOITracksV
+    + l3TkOITableTraining
 )
 
 from Configuration.ProcessModifiers.phase2L3MuonsOIFirst_cff import phase2L3MuonsOIFirst
