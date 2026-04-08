@@ -134,10 +134,10 @@ namespace cms::alpakatools {
   }
 
   // Throws an exception with a message containing the shared memory requirements and limit.
-  void throwSharedMemoryLimitExceeded(size_t nElements,
-                                      uint32_t nBlocks,
-                                      size_t requiredSharedMem,
-                                      size_t sharedMemLimit);
+  void throwSharedMemoryLimitExceeded(const size_t nElements,
+                                      const uint32_t nBlocks,
+                                      const size_t requiredSharedMem,
+                                      const size_t sharedMemLimit);
 
   // Verify shared memory requirements
   template <alpaka::concepts::Acc TAcc, typename TSize>
@@ -238,6 +238,96 @@ namespace cms::alpakatools {
       }
     }
   };
+
+  // Two kernel approach, not memory limited but more overhead due to kernel launch and global memory usage.
+  // Kernel A: scan one level (tile per block) and emit one block sum per block.
+  // Kernel B: add scanned block offsets to each block (except block 0).
+  // Kernel A can be called recursively on smaller and smaller block-sums arrays orchestration happens on host
+
+  // Kernel A
+  template <typename T>
+  struct scanTilesWriteBlockSums {
+    template <alpaka::concepts::Acc TAcc>
+    ALPAKA_FN_ACC void operator()(
+        const TAcc& acc, T const* ci, T* co, uint32_t size, T* blockSums, std::size_t warpSize) const {
+      T* ws = nullptr;
+      if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        ws = alpaka::getDynSharedMem<T>(acc);
+      }
+
+      const auto elementsPerBlock = alpaka::getWorkDiv<alpaka::Block, alpaka::Elems>(acc)[0u];
+      const auto blockIdx = alpaka::getIdx<alpaka::Grid, alpaka::Blocks>(acc)[0u];
+      const auto threadIdx = alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u];
+
+      auto off = elementsPerBlock * blockIdx;
+      if (off >= size)
+        return;
+
+      auto n = alpaka::math::min(acc, elementsPerBlock, size - off);
+      blockPrefixScan(acc, ci + off, co + off, static_cast<int32_t>(n), ws);
+
+      if (threadIdx == 0u) {
+        blockSums[blockIdx] = co[off + n - 1];
+      }
+    }
+  };
+
+  // Kernel B
+  template <typename T>
+  struct addScannedBlockOffsets {
+    template <alpaka::concepts::Acc TAcc>
+    ALPAKA_FN_ACC void operator()(const TAcc& acc, T* data, uint32_t size, T const* scannedBlockSums) const {
+      const auto elementsPerBlock = alpaka::getWorkDiv<alpaka::Block, alpaka::Elems>(acc)[0u];
+      const auto blockIdx = alpaka::getIdx<alpaka::Grid, alpaka::Blocks>(acc)[0u];
+      const auto threadIdx = alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u];
+
+      if (blockIdx == 0u)
+        return;
+
+      T const add = scannedBlockSums[blockIdx - 1u];
+      uint32_t begin = elementsPerBlock * blockIdx;
+      uint32_t end = alpaka::math::min(acc, begin + elementsPerBlock, size);
+      for (auto i = begin + threadIdx; i < end; i += elementsPerBlock) {
+        data[i] += add;
+      }
+    }
+  };
+
+  // Helper struct and function to compute the number of levels and block sizes for the two-kernel prefix scan.
+  constexpr uint32_t iterativePrefixScanMaxLevels = 8;
+  struct PrefixScanLevelPlan {
+    uint32_t nLevels = 0;
+    std::vector<uint32_t> levelSize;
+    std::vector<uint32_t> levelBlocks;
+  };
+
+  // Throws an exception with a message containing the requested iterations and the set compile-time limit
+  void throwIterativePrefixScanMaxLevelsExceeded(const uint32_t nLevels);
+
+  ALPAKA_FN_INLINE static PrefixScanLevelPlan makePrefixScanLevelPlan(uint32_t nOnes, uint32_t nthreads) {
+    PrefixScanLevelPlan p;
+    if (nOnes == 0u) {
+      return p;
+    }
+
+    p.levelSize.reserve(iterativePrefixScanMaxLevels);
+    p.levelBlocks.reserve(iterativePrefixScanMaxLevels);
+
+    p.nLevels = 1u;
+    p.levelSize.emplace_back(nOnes);
+    p.levelBlocks.emplace_back((nOnes + nthreads - 1u) / nthreads);
+
+    while (p.levelBlocks[p.nLevels - 1u] > 1u) {
+      if (p.nLevels >= iterativePrefixScanMaxLevels) {
+        throwIterativePrefixScanMaxLevelsExceeded(p.nLevels);
+      }
+      p.levelSize.emplace_back(p.levelBlocks[p.nLevels - 1u]);
+      p.levelBlocks.emplace_back((p.levelSize[p.nLevels] + nthreads - 1u) / nthreads);
+      ++p.nLevels;
+    }
+    return p;
+  }
+
 }  // namespace cms::alpakatools
 
 // declare the amount of block shared memory used by the multiBlockPrefixScan kernel
@@ -263,6 +353,39 @@ namespace alpaka::trait {
       } else {
         return sizeof(T) * (warpSize + numBlocks);
       }
+    }
+  };
+
+  // Two-kernel approach requires only workspace for the first kernel, which is sized to the warp size.
+  // Kernel A
+  template <alpaka::concepts::Acc TAcc, typename T>
+  struct BlockSharedMemDynSizeBytes<cms::alpakatools::scanTilesWriteBlockSums<T>, TAcc> {
+    template <typename TVec>
+    ALPAKA_FN_HOST_ACC static std::size_t getBlockSharedMemDynSizeBytes(
+        cms::alpakatools::scanTilesWriteBlockSums<T> const& /* kernel */,
+        TVec const& /* blockThreadExtent */,
+        TVec const& /* threadElemExtent */,
+        T const* /* ci */,
+        T const* /* co */,
+        uint32_t /* size */,
+        T* /* blockSums */,
+        // This trait function does not receive the accelerator object to look up the warp size
+        std::size_t warpSize) {
+      if constexpr (cms::alpakatools::requires_single_thread_per_block_v<TAcc>) {
+        return 0;
+      } else {
+        return sizeof(T) * warpSize;
+      }
+    }
+  };
+
+  // Kernel B does not require shared memory.
+  template <alpaka::concepts::Acc TAcc, typename T>
+  struct BlockSharedMemDynSizeBytes<cms::alpakatools::addScannedBlockOffsets<T>, TAcc> {
+    template <typename TVec>
+    ALPAKA_FN_HOST_ACC static std::size_t getBlockSharedMemDynSizeBytes(
+        cms::alpakatools::addScannedBlockOffsets<T> const&, TVec const&, TVec const&, T const*, uint32_t, T const*) {
+      return 0;
     }
   };
 

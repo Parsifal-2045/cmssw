@@ -276,6 +276,86 @@ namespace cms::alpakatools {
         h->finalize();
       }
     }
+
+    // New scalable iterative path using the two-kernel prefixScan
+    // The idea is to use the scanTilesWriteBlockSums on the level-0 data (poff)
+    // to produce the first level of block sums (sums[0]),
+    // then reuse the same kernel on the block-sum levels to produce the upper levels of block sums,
+    // and finally addScannedBlockOffsets from top-1 down to level 0.
+    // Host-side call must provide pre-allocated buffers for
+    // the block sums at each level (sums) and their capacities (capacities).
+
+    template <alpaka::concepts::Acc TAcc, typename TQueue>
+    ALPAKA_FN_INLINE static void launchFinalizeIterative(OneToManyAssocRandomAccess *h,
+                                                         TQueue &queue,
+                                                         std::vector<Counter *> const &sums,
+                                                         std::vector<uint32_t> const &capacities) {
+      View view = {h, nullptr, nullptr, kDynamicSize, kDynamicSize};
+      launchFinalizeIterative<TAcc>(view, queue, sums, capacities);
+    }
+
+    template <alpaka::concepts::Acc TAcc, typename TQueue>
+    ALPAKA_FN_INLINE static void launchFinalizeIterative(View view,
+                                                         TQueue &queue,
+                                                         std::vector<Counter *> const &sums,
+                                                         std::vector<uint32_t> const &capacities) {
+      auto h = static_cast<OneToManyAssocRandomAccess *>(view.assoc);
+      ALPAKA_ASSERT_ACC(h);
+
+      if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        Counter *poff = (Counter *)((char *)(h) + offsetof(OneToManyAssocRandomAccess, off));
+        auto nOnes = OneToManyAssocRandomAccess::ctNOnes();
+        if constexpr (OneToManyAssocRandomAccess::ctNOnes() == kDynamicSize) {
+          ALPAKA_ASSERT_ACC(view.offStorage);
+          ALPAKA_ASSERT_ACC(view.offSize > 0);
+          nOnes = view.offSize;
+          poff = view.offStorage;
+        }
+        ALPAKA_ASSERT_ACC(nOnes > 0);
+
+        constexpr uint32_t nthreads = 1024u;
+        auto const plan = makePrefixScanLevelPlan(static_cast<uint32_t>(nOnes), nthreads);
+        ALPAKA_ASSERT_ACC(plan.nLevels > 0);
+
+        for (uint32_t l = 0; l < plan.nLevels; ++l) {
+          ALPAKA_ASSERT_ACC(sums[l] != nullptr);
+          ALPAKA_ASSERT_ACC(capacities[l] >= plan.levelBlocks[l]);
+        }
+
+        // Kernel A on level-0 data
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[0], nthreads);
+        alpaka::exec<TAcc>(queue,
+                           workDiv,
+                           scanTilesWriteBlockSums<Counter>{},
+                           poff,
+                           poff,
+                           plan.levelSize[0],
+                           sums[0],
+                           alpaka::getPreferredWarpSize(alpaka::getDev(queue)));
+
+        // Iterative use of kernel A on block-sum levels
+        for (uint32_t l = 1; l < plan.nLevels; ++l) {
+          auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
+          alpaka::exec<TAcc>(queue,
+                             workDiv,
+                             scanTilesWriteBlockSums<Counter>{},
+                             sums[l - 1],
+                             sums[l - 1],
+                             plan.levelSize[l],
+                             sums[l],
+                             alpaka::getPreferredWarpSize(alpaka::getDev(queue)));
+        }
+
+        // Kernel B from top-1 down to level 0
+        for (int32_t l = static_cast<int32_t>(plan.nLevels) - 2; l >= 0; --l) {
+          auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
+          Counter *data = (l == 0) ? poff : sums[l - 1];
+          alpaka::exec<TAcc>(queue, workDiv, addScannedBlockOffsets<Counter>{}, data, plan.levelSize[l], sums[l]);
+        }
+      } else {
+        h->finalize();
+      }
+    }
   };
 
 }  // namespace cms::alpakatools

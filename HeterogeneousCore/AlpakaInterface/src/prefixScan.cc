@@ -14,4 +14,12 @@ namespace cms::alpakatools {
         << " blocks. Required shared memory: " << requiredSharedMem << " bytes. Shared memory limit: " << sharedMemLimit
         << " bytes.";
   }
+
+  void throwIterativePrefixScanMaxLevelsExceeded(const uint32_t nLevels) {
+    throw cms::Exception("IterativePrefixScanMaxLevelsExceeded")
+        << "OneToManyAssoc: Requested an iterative prefix scan with " << nLevels
+        << " levels, which is above the compile time constant " << cms::alpakatools::iterativePrefixScanMaxLevels
+        << ". Consider increasing the value of iterativePrefixScanMaxLevels or reducing the problem's size.";
+  }
+
 }  // namespace cms::alpakatools
