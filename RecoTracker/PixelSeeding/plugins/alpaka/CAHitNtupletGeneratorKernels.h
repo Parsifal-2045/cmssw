@@ -206,12 +206,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     DeviceGenericStorageBuffer device_cellToNeighborsStorage_;
     DeviceGenericOffsetsBuffer device_cellToNeighborsOffsets_;
     GenericContainerView device_cellToNeighborsView_;
+    // Vectors for the iterative prefix scan of Cell->NeighborCells, used in CellToCell::launchFinalizeIterative
+    std::vector<cms::alpakatools::device_buffer<Device, GenericContainerOffsets[]>>
+        device_cellToNeighborsPrefixScanSums_;
+    // Sums + capacities passed to launchFinalizeIterative
+    std::vector<GenericContainerOffsets*> cellToNeighborsPrefixScanPtrs_;
+    std::vector<uint32_t> cellToNeighborsPrefixScanCaps_;
 
     // Cells-> Tracks
     DeviceGenericContainerBuffer device_cellToTracks_;
     DeviceGenericStorageBuffer device_cellToTracksStorage_;
     DeviceGenericOffsetsBuffer device_cellToTracksOffsets_;
     GenericContainerView device_cellToTracksView_;
+    // Vectors for the iterative prefix scan of Cell->NeighborCells, used in CellToCell::launchFinalizeIterative
+    std::vector<cms::alpakatools::device_buffer<Device, GenericContainerOffsets[]>> device_cellToTracksPrefixScanSums_;
+    // Sums + capacities passed to launchFinalizeIterative
+    std::vector<GenericContainerOffsets*> cellToTracksPrefixScanPtrs_;
+    std::vector<uint32_t> cellToTracksPrefixScanCaps_;
 
     // Tracks->Hits
     DeviceSequentialContainerBuffer device_hitContainer_;
