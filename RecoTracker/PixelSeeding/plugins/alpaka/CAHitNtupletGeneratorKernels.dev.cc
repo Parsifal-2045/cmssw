@@ -1,4 +1,5 @@
 // C++ headers
+#include <cstdint>
 #ifdef DUMP_GPU_TK_TUPLES
 #include <mutex>
 #endif
@@ -17,7 +18,7 @@
 #include "CAHitNtupletGeneratorKernels.h"
 #include "CAHitNtupletGeneratorKernelsImpl.h"
 
-// #define GPU_DEBUG
+#define GPU_DEBUG
 // #define NTUPLE_DEBUG
 // #define CA_STATS
 
@@ -258,11 +259,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     uint32_t nhits = hh.metadata().size();
     auto const maxDoublets = this->maxNumberOfDoublets_;
     auto const maxTuples = tracks_view.metadata().size();
-#ifdef NTUPLE_DEBUG
+    //#ifdef NTUPLE_DEBUG
     std::cout << "start tuple building. N hits " << nhits << std::endl;
+    std::cout << "maxDoublets " << maxDoublets << std::endl;
     if (nhits < 2)
       std::cout << "too few hits " << nhits << std::endl;
-#endif
+    //#endif
 
     //
     // applying combinatoric cleaning such as fishbone at this stage is too expensive
@@ -270,33 +272,62 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     const auto nthTot = 64;
     const auto stride = 4;
-    auto blockSize = nthTot / stride;
+    uint32_t blockSize = nthTot / stride;
     auto numberOfBlocks = cms::alpakatools::divide_up_by(3 * maxDoublets / 4, blockSize);
+    std::cout << "Initial estimate for kernelConnect: " << numberOfBlocks
+              << " blocks of blockSize * stride = " << blockSize << " * " << stride << " = " << blockSize * stride
+              << " threads\n";
     const auto rescale = numberOfBlocks / 65536;
     blockSize *= (rescale + 1);
-    numberOfBlocks = cms::alpakatools::divide_up_by(3 * maxDoublets / 4, blockSize);
-    assert(numberOfBlocks < 65536);
-    assert(blockSize > 0 && 0 == blockSize % 16);
-    const Vec2D blks{numberOfBlocks, 1u};
-    const Vec2D thrs{blockSize, stride};
-    const auto kernelConnectWorkDiv = cms::alpakatools::make_workdiv<Acc2D>(blks, thrs);
 
-    alpaka::exec<Acc2D>(queue,
-                        kernelConnectWorkDiv,
-                        Kernel_connect<TrackerTraits>{},
-                        this->device_hitTuple_apc_,  // needed only to be reset, ready for next kernel
-                        hh,
-                        ll,
-                        this->deviceTriplets_->view(),
-                        this->device_simpleCells_->data(),
-                        this->device_nCells_->data(),
-                        this->device_nTriplets_->data(),
-                        this->device_hitToCell_->data(),
-                        this->device_cellToNeighbors_->data(),
-                        this->m_params.algoParams_);
+    if constexpr (!cms::alpakatools::requires_single_thread_per_block_v<Acc2D>) {
+      const uint32_t maxBlockSize = alpaka::getAccDevProps<Acc2D>(alpaka::getDev(queue)).m_blockThreadCountMax;
+      const uint32_t maxBlockSizeForStride = maxBlockSize / stride;
+      std::cout << "maxBlockSize for this device: " << maxBlockSize << ", which allows for a blockSize of "
+                << maxBlockSizeForStride << " with stride " << stride << "\n";
+      blockSize = std::min(blockSize, maxBlockSizeForStride);
+      blockSize = (blockSize / 16) * 16;
+      std::cout << "Rescaled blockSize to " << blockSize << " to fit in maxBlockSizeForStride " << maxBlockSizeForStride
+                << " (rescale factor " << rescale << ")\n";
+      numberOfBlocks = cms::alpakatools::divide_up_by(3 * maxDoublets / 4, blockSize);
+      std::cout << "Launching kernelConnect for " << maxDoublets << " doublets, with " << numberOfBlocks
+                << " blocks of blockSize * stride = " << blockSize << " * " << stride << " = " << blockSize * stride
+                << " threads (rescale " << rescale << ")\n";
+      assert(static_cast<uint32_t>(blockSize <= maxBlockSizeForStride));
+    }
+    assert(blockSize > 0 && 0 == blockSize % 16);
+
+    // Launch in chunks to avoid overflowing the grid
+    //assert(numberOfBlocks < 65536);
+    constexpr uint32_t maxBlocksY = 65535;
+    auto totalBlocksY = numberOfBlocks;
+    for (uint32_t blockOffsetY = 0; blockOffsetY < totalBlocksY; blockOffsetY += maxBlocksY) {
+      auto thisBlockY = std::min<uint32_t>(maxBlocksY, totalBlocksY - blockOffsetY);
+      const Vec2D blks{thisBlockY, 1u};
+      const Vec2D thrs{blockSize, stride};
+      const auto kernelConnectWorkDiv = cms::alpakatools::make_workdiv<Acc2D>(blks, thrs);
+      std::cout << "Chunk " << blockOffsetY / maxBlocksY << ": blockOffsetY " << blockOffsetY << " and " << thisBlockY
+                << " blocks of blockSize * stride = " << blockSize << " * " << stride << " = " << blockSize * stride
+                << " threads\n";
+      alpaka::exec<Acc2D>(queue,
+                          kernelConnectWorkDiv,
+                          Kernel_connect<TrackerTraits>{},
+                          this->device_hitTuple_apc_,  // needed only to be reset, ready for next kernel
+                          hh,
+                          ll,
+                          this->deviceTriplets_->view(),
+                          this->device_simpleCells_->data(),
+                          this->device_nCells_->data(),
+                          this->device_nTriplets_->data(),
+                          this->device_hitToCell_->data(),
+                          this->device_cellToNeighbors_->data(),
+                          this->m_params.algoParams_,
+                          blockOffsetY);
+    }
 
     //CellToCell::template launchFinalize<Acc1D>(this->device_cellToNeighborsView_, queue);
-
+    alpaka::wait(queue);
+    std::cout << "Calling iterative prefix scan for CellToCell with " << maxDoublets + 1 << " elements\n";
     CellToCell::template launchFinalizeIterative<Acc1D>(this->device_cellToNeighborsView_,
                                                         queue,
                                                         this->cellToNeighborsPrefixScanPtrs_,
@@ -373,6 +404,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
 
     //CellToTracks::template launchFinalize<Acc1D>(this->device_cellToTracksView_, queue);
+    std::cout << "Calling iterative prefix scan for CellToTracks with " << maxDoublets + 1 << " elements\n";
     CellToTracks::template launchFinalizeIterative<Acc1D>(
         this->device_cellToTracksView_, queue, this->cellToTracksPrefixScanPtrs_, this->cellToTracksPrefixScanCaps_);
 

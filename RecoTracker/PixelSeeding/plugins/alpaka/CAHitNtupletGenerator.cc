@@ -416,11 +416,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     GPUKernels kernels(
         m_params, hits_d.nHits(), hits_d.offsetBPIX2(), nDoublets, nTracks, layers.metadata().size(), queue);
 
+    alpaka::wait(queue);
+    std::cout << "starting building pixel tracks on GPU with " << trackingHits.metadata().size() << " hits"
+              << std::endl;
     kernels.prepareHits(trackingHits, hitModules, layers, queue);
+    alpaka::wait(queue);
+    std::cout << "hits prepared, now building doublets\n";
     kernels.buildDoublets(trackingHits, graph, layers, hits_d.offsetBPIX2(), queue);
+    alpaka::wait(queue);
+    std::cout << "doublets built, now building tuples (launch kernels)\n";
     kernels.launchKernels(
         trackingHits, hits_d.offsetBPIX2(), layers.metadata().size(), trackCollection.view(), layers, graph, queue);
-
+    alpaka::wait(queue);
+    std::cout << "tuples built, now fitting tracks\n";
     HelixFit fitter(bfield, m_params.algoParams_.fitNas4_);
     fitter.allocate(kernels.tupleMultiplicity(), tracks, kernels.hitContainer());
     if (m_params.algoParams_.useRiemannFit_) {
@@ -430,7 +438,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       fitter.launchBrokenLineKernels(
           trackingHits, modules, trackingHits.metadata().size(), TrackerTraits::maxNumberOfQuadruplets, queue);
     }
+    alpaka::wait(queue);
+    std::cout << "tracks fitted, now classifying tuples\n";
     kernels.classifyTuples(trackingHits, tracks, queue);
+    alpaka::wait(queue);
+    std::cout << "finished building pixeltracks\n";
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
     std::cout << "finished building pixel tracks on GPU" << std::endl;

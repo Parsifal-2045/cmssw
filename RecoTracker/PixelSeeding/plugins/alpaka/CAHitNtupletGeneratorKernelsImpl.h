@@ -357,16 +357,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caHitNtupletGeneratorKernels {
                                   uint32_t *nTrips,
                                   HitToCell const *__restrict__ outerHitHisto,
                                   CellToCell *cellNeighborsHisto,
-                                  AlgoParams const &params) const {
+                                  AlgoParams const &params,
+                                  const uint32_t blockOffsetY) const {
       using Cell = CACell<TrackerTraits>;
       uint32_t maxTriplets = cn.metadata().size();
 
-      if (cms::alpakatools::once_per_grid(acc)) {
+      if (blockOffsetY == 0 && cms::alpakatools::once_per_grid(acc)) {
         *apc = 0;
       }  // ready for next kernel
 
+      // Shift the y-iteration domain by blockOffsetY
+      auto const localBlocksY = alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u];
+      auto const threadsY = alpaka::getWorkDiv<alpaka::Block, alpaka::Threads>(acc)[0u];
+
+      auto const globalFirstY = blockOffsetY * threadsY + alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0u];
+      auto const globalStrideY = localBlocksY * threadsY;
+
       // loop on outer cells
-      for (uint32_t cellIndex : cms::alpakatools::uniform_elements_y(acc, *nCells)) {
+      for (uint32_t cellIndex = globalFirstY; cellIndex < *nCells; cellIndex += globalStrideY) {
         auto &thisCell = cells[cellIndex];
         auto innerHitId = thisCell.inner_hit_id() - hh.offsetBPIX2();
 
