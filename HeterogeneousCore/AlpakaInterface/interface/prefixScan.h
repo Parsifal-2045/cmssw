@@ -328,6 +328,64 @@ namespace cms::alpakatools {
     return p;
   }
 
+  template <alpaka::concepts::Acc TAcc, typename TQueue, typename T>
+  ALPAKA_FN_INLINE static void iterativePrefixScan(
+      T* data, uint32_t size, TQueue& queue, std::vector<T*> const& sums, std::vector<uint32_t> const& capacities) {
+    if (size == 0u) {
+      return;
+    }
+
+    if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+      constexpr uint32_t nthreads = 1024u;
+      auto const plan = makePrefixScanLevelPlan(size, nthreads);
+      ALPAKA_ASSERT_ACC(plan.nLevels > 0);
+      ALPAKA_ASSERT_ACC(sums.size() >= plan.nLevels);
+      ALPAKA_ASSERT_ACC(capacities.size() >= plan.nLevels);
+
+      for (uint32_t l = 0; l < plan.nLevels; ++l) {
+        ALPAKA_ASSERT_ACC(sums[l] != nullptr);
+        ALPAKA_ASSERT_ACC(capacities[l] >= plan.levelBlocks[l]);
+      }
+
+      auto const warpSize = alpaka::getPreferredWarpSize(alpaka::getDev(queue));
+
+      std::cout << "Running iterative prefix scan for " << size << " elements with " << plan.nLevels << " levels\n";
+      for (uint32_t l = 0; l < plan.nLevels; ++l) {
+        std::cout << "  Level " << l << ": size = " << plan.levelSize[l] << ", blocks = " << plan.levelBlocks[l]
+                  << "\n";
+      }
+
+      // Kernel A on level-0 data
+      auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[0], nthreads);
+      alpaka::exec<TAcc>(
+          queue, workDiv, scanTilesWriteBlockSums<T>{}, data, data, plan.levelSize[0], sums[0], warpSize);
+
+      // Iterative use of kernel A on block-sum levels
+      for (uint32_t l = 1; l < plan.nLevels; ++l) {
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
+        alpaka::exec<TAcc>(queue,
+                           workDiv,
+                           scanTilesWriteBlockSums<T>{},
+                           sums[l - 1],
+                           sums[l - 1],
+                           plan.levelSize[l],
+                           sums[l],
+                           warpSize);
+      }
+
+      // Kernel B from top-1 down to level 0
+      for (int32_t l = static_cast<int32_t>(plan.nLevels) - 2; l >= 0; --l) {
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
+        T* levelData = (l == 0) ? data : sums[l - 1];
+        alpaka::exec<TAcc>(queue, workDiv, addScannedBlockOffsets<T>{}, levelData, plan.levelSize[l], sums[l]);
+      }
+    } else {
+      for (uint32_t i = 1; i < size; ++i) {
+        data[i] += data[i - 1];
+      }
+    }
+  }
+
 }  // namespace cms::alpakatools
 
 // declare the amount of block shared memory used by the multiBlockPrefixScan kernel
