@@ -197,19 +197,15 @@ int main() {
       auto output1_d = make_device_buffer<uint32_t[]>(queue, num_items);
       auto blockCounter_d = make_device_buffer<int32_t>(queue);
 
-      const auto nThreadsInit = 256;  // NB: 1024 would be better
-      const auto nBlocksInit = divide_up_by(num_items, nThreadsInit);
-      const auto workDivMultiBlockInit = make_workdiv<Acc1D>(nBlocksInit, nThreadsInit);
-
-      alpaka::enqueue(queue,
-                      alpaka::createTaskKernel<Acc1D>(workDivMultiBlockInit, init(), input_d.data(), 1, num_items));
-      alpaka::memset(queue, blockCounter_d, 0);
-
       const auto nThreads = 1024;
       const auto nBlocks = divide_up_by(num_items, nThreads);
       const auto workDivMultiBlock = make_workdiv<Acc1D>(nBlocks, nThreads);
 
+      alpaka::enqueue(queue, alpaka::createTaskKernel<Acc1D>(workDivMultiBlock, init(), input_d.data(), 1, num_items));
+      alpaka::memset(queue, blockCounter_d, 0);
+
       std::cout << "launch multiBlockPrefixScan " << num_items << ' ' << nBlocks << std::endl;
+      checkSharedMemoryPrefixScan<Acc1D>(num_items, nBlocks, alpaka::getDev(queue));
       alpaka::enqueue(queue,
                       alpaka::createTaskKernel<Acc1D>(workDivMultiBlock,
                                                       multiBlockPrefixScan<uint32_t>(),
@@ -223,7 +219,56 @@ int main() {
 
       alpaka::wait(queue);  // input_d and output1_d end of scope
     }  // ksize
-  }
 
+    // ITERATIVE PREFIXSCAN (TWO-KERNEL)
+    // with ksize=6 num_items = 2e8 above any reasonable limit for physics and intermediate objects
+    // above this threshold, the caching allocator maximum bin size must be increased
+    std::cout << "iterative two-kernel prefix scan" << std::endl;
+    num_items = 200;
+    for (int ksize = 1; ksize < 7; ++ksize) {
+      num_items *= 10;
+      //num_items = ksize == 7 ? 1073741824 : num_items * 10;
+
+      auto input_d = make_device_buffer<uint32_t[]>(queue, num_items);
+      auto output_d = make_device_buffer<uint32_t[]>(queue, num_items);
+      auto blockCounter_d = make_device_buffer<int32_t>(queue);
+
+      const auto nThreads = 1024;
+      const auto nBlocks = divide_up_by(num_items, nThreads);
+      const auto workDiv = make_workdiv<Acc1D>(nBlocks, nThreads);
+
+      alpaka::enqueue(queue, alpaka::createTaskKernel<Acc1D>(workDiv, init(), input_d.data(), 1, num_items));
+      alpaka::memset(queue, blockCounter_d, 0);
+
+      // Build the level plan
+      constexpr uint32_t nthreads = 1024u;
+      auto plan = makePrefixScanLevelPlan(num_items, nthreads);
+      std::cout << "Iterative prefix scan plan for " << num_items << " items with " << nthreads
+                << " threads per block. Problem divided into " << plan.nLevels << " levels:" << std::endl;
+      for (uint32_t l = 0; l < plan.nLevels; ++l) {
+        std::cout << "  Level " << l << ": size = " << plan.levelSize[l] << ", blocks = " << plan.levelBlocks[l]
+                  << std::endl;
+      }
+
+      // Allocate block-sum buffers for each level
+      std::vector<device_buffer<Device, uint32_t[]>> sum_bufs;
+      std::vector<uint32_t*> sum_ptrs;
+      sum_bufs.reserve(plan.nLevels);
+      sum_ptrs.reserve(plan.nLevels);
+
+      for (uint32_t l = 0; l < plan.nLevels; ++l) {
+        auto n = plan.levelBlocks[l];
+        sum_bufs.emplace_back(make_device_buffer<uint32_t[]>(queue, n));
+        sum_ptrs.push_back(sum_bufs.back().data());
+      }
+
+      iterativePrefixScan<Acc1D>(input_d.data(), output_d.data(), num_items, queue, sum_ptrs);
+      alpaka::wait(queue);
+
+      alpaka::enqueue(queue, alpaka::createTaskKernel<Acc1D>(workDiv, verify(), output_d.data(), num_items));
+
+      alpaka::wait(queue);  // input_d and output_d end of scope
+    }
+  }
   return 0;
 }
