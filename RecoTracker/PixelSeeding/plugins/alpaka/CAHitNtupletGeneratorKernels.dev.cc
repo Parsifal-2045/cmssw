@@ -296,11 +296,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         this->m_params.algoParams_);
 
     //CellToCell::template launchFinalize<Acc1D>(this->device_cellToNeighborsView_, queue);
-
-    CellToCell::template launchFinalizeIterative<Acc1D>(this->device_cellToNeighborsView_,
-                                                        queue,
-                                                        this->cellToNeighborsPrefixScanPtrs_,
-                                                        this->cellToNeighborsPrefixScanCaps_);
+    alpaka::wait(queue);
+    std::cout << "Calling iterative prefix scan for CellToCell with " << maxDoublets + 1 << " elements\n";
+    CellToCell::template launchFinalizeIterative<Acc1D>(
+        this->device_cellToNeighborsView_, queue, this->cellToNeighborsPrefixScanPtrs_);
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
@@ -374,7 +373,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     //CellToTracks::template launchFinalize<Acc1D>(this->device_cellToTracksView_, queue);
     CellToTracks::template launchFinalizeIterative<Acc1D>(
-        this->device_cellToTracksView_, queue, this->cellToTracksPrefixScanPtrs_, this->cellToTracksPrefixScanCaps_);
+        this->device_cellToTracksView_, queue, this->cellToTracksPrefixScanPtrs_);
 
     blocks = cms::alpakatools::divide_up_by(std::lrint(maxDoublets * m_params.algoParams_.avgCellsPerCell_),
                                             threadsPerBlock);

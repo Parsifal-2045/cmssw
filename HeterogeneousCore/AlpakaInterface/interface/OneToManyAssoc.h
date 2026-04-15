@@ -288,17 +288,13 @@ namespace cms::alpakatools {
     template <alpaka::concepts::Acc TAcc, typename TQueue>
     ALPAKA_FN_INLINE static void launchFinalizeIterative(OneToManyAssocRandomAccess *h,
                                                          TQueue &queue,
-                                                         std::vector<Counter *> const &sums,
-                                                         std::vector<uint32_t> const &capacities) {
+                                                         std::vector<Counter *> const &sums) {
       View view = {h, nullptr, nullptr, kDynamicSize, kDynamicSize};
-      launchFinalizeIterative<TAcc>(view, queue, sums, capacities);
+      launchFinalizeIterative<TAcc>(view, queue, sums);
     }
 
     template <alpaka::concepts::Acc TAcc, typename TQueue>
-    ALPAKA_FN_INLINE static void launchFinalizeIterative(View view,
-                                                         TQueue &queue,
-                                                         std::vector<Counter *> const &sums,
-                                                         std::vector<uint32_t> const &capacities) {
+    ALPAKA_FN_INLINE static void launchFinalizeIterative(View view, TQueue &queue, std::vector<Counter *> const &sums) {
       auto h = static_cast<OneToManyAssocRandomAccess *>(view.assoc);
       ALPAKA_ASSERT_ACC(h);
 
@@ -311,7 +307,7 @@ namespace cms::alpakatools {
         poff = view.offStorage;
       }
       ALPAKA_ASSERT_ACC(nOnes > 0);
-      cms::alpakatools::iterativePrefixScan<TAcc>(poff, static_cast<uint32_t>(nOnes), queue, sums, capacities);
+      cms::alpakatools::iterativePrefixScan<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue, sums);
     }
   };
 

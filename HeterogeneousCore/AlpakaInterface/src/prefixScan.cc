@@ -10,16 +10,18 @@ namespace cms::alpakatools {
                                       const size_t requiredSharedMem,
                                       const size_t sharedMemLimit) {
     throw cms::Exception("SharedMemoryLimitExceeded")
-        << "OneToManyAssoc: Shared memory limit exceeded for prefix scan of " << nElements << " elements in " << nBlocks
+        << "Shared memory limit exceeded for prefix scan of " << nElements << " elements in " << nBlocks
         << " blocks. Required shared memory: " << requiredSharedMem << " bytes. Shared memory limit: " << sharedMemLimit
         << " bytes.";
   }
 
-  void throwIterativePrefixScanMaxLevelsExceeded(const uint32_t nLevels) {
+  void throwIterativePrefixScanMaxLevelsExceeded(const size_t nElements, const uint32_t nLevels) {
     throw cms::Exception("IterativePrefixScanMaxLevelsExceeded")
-        << "OneToManyAssoc: Requested an iterative prefix scan with " << nLevels
-        << " levels, which is above the compile time constant " << cms::alpakatools::iterativePrefixScanMaxLevels
-        << ". Consider increasing the value of iterativePrefixScanMaxLevels or reducing the problem's size.";
+        << "Requested an iterative prefix scan for " << nElements << " elements.\n"
+        << "The problem was split into " << nLevels
+        << " levels, which exceeds the maximum supported number of levels of "
+        << cms::alpakatools::iterativePrefixScanMaxLevels << " (enough for 1024^3 elements).\n"
+        << "Consider increasing the value of iterativePrefixScanMaxLevels or reducing the problem's size.";
   }
 
 }  // namespace cms::alpakatools
