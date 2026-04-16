@@ -113,21 +113,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     CellToCell::template launchZero<Acc1D>(device_cellToNeighborsView_, queue);
 
-    // Iterative prefix scan requires temporary storage for the block sums at each level.
-    // We allocate the maximum required amount of storage for the worst case (maxDoublets)
-    auto const plan = cms::alpakatools::makePrefixScanLevelPlan(static_cast<uint32_t>(maxDoublets + 1), 1024);
-    device_cellToNeighborsPrefixScanSums_.reserve(plan.nLevels);
-    cellToNeighborsPrefixScanPtrs_.reserve(plan.nLevels);
-    cellToNeighborsPrefixScanCaps_.reserve(plan.nLevels);
-
-    for (uint32_t l = 0; l < plan.nLevels; ++l) {
-      auto n = plan.levelBlocks[l];
-      device_cellToNeighborsPrefixScanSums_.emplace_back(
-          cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, n));
-      cellToNeighborsPrefixScanPtrs_.emplace_back(device_cellToNeighborsPrefixScanSums_[l].data());
-      cellToNeighborsPrefixScanCaps_.emplace_back(n);
-    }
-
     // Cell -> Tracks
     device_cellToTracks_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
     device_cellToTracksStorage_ =
@@ -141,19 +126,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                 nCellsToTracks};
 
     CellToTrack::template launchZero<Acc1D>(device_cellToTracksView_, queue);
-    // Iterative prefix scan requires temporary storage for the block sums at each level.
-    // We allocate the maximum required amount of storage for the worst case (maxDoublets)
-    device_cellToTracksPrefixScanSums_.reserve(plan.nLevels);
-    cellToTracksPrefixScanPtrs_.reserve(plan.nLevels);
-    cellToTracksPrefixScanCaps_.reserve(plan.nLevels);
-
-    for (uint32_t l = 0; l < plan.nLevels; ++l) {
-      auto n = plan.levelBlocks[l];
-      device_cellToTracksPrefixScanSums_.emplace_back(
-          cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, n));
-      cellToTracksPrefixScanPtrs_.emplace_back(device_cellToTracksPrefixScanSums_[l].data());
-      cellToTracksPrefixScanCaps_.emplace_back(n);
-    }
 
     // Track -> Hits
     // - This is a OneToManyAssocSequential since each bin is filled
@@ -297,9 +269,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     //CellToCell::template launchFinalize<Acc1D>(this->device_cellToNeighborsView_, queue);
     alpaka::wait(queue);
-    std::cout << "Calling iterative prefix scan for CellToCell with " << maxDoublets + 1 << " elements\n";
-    CellToCell::template launchFinalizeIterative<Acc1D>(
-        this->device_cellToNeighborsView_, queue, this->cellToNeighborsPrefixScanPtrs_);
+    CellToCell::template launchFinalizeIterative<Acc1D>(this->device_cellToNeighborsView_, queue);
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
@@ -372,8 +342,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
 
     //CellToTracks::template launchFinalize<Acc1D>(this->device_cellToTracksView_, queue);
-    CellToTracks::template launchFinalizeIterative<Acc1D>(
-        this->device_cellToTracksView_, queue, this->cellToTracksPrefixScanPtrs_);
+    CellToTracks::template launchFinalizeIterative<Acc1D>(this->device_cellToTracksView_, queue);
 
     blocks = cms::alpakatools::divide_up_by(std::lrint(maxDoublets * m_params.algoParams_.avgCellsPerCell_),
                                             threadsPerBlock);

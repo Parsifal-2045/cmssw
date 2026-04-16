@@ -221,13 +221,14 @@ int main() {
     }  // ksize
 
     // ITERATIVE PREFIXSCAN (TWO-KERNEL)
-    // with ksize=6 num_items = 2e8 above any reasonable limit for physics and intermediate objects
-    // above this threshold, the caching allocator maximum bin size must be increased
+    // with ksize=6 num_items = 2e8 above any reasonable limit for physics and intermediate objects.
+    // Algorithmic limit is 1024^3, enforced via iterativePrefixScanMaxLevels = 2.
+    // Memory limit gets hit first: allocations above 1 GB currently fail.
+    // Above this threshold, the caching allocator maximum bin size must be increased
     std::cout << "iterative two-kernel prefix scan" << std::endl;
     num_items = 200;
     for (int ksize = 1; ksize < 7; ++ksize) {
       num_items *= 10;
-      //num_items = ksize == 7 ? 1073741824 : num_items * 10;
 
       auto input_d = make_device_buffer<uint32_t[]>(queue, num_items);
       auto output_d = make_device_buffer<uint32_t[]>(queue, num_items);
@@ -250,19 +251,7 @@ int main() {
                   << std::endl;
       }
 
-      // Allocate block-sum buffers for each level
-      std::vector<device_buffer<Device, uint32_t[]>> sum_bufs;
-      std::vector<uint32_t*> sum_ptrs;
-      sum_bufs.reserve(plan.nLevels);
-      sum_ptrs.reserve(plan.nLevels);
-
-      for (uint32_t l = 0; l < plan.nLevels; ++l) {
-        auto n = plan.levelBlocks[l];
-        sum_bufs.emplace_back(make_device_buffer<uint32_t[]>(queue, n));
-        sum_ptrs.push_back(sum_bufs.back().data());
-      }
-
-      iterativePrefixScan<Acc1D>(input_d.data(), output_d.data(), num_items, queue, sum_ptrs);
+      iterativePrefixScan<Acc1D>(input_d.data(), output_d.data(), num_items, queue);
       alpaka::wait(queue);
 
       alpaka::enqueue(queue, alpaka::createTaskKernel<Acc1D>(workDiv, verify(), output_d.data(), num_items));

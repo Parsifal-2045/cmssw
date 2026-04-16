@@ -5,6 +5,7 @@
 
 #include "FWCore/Utilities/interface/CMSUnrollLoop.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/config.h"
+#include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/workdivision.h"
 namespace cms::alpakatools {
   template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
@@ -330,8 +331,7 @@ namespace cms::alpakatools {
   }
 
   template <alpaka::concepts::Acc TAcc, typename TQueue, typename T>
-  ALPAKA_FN_INLINE static void iterativePrefixScan(
-      T* input, T* output, uint32_t size, TQueue& queue, std::vector<T*> const& sums) {
+  ALPAKA_FN_INLINE static void iterativePrefixScan(T* input, T* output, uint32_t size, TQueue& queue) {
     if (size == 0u) {
       return;
     }
@@ -340,10 +340,11 @@ namespace cms::alpakatools {
       constexpr uint32_t nthreads = 1024u;
       auto const plan = makePrefixScanLevelPlan(size, nthreads);
       assert(plan.nLevels > 0);
-      assert(sums.size() >= plan.nLevels);
 
+      std::vector<cms::alpakatools::device_buffer<alpaka::Dev<TQueue>, T[]>> blockSumsBuffers;
+      blockSumsBuffers.reserve(plan.nLevels);
       for (uint32_t l = 0; l < plan.nLevels; ++l) {
-        assert(sums[l] != nullptr);
+        blockSumsBuffers.emplace_back(cms::alpakatools::make_device_buffer<T[]>(queue, plan.levelBlocks[l]));
       }
 
       auto const warpSize = alpaka::getPreferredWarpSize(alpaka::getDev(queue));
@@ -356,8 +357,14 @@ namespace cms::alpakatools {
 
       // Kernel A on level-0 input data
       auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[0], nthreads);
-      alpaka::exec<TAcc>(
-          queue, workDiv, scanTilesWriteBlockSums<T>{}, input, output, plan.levelSize[0], sums[0], warpSize);
+      alpaka::exec<TAcc>(queue,
+                         workDiv,
+                         scanTilesWriteBlockSums<T>{},
+                         input,
+                         output,
+                         plan.levelSize[0],
+                         blockSumsBuffers[0].data(),
+                         warpSize);
 
       // Iterative use of kernel A on block-sum levels
       for (uint32_t l = 1; l < plan.nLevels; ++l) {
@@ -365,22 +372,24 @@ namespace cms::alpakatools {
         alpaka::exec<TAcc>(queue,
                            workDiv,
                            scanTilesWriteBlockSums<T>{},
-                           sums[l - 1],
-                           sums[l - 1],
+                           blockSumsBuffers[l - 1].data(),
+                           blockSumsBuffers[l - 1].data(),
                            plan.levelSize[l],
-                           sums[l],
+                           blockSumsBuffers[l].data(),
                            warpSize);
       }
 
       // Kernel B from top-1 down to level 0
       for (int32_t l = static_cast<int32_t>(plan.nLevels) - 2; l >= 0; --l) {
         auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
-        T* levelData = (l == 0) ? output : sums[l - 1];
-        alpaka::exec<TAcc>(queue, workDiv, addScannedBlockOffsets<T>{}, levelData, plan.levelSize[l], sums[l]);
+        T* levelData = (l == 0) ? output : blockSumsBuffers[l - 1].data();
+        alpaka::exec<TAcc>(
+            queue, workDiv, addScannedBlockOffsets<T>{}, levelData, plan.levelSize[l], blockSumsBuffers[l].data());
       }
     } else {
+      output[0] = input[0];
       for (uint32_t i = 1; i < size; ++i) {
-        output[i] += input[i - 1];
+        output[i] = input[i] + output[i - 1];
       }
     }
   }

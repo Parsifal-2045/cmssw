@@ -278,23 +278,14 @@ namespace cms::alpakatools {
     }
 
     // New scalable iterative path using the two-kernel prefixScan
-    // The idea is to use the scanTilesWriteBlockSums on the level-0 data (poff)
-    // to produce the first level of block sums (sums[0]),
-    // then reuse the same kernel on the block-sum levels to produce the upper levels of block sums,
-    // and finally addScannedBlockOffsets from top-1 down to level 0.
-    // Host-side call must provide pre-allocated buffers for
-    // the block sums at each level (sums) and their capacities (capacities).
-
     template <alpaka::concepts::Acc TAcc, typename TQueue>
-    ALPAKA_FN_INLINE static void launchFinalizeIterative(OneToManyAssocRandomAccess *h,
-                                                         TQueue &queue,
-                                                         std::vector<Counter *> const &sums) {
+    ALPAKA_FN_INLINE static void launchFinalizeIterative(OneToManyAssocRandomAccess *h, TQueue &queue) {
       View view = {h, nullptr, nullptr, kDynamicSize, kDynamicSize};
-      launchFinalizeIterative<TAcc>(view, queue, sums);
+      launchFinalizeIterative<TAcc>(view, queue);
     }
 
     template <alpaka::concepts::Acc TAcc, typename TQueue>
-    ALPAKA_FN_INLINE static void launchFinalizeIterative(View view, TQueue &queue, std::vector<Counter *> const &sums) {
+    ALPAKA_FN_INLINE static void launchFinalizeIterative(View view, TQueue &queue) {
       auto h = static_cast<OneToManyAssocRandomAccess *>(view.assoc);
       ALPAKA_ASSERT_ACC(h);
 
@@ -307,7 +298,7 @@ namespace cms::alpakatools {
         poff = view.offStorage;
       }
       ALPAKA_ASSERT_ACC(nOnes > 0);
-      cms::alpakatools::iterativePrefixScan<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue, sums);
+      cms::alpakatools::iterativePrefixScan<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue);
     }
   };
 
