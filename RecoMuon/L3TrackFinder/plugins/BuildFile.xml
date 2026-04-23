@@ -1,5 +1,12 @@
 <library name="RecoMuonL3TrackFinderPlugins" file="*.cc">
   <use name="FWCore/Framework"/>
+  <use name="FWCore/ParameterSet"/>
+  <use name="FWCore/Utilities"/>
   <use name="RecoMuon/L3TrackFinder"/>
+  <use name="DataFormats/TrackReco"/>
+  <use name="DataFormats/Common"/>
+  <use name="DataFormats/L1TMuonPhase2"/>
+  <use name="DataFormats/MuonReco"/>
+  <use name="PhysicsTools/ONNXRuntime"/>
   <flags EDM_PLUGIN="1"/>
 </library>
