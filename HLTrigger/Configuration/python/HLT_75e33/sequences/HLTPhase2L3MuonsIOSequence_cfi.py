@@ -26,3 +26,49 @@ from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
     HLTPhase2L3MuonsIOSequence,
     _HLTPhase2L3MuonsIOSequencePixelSelector
 )
+
+# Tracking imports
+from ..sequences.HLTTrackingSequence_cfi import *
+from ..modules.hltInputLST_cfi import *
+from ..modules.hltInitialStepMkFitSeeds_cfi import *
+from ..modules.hltInitialStepSeeds_cfi import *
+from ..modules.hltInitialStepTrackCandidates_cfi import *
+from ..modules.hltInitialStepTrackCandidatesMkFit_cfi import *
+from ..modules.hltInitialStepTrackCutClassifier_cfi import *
+from ..modules.hltInitialStepTrackSelectionHighPurity_cfi import *
+from ..modules.hltInitialStepTracks_cfi import *
+from ..modules.hltInitialStepTrajectorySeedsLST_cfi import *
+from ..modules.hltLST_cfi import *
+from ..modules.hltSiPhase2RecHits_cfi import *
+from ..sequences.HLTMkFitInputSequence_cfi import *
+# Muon imports
+from ..modules.hltPhase2MuonIOTrackSeeds_cfi import *
+from ..modules.hltPhase2MuonIOTrackMkFitSeeds_cfi import *
+from ..modules.hltPhase2MuonIOTrackCandidatesMkFit_cfi import *
+from ..modules.hltPhase2MuonIOTrackSelectionHighPurity_cfi import *
+_HLTPhase2L3MuonsIOSequenceSeedsSelector = cms.Sequence(
+    # Global seeding
+    HLTItLocalRecoSequence
+    + HLTOtLocalRecoSequence
+    + hltTrackerClusterCheck
+    + HLTPhase2PixelTracksAndVerticesSequence
+    + hltInitialStepSeeds
+    + hltSiPhase2RecHits
+    + hltInputLST
+    + hltLST
+    + hltInitialStepTrajectorySeedsLST
+    # Muon seeds selection and track building/fitting
+    + hltPhase2MuonIOTrackSeeds
+    + HLTMkFitInputSequence
+    + hltPhase2MuonIOTrackMkFitSeeds
+    + hltPhase2MuonIOTrackCandidatesMkFit
+    + hltPhase2MuonIOTrackCandidates 
+    + hltPhase2MuonIOTracks 
+    + hltPhase2MuonIOTrackSelectionHighPurity 
+)
+
+from Configuration.ProcessModifiers.phase2MuonSeedsSelector_cff import phase2MuonSeedsSelector
+phase2MuonSeedsSelector.toReplaceWith(
+    HLTPhase2L3MuonsIOSequence,
+    _HLTPhase2L3MuonsIOSequenceSeedsSelector
+)
