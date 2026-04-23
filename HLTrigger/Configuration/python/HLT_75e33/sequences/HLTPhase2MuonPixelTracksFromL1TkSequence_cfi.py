@@ -23,3 +23,22 @@ HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
     + hltPhase2L3FromL1TkMuonTrimmedPixelVertices
 )
 
+from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
+from ..modules.hltPhase2MuonPixelTracks_cfi import *
+from ..modules.hltPhase2MuonPixelTracksHighPurity_cfi import *
+_HLTPhase2MuonPixelTracksSelectorSequence = cms.Sequence(
+    HLTBeamSpotSequence
+    + hltPhase2OtRecHitsSoA
+    + hltPhase2PixelRecHitsExtendedSoA
+    + hltPhase2PixelTracksSoA
+    + hltPhase2PixelTracksCAExtension
+    + hltPhase2MuonPixelTracks
+    + hltPhase2MuonPixelTracksHighPurity
+)
+
+from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector
+from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
+(phase2MuonPixelTracksSelector | ngtScouting).toReplaceWith(
+    HLTPhase2MuonPixelTracksFromL1TkSequence,
+    _HLTPhase2MuonPixelTracksSelectorSequence
+)
