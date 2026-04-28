@@ -302,6 +302,31 @@ namespace cms::alpakatools {
     }
   };
 
+  // New scalable iterative path using the two-kernel prefixScan with last level fused
+  template <alpaka::concepts::Acc TAcc, typename TQueue>
+  ALPAKA_FN_INLINE static void launchFinalizeIterativeFused(OneToManyAssocRandomAccess *h, TQueue &queue) {
+    View view = {h, nullptr, nullptr, kDynamicSize, kDynamicSize};
+    launchFinalizeIterative<TAcc>(view, queue);
+  }
+
+  template <alpaka::concepts::Acc TAcc, typename TQueue>
+  ALPAKA_FN_INLINE static void launchFinalizeIterativeFused(View view, TQueue &queue) {
+    auto h = static_cast<OneToManyAssocRandomAccess *>(view.assoc);
+    ALPAKA_ASSERT_ACC(h);
+
+    Counter *poff = (Counter *)((char *)(h) + offsetof(OneToManyAssocRandomAccess, off));
+    auto nOnes = OneToManyAssocRandomAccess::ctNOnes();
+    if constexpr (OneToManyAssocRandomAccess::ctNOnes() == kDynamicSize) {
+      ALPAKA_ASSERT_ACC(view.offStorage);
+      ALPAKA_ASSERT_ACC(view.offSize > 0);
+      nOnes = view.offSize;
+      poff = view.offStorage;
+    }
+    ALPAKA_ASSERT_ACC(nOnes > 0);
+    cms::alpakatools::iterativePrefixScanFused<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue);
+  }
+};
+
 }  // namespace cms::alpakatools
 
 #endif  //HeterogeneousCore_AlpakaInterface_interface_OneToManyAssoc_h
