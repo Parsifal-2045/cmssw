@@ -258,6 +258,44 @@ int main() {
 
       alpaka::wait(queue);  // input_d and output_d end of scope
     }
+
+    // ITERATIVE PREFIXSCAN (TWO-KERNEL) with last level fused on previous
+    std::cout << "iterative two-kernel prefix scan (fused level)" << std::endl;
+    num_items = 200;
+    for (int ksize = 1; ksize < 7; ++ksize) {
+      num_items *= 10;
+
+      auto input_d = make_device_buffer<uint32_t[]>(queue, num_items);
+      auto output_d = make_device_buffer<uint32_t[]>(queue, num_items);
+      auto blockCounter_d = make_device_buffer<int32_t>(queue);
+
+      const auto nThreads = 1024;
+      const auto nBlocks = divide_up_by(num_items, nThreads);
+      const auto workDiv = make_workdiv<Acc1D>(nBlocks, nThreads);
+
+      alpaka::enqueue(queue, alpaka::createTaskKernel<Acc1D>(workDiv, init(), input_d.data(), 1, num_items));
+      alpaka::memset(queue, blockCounter_d, 0);
+
+      // Build the level plan
+      constexpr uint32_t nthreads = 1024u;
+      auto plan = makePrefixScanLevelPlan(num_items, nthreads);
+      std::cout << "Iterative prefix scan plan for " << num_items << " items with " << nthreads
+                << " threads per block. Problem divided into " << plan.nLevels << " levels:" << std::endl;
+      for (uint32_t l = 0; l < plan.nLevels; ++l) {
+        std::cout << "  Level " << l << ": size = " << plan.levelSize[l] << ", blocks = " << plan.levelBlocks[l]
+                  << std::endl;
+      }
+      std::cout << "Fusing level " << plan.nLevels - 1 << " into level " << plan.nLevels - 2
+                << " (last block finishes)\n";
+
+      iterativePrefixScanFused<Acc1D>(input_d.data(), output_d.data(), num_items, queue);
+      alpaka::wait(queue);
+
+      alpaka::enqueue(queue, alpaka::createTaskKernel<Acc1D>(workDiv, verify(), output_d.data(), num_items));
+
+      alpaka::wait(queue);  // input_d and output_d end of scope
+    }
+
   }
   return 0;
 }

@@ -273,6 +273,103 @@ namespace cms::alpakatools {
     }
   };
 
+  // Fused Kernel A: scan tiles, then the last block to finish scans the block sums
+  // and propagates offsets back into the output.
+  // Removes the need for a separate single-block top level and its Kernel B pass.
+  // Follows the same last-block-finishes pattern as multiBlockPrefixScan.
+  template <typename T>
+  struct scanTilesFused {
+    template <alpaka::concepts::Acc TAcc>
+    ALPAKA_FN_ACC void operator()(const TAcc& acc,
+                                  T const* ci,
+                                  T* co,
+                                  uint32_t size,
+                                  T* blockSums,
+                                  int32_t numBlocks,
+                                  int32_t* pc,
+                                  std::size_t warpSize) const {
+      T* ws = nullptr;
+      if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        ws = alpaka::getDynSharedMem<T>(acc);
+      }
+      ALPAKA_ASSERT_ACC(warpSize == static_cast<std::size_t>(alpaka::warp::getSize(acc)));
+
+      const auto elementsPerBlock = alpaka::getWorkDiv<alpaka::Block, alpaka::Elems>(acc)[0u];
+      const auto threadsPerBlock = alpaka::getWorkDiv<alpaka::Block, alpaka::Threads>(acc)[0u];
+      const auto blocksPerGrid = alpaka::getWorkDiv<alpaka::Grid, alpaka::Blocks>(acc)[0u];
+      const auto blockIdx = alpaka::getIdx<alpaka::Grid, alpaka::Blocks>(acc)[0u];
+      const auto threadIdx = alpaka::getIdx<alpaka::Block, alpaka::Threads>(acc)[0u];
+
+      // Each block scans its tile (same as scanTilesWriteBlockSums)
+      auto off = elementsPerBlock * blockIdx;
+      if (off < size) {
+        auto n = alpaka::math::min(acc, elementsPerBlock, size - off);
+        blockPrefixScan(acc, ci + off, co + off, static_cast<int32_t>(n), ws);
+        if (threadIdx == 0u) {
+          blockSums[blockIdx] = co[off + n - 1];
+        }
+      }
+
+      // Last block?
+      auto& isLastBlockDone = alpaka::declareSharedVar<bool, __COUNTER__>(acc);
+      if (0 == threadIdx) {
+        alpaka::mem_fence(acc, alpaka::memory_scope::Device{});
+        auto value = alpaka::atomicAdd(acc, pc, 1, alpaka::hierarchy::Blocks{});
+        isLastBlockDone = (value == (int(blocksPerGrid) - 1));
+      }
+      alpaka::syncBlockThreads(acc);
+      if (!isLastBlockDone)
+        return;
+
+      ALPAKA_ASSERT_ACC(int(blocksPerGrid) == *pc);
+
+      // Last block scans all block sums and adds offsets
+      T* psum = nullptr;
+      if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        psum = ws + warpSize;
+      } else {
+        psum = alpaka::getDynSharedMem<T>(acc);
+      }
+
+      for (uint32_t i = threadIdx; i < blocksPerGrid; i += threadsPerBlock) {
+        psum[i] = blockSums[i];
+      }
+      alpaka::syncBlockThreads(acc);
+
+      if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        if (blocksPerGrid <= warpSize * warpSize)
+          blockPrefixScan(acc, psum, static_cast<int32_t>(blocksPerGrid), ws);
+        else {
+          auto scanOff = 0u;
+          while (scanOff + warpSize * warpSize < blocksPerGrid) {
+            blockPrefixScan(acc, psum + scanOff, static_cast<int32_t>(warpSize * warpSize), ws);
+            scanOff = scanOff + warpSize * warpSize - 1;
+            alpaka::syncBlockThreads(acc);
+          }
+          blockPrefixScan(acc, psum + scanOff, psum + scanOff, static_cast<int32_t>(blocksPerGrid - scanOff), ws);
+        }
+      } else {
+        blockPrefixScan(acc, psum, static_cast<int32_t>(blocksPerGrid), ws);
+      }
+
+      // Write scanned block sums back to global memory
+      for (uint32_t i = threadIdx; i < blocksPerGrid; i += threadsPerBlock) {
+        blockSums[i] = psum[i];
+      }
+
+      // Add scanned block offsets to output (skip first block, it needs no offset)
+      if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+        for (uint32_t i = threadIdx + threadsPerBlock, k = 0; i < size; i += threadsPerBlock, ++k) {
+          co[i] += psum[k];
+        }
+      } else {
+        for (uint32_t i = elementsPerBlock; i < size; i++) {
+          co[i] += psum[i / elementsPerBlock - 1];
+        }
+      }
+    }
+  };
+
   // Kernel B
   template <typename T>
   struct addScannedBlockOffsets {
@@ -296,7 +393,7 @@ namespace cms::alpakatools {
 
   // Helper struct and function to compute the number of levels and block sizes for the two-kernel prefix scan.
   // 3 levels (0, 1, 2) can cover up to 1024^3 ~ 10^9 elements, enough for any realistic use case
-  constexpr uint32_t iterativePrefixScanMaxLevels = 2;
+  constexpr uint32_t iterativePrefixScanMaxLevels = 3;
   struct PrefixScanLevelPlan {
     uint32_t nLevels = 0;
     std::vector<uint32_t> levelSize;
@@ -320,7 +417,7 @@ namespace cms::alpakatools {
     p.levelBlocks.emplace_back((nOnes + nthreads - 1u) / nthreads);
 
     while (p.levelBlocks[p.nLevels - 1u] > 1u) {
-      if (p.nLevels > iterativePrefixScanMaxLevels) {
+      if (p.nLevels >= iterativePrefixScanMaxLevels) {
         throwIterativePrefixScanMaxLevelsExceeded(nOnes, p.nLevels);
       }
       p.levelSize.emplace_back(p.levelBlocks[p.nLevels - 1u]);
@@ -394,6 +491,96 @@ namespace cms::alpakatools {
     }
   }
 
+  template <alpaka::concepts::Acc TAcc, typename TQueue, typename T>
+  ALPAKA_FN_INLINE static void iterativePrefixScanFused(T* input, T* output, uint32_t size, TQueue& queue) {
+    if (size == 0u) {
+      return;
+    }
+
+    if constexpr (!requires_single_thread_per_block_v<TAcc>) {
+      constexpr uint32_t nthreads = 1024u;
+      auto const plan = makePrefixScanLevelPlan(size, nthreads);
+      assert(plan.nLevels > 0);
+
+      std::vector<cms::alpakatools::device_buffer<alpaka::Dev<TQueue>, T[]>> blockSumsBuffers;
+      blockSumsBuffers.reserve(plan.nLevels);
+      for (uint32_t l = 0; l < plan.nLevels; ++l) {
+        blockSumsBuffers.emplace_back(cms::alpakatools::make_device_buffer<T[]>(queue, plan.levelBlocks[l]));
+      }
+
+      auto const warpSize = alpaka::getPreferredWarpSize(alpaka::getDev(queue));
+
+      // The last level has 1 block by construction. Fuse it into the previous level using the
+      // last-block-finishes pattern, eliminating one kernel launch and its Kernel B pass.
+
+      // fusedLevel: the topmost multi-block level that will use scanTilesFused.
+      // For nLevels >= 2: fusedLevel = nLevels - 2 (folds the single-block top level).
+      // For nLevels == 1: fusedLevel = 0, but levelBlocks[0] == 1 so the fused path is skipped.
+      uint32_t fusedLevel = (plan.nLevels >= 2u) ? plan.nLevels - 2u : 0u;
+
+      // Kernel A on levels below the fused level
+      for (uint32_t l = 0; l < fusedLevel; ++l) {
+        T* ci = (l == 0) ? input : blockSumsBuffers[l - 1].data();
+        T* co = (l == 0) ? output : blockSumsBuffers[l - 1].data();
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
+        alpaka::exec<TAcc>(queue,
+                           workDiv,
+                           scanTilesWriteBlockSums<T>{},
+                           ci,
+                           co,
+                           plan.levelSize[l],
+                           blockSumsBuffers[l].data(),
+                           warpSize);
+      }
+
+      // Fused kernel on the topmost multi-block level
+      if (plan.levelBlocks[fusedLevel] > 1u) {
+        T* ci = (fusedLevel == 0) ? input : blockSumsBuffers[fusedLevel - 1].data();
+        T* co = (fusedLevel == 0) ? output : blockSumsBuffers[fusedLevel - 1].data();
+        auto pcBuf = cms::alpakatools::make_device_buffer<int32_t>(queue);
+        alpaka::memset(queue, pcBuf, 0);
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[fusedLevel], nthreads);
+        alpaka::exec<TAcc>(queue,
+                           workDiv,
+                           scanTilesFused<T>{},
+                           ci,
+                           co,
+                           plan.levelSize[fusedLevel],
+                           blockSumsBuffers[fusedLevel].data(),
+                           static_cast<int32_t>(plan.levelBlocks[fusedLevel]),
+                           pcBuf.data(),
+                           warpSize);
+      } else {
+        // Single block at fused level: normal Kernel A suffices (no cross-block work needed)
+        T* ci = (fusedLevel == 0) ? input : blockSumsBuffers[fusedLevel - 1].data();
+        T* co = (fusedLevel == 0) ? output : blockSumsBuffers[fusedLevel - 1].data();
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(1u, nthreads);
+        alpaka::exec<TAcc>(queue,
+                           workDiv,
+                           scanTilesWriteBlockSums<T>{},
+                           ci,
+                           co,
+                           plan.levelSize[fusedLevel],
+                           blockSumsBuffers[fusedLevel].data(),
+                           warpSize);
+      }
+
+      // Kernel B from fusedLevel-1 down to level 0
+      // (the fused kernel already scanned block sums and added offsets for fusedLevel)
+      for (int32_t l = static_cast<int32_t>(fusedLevel) - 1; l >= 0; --l) {
+        auto workDiv = cms::alpakatools::make_workdiv<TAcc>(plan.levelBlocks[l], nthreads);
+        T* levelData = (l == 0) ? output : blockSumsBuffers[l - 1].data();
+        alpaka::exec<TAcc>(
+            queue, workDiv, addScannedBlockOffsets<T>{}, levelData, plan.levelSize[l], blockSumsBuffers[l].data());
+      }
+    } else {
+      output[0] = input[0];
+      for (uint32_t i = 1; i < size; ++i) {
+        output[i] = input[i] + output[i - 1];
+      }
+    }
+  }
+
 }  // namespace cms::alpakatools
 
 // declare the amount of block shared memory used by the multiBlockPrefixScan kernel
@@ -441,6 +628,29 @@ namespace alpaka::trait {
         return 0;
       } else {
         return sizeof(T) * warpSize;
+      }
+    }
+  };
+
+  // Fused Kernel A: workspace (T[warpsize]) + partial sums (T[numblocks]), same as multiBlockPrefixScan.
+  template <alpaka::concepts::Acc TAcc, typename T>
+  struct BlockSharedMemDynSizeBytes<cms::alpakatools::scanTilesFused<T>, TAcc> {
+    template <typename TVec>
+    ALPAKA_FN_HOST_ACC static std::size_t getBlockSharedMemDynSizeBytes(
+        cms::alpakatools::scanTilesFused<T> const& /* kernel */,
+        TVec const& /* blockThreadExtent */,
+        TVec const& /* threadElemExtent */,
+        T const* /* ci */,
+        T* /* co */,
+        uint32_t /* size */,
+        T* /* blockSums */,
+        int32_t numBlocks,
+        int32_t const* /* pc */,
+        std::size_t warpSize) {
+      if constexpr (cms::alpakatools::requires_single_thread_per_block_v<TAcc>) {
+        return sizeof(T) * numBlocks;
+      } else {
+        return sizeof(T) * (warpSize + numBlocks);
       }
     }
   };

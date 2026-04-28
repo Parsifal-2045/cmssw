@@ -298,7 +298,7 @@ namespace cms::alpakatools {
         poff = view.offStorage;
       }
       ALPAKA_ASSERT_ACC(nOnes > 0);
-      cms::alpakatools::iterativePrefixScan<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue);
+      cms::alpakatools::iterativePrefixScanFused<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue);
     }
   };
 
