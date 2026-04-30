@@ -180,6 +180,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     alpaka::memset(queue, *device_nTriplets_, 0);
     alpaka::memset(queue, *device_nCellTracks_, 0);
 
+    prefixScanWorkspace_ = cms::alpakatools::DecoupledLookbackWorkspace<Device>::create<Acc1D>(maxDoublets + 1, queue);
+
     maxNumberOfDoublets_ = maxDoublets;
 
 #ifdef GPU_DEBUG
@@ -269,7 +271,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     //CellToCell::template launchFinalize<Acc1D>(this->device_cellToNeighborsView_, queue);
     alpaka::wait(queue);
-    CellToCell::template launchFinalizeIterative<Acc1D>(this->device_cellToNeighborsView_, queue);
+    CellToCell::template launchFinalizeDecoupled<Acc1D>(
+        this->device_cellToNeighborsView_, queue, *prefixScanWorkspace_);
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
@@ -342,7 +345,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
 
     //CellToTracks::template launchFinalize<Acc1D>(this->device_cellToTracksView_, queue);
-    CellToTracks::template launchFinalizeIterative<Acc1D>(this->device_cellToTracksView_, queue);
+    CellToTracks::template launchFinalizeDecoupled<Acc1D>(this->device_cellToTracksView_, queue, *prefixScanWorkspace_);
 
     blocks = cms::alpakatools::divide_up_by(std::lrint(maxDoublets * m_params.algoParams_.avgCellsPerCell_),
                                             threadsPerBlock);

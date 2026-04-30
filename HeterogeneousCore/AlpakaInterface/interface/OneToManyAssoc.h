@@ -12,6 +12,7 @@
 #include "HeterogeneousCore/AlpakaInterface/interface/FlexiStorage.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/prefixScan.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/workdivision.h"
+#include "prefixScan.h"
 
 namespace cms::alpakatools {
 
@@ -299,6 +300,35 @@ namespace cms::alpakatools {
       }
       ALPAKA_ASSERT_ACC(nOnes > 0);
       cms::alpakatools::iterativePrefixScanFused<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue);
+    }
+
+    // Decoupled lookback approach
+    // New scalable iterative path using the two-kernel prefixScan
+    template <alpaka::concepts::Acc TAcc, typename TQueue>
+    ALPAKA_FN_INLINE static void launchFinalizeDecoupled(OneToManyAssocRandomAccess *h,
+                                                         TQueue &queue,
+                                                         DecoupledLookbackWorkspace<alpaka::Dev<TQueue>> &workspace) {
+      View view = {h, nullptr, nullptr, kDynamicSize, kDynamicSize};
+      launchFinalizeDecoupled<TAcc>(view, queue);
+    }
+
+    template <alpaka::concepts::Acc TAcc, typename TQueue>
+    ALPAKA_FN_INLINE static void launchFinalizeDecoupled(View view,
+                                                         TQueue &queue,
+                                                         DecoupledLookbackWorkspace<alpaka::Dev<TQueue>> &workspace) {
+      auto h = static_cast<OneToManyAssocRandomAccess *>(view.assoc);
+      ALPAKA_ASSERT_ACC(h);
+
+      Counter *poff = (Counter *)((char *)(h) + offsetof(OneToManyAssocRandomAccess, off));
+      auto nOnes = OneToManyAssocRandomAccess::ctNOnes();
+      if constexpr (OneToManyAssocRandomAccess::ctNOnes() == kDynamicSize) {
+        ALPAKA_ASSERT_ACC(view.offStorage);
+        ALPAKA_ASSERT_ACC(view.offSize > 0);
+        nOnes = view.offSize;
+        poff = view.offStorage;
+      }
+      ALPAKA_ASSERT_ACC(nOnes > 0);
+      cms::alpakatools::decoupledLookbackPrefixScan<TAcc>(poff, poff, static_cast<uint32_t>(nOnes), queue, workspace);
     }
   };
 

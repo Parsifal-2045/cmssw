@@ -237,6 +237,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::optional<CAPairSoACollection> deviceTriplets_;
     std::optional<CAPairSoACollection> deviceTracksCells_;
 
+    // prefixScan workspace
+    std::optional<cms::alpakatools::DecoupledLookbackWorkspace<Device>> prefixScanWorkspace_;
+
     // this could be inferred from the above buffers
     // but seems cleaner to have a dedicate variable
     uint32_t maxNumberOfDoublets_;
