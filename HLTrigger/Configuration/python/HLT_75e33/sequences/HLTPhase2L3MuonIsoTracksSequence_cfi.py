@@ -55,7 +55,8 @@ _HLTPhase2L3MuonIsoTracksSequencePixelSelector = cms.Sequence(
     + hltPhase2OtRecHitsSoA
     + hltPhase2PixelRecHitsExtendedSoA
     + hltPhase2PixelTracksSoA
-    + hltPhase2PixelTracksCAExtension
+    + hltPhase2PixelTrackTorchHighPuritySelector
+    + hltPhase2PixelTracks
     + hltPhase2L3MuonPixelTracksAndHighPtTripletTrackingRegions
     + hltPhase2L3MuonIsoTracks
 )

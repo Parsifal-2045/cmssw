@@ -3,7 +3,7 @@ import FWCore.ParameterSet.Config as cms
 hltPhase2MuonPixelTracks = cms.EDProducer('MuonTracksSelectorFromL1TkMuon',
     L1TkMuonInputCollection = cms.InputTag('l1tTkMuonsGmt'),
     L1TkMuMinPt = cms.double(0),
-    TrackInputCollection = cms.InputTag('hltPhase2PixelTracksCAExtension'),
+    TrackInputCollection = cms.InputTag('hltPhase2PixelTracks'),
     trackMinPt = cms.double(0.9),
     trackMaxEta = cms.double(3),
     trackMaxPtForMatch = cms.double(50),
