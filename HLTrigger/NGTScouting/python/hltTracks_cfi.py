@@ -115,6 +115,10 @@ hltPixelTrackSoATable = cms.EDProducer(
     doc  = cms.string("Pixel tracks from TrackSoA")
 )
 
+# The table source is the merger's SoA (merged, OT-extended, refit, de-duplicated), not the prompt arm alone.
+from Configuration.ProcessModifiers.pixelTrackMask_cff import pixelTrackMask
+pixelTrackMask.toModify(hltPixelTrackSoATable, src = "hltPhase2PixelTracksSoAMerger")
+
 # TrackingParticle <-> hltGeneralTracks NanoAOD tables (Phase-2 HLT validation).
 # tpToHltGeneralTrackAssociation must already be present in the process.
 from SimTracker.TrackAssociation.trackingParticleRecoTrackAssociationTables_cff import (
