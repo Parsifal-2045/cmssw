@@ -205,6 +205,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
               // the pixel/stub hit merger writes real values, so every other hit producer must set these.
               hits[h].dPhiDr() = 0.f;
               hits[h].dPhiDrError() = -1.f;
+              hits[h].dPhiDrErrorPrec() = -1.f;
               hits[h].lowerHitIdx() = std::numeric_limits<uint32_t>::max();
               hits[h].stubFlags() = 0;
 

@@ -18,6 +18,7 @@ namespace reco {
   using Vector5f = Eigen::Matrix<float, 5, 1>;
   using Vector15f = Eigen::Matrix<float, 15, 1>;
   using Quality = pixelTrack::Quality;
+  using Iteration = pixelTrack::Iteration;
 
   GENERATE_SOA_LAYOUT(TrackLayout,
                       SOA_COLUMN(Quality, quality),
@@ -30,14 +31,13 @@ namespace reco {
                       SOA_EIGEN_COLUMN(Vector15f, covariance),
                       SOA_SCALAR(int, nTracks),
                       SOA_COLUMN(uint32_t, hitOffsets),
-                      // Fitted degrees of freedom (2 * measurements-in-fit - 5, outlier drops
-                      // included; 0 = never fitted). Written by the GBL fit so downstream chi2
-                      // consumers and the legacy converter see the honest ndof.
+                      // CA iteration (pixelTrack::Iteration) that produced the track, notIteration on
+                      // unused tail slots; keeps each track's provenance in the merged collection.
+                      SOA_COLUMN(Iteration, iteration),
+                      // Fitted ndof (2*measurements - 5, outlier drops included; 0 = never fitted).
                       SOA_COLUMN(int8_t, ndof))
-
-  // attached: 0 = hit found by the CA (original), 1 = attached by the in-fit extension stage.
-  // A later iteration's hit masking skips attached hits (original-hits masking policy) and
-  // classifiers/nano can count them.
+  // attached: 1 for hits added to the track by the extension stage, 0 for hits found by the CA.
+  // A later iteration's hit masking can skip attached hits, and classifiers can count them.
   GENERATE_SOA_LAYOUT(TrackHitsLayout,
                       SOA_COLUMN(uint32_t, id),
                       SOA_COLUMN(uint32_t, detId),

@@ -9,6 +9,7 @@
 #include "RecoTracker/PixelSeeding/interface/CAGeometrySoA.h"
 #include "CACell.h"
 #include "CAPipelineCounters.h"
+#include "CADnnBank.h"     // DnnBank (per-iteration weight-bank selector)
 #include "CATripletDNN.h"  // inline per-triplet DNN gate (compile-time weights)
 
 // CA_TRIPLET_DUMP (built-triplet dataset dump, the truth-labeled DNN training input) is toggled in
@@ -257,13 +258,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         [[maybe_unused]] reco::CAGraphSoAConstView cc,
         [[maybe_unused]] bool useTripletDNN,
         [[maybe_unused]] float tripletDNNThreshold,
+        [[maybe_unused]] DnnBank tripletBank,
 #ifdef CA_TRIPLET_DUMP
         // out: the 18 BASE DNN features, filled (in DNN-block formulas, so training==deployment)
         // when the triplet is accepted; written into the TripletDump SoA at t_ind by Kernel_connect.
         float* __restrict__ dumpFeat,
-        // out: the IN-KERNEL DNN score score(feat) for this triplet (in-kernel-vs-offline
+        // out: the IN-KERNEL DNN score score<BANK>(feat) for this triplet (in-kernel-vs-offline
         // consistency check); computed regardless of the gate in dump builds, -1 if not computed.
         float* __restrict__ dumpScore,
+        // Dump-only: the iteration label stamped on each dump row, or -1 if this iteration is
+        // deselected at dump time (the tripletDumpIteration parameter, resolved host-side at the
+        // launch site).
+        [[maybe_unused]] int dumpIteration,
 #endif
         uint32_t* __restrict__ pipelineCounters) {
 #ifdef CA_PIPELINE_COUNTERS
@@ -456,23 +462,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         }
 #endif
 
-        // ----------------------------------------------------------------------------
         // Inline per-triplet DNN gate (optional; compile-time weights in CATripletDNNWeights.h,
-        // evaluated by CATripletDNN.h). Rejects accepted triplets whose DNN score < threshold; with
-        // useTripletDNN off the block is a no-op and the cut ladder alone decides.
-        // In a CA_TRIPLET_DUMP build the reject below is compiled out, so accept() returns true for every
-        // cut-accepted triplet whatever useTripletDNN and whichever model is compiled in. That keeps the
-        // training set unbiased: gating the dump on the compiled-in model would only ever show the next
-        // DNN that model's own accepted subset. The score is still captured (dumpScore) so the in-kernel
-        // evaluation can be cross-checked against the offline one.
-        // Feature vector = 18 raw quantities + 11 derived (pulls/residuals/log
-        // compressions/layer gaps): order AND formulas (incl. the 1e-12 eps
-        // conventions) MUST match add_derived() + BASE_FEATURES/DERIVED in
-        // RecoTracker/PixelSeeding/test/train_triplet_dnn_v2.py.
-        // Gate regime: when the in-kernel DNN is on it gates EVERY triplet, pixel-only (nStubs==0, via
-        // the sentinel features above) and stub-containing alike. One model covers both
-        // regimes (nStubs is a feature); a retrained bank inherits this contract because the dump path
-        // that produced its training rows is the same one.
+        // evaluated by CATripletDNN.h). Rejects cut-accepted triplets whose DNN score < threshold;
+        // with useTripletDNN off the block is a no-op and the cut ladder alone decides. When on, it
+        // gates EVERY triplet, pixel-only (nStubs==0, via the sentinel features above) and
+        // stub-containing alike: one model per iteration covers both regimes (nStubs is a feature).
+        // Feature vector = 18 raw quantities + 11 derived (pulls/residuals/log compressions/layer
+        // gaps): order AND formulas (incl. the 1e-12 eps conventions) MUST match add_derived() +
+        // BASE_FEATURES/DERIVED in RecoTracker/PixelSeeding/test/models/train_triplet_dnn.py.
+        // In a CA_TRIPLET_DUMP build the reject is compiled out for the dumped iteration, so every
+        // cut-accepted triplet is dumped whatever model is compiled in (an unbiased training set);
+        // the score is still captured in dumpScore for the offline-vs-in-kernel cross-check.
         bool runDnnBlock = useTripletDNN;
 #ifdef CA_TRIPLET_DUMP
         runDnnBlock = true;  // dump build: always evaluate the score to capture it (consistency check)
@@ -536,14 +536,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           bool featFinite = true;
           for (int k = 0; featFinite && k < int(caTripletDNN::kNFeat); ++k)
             featFinite = !edm::isNotFinite(feat[k]);
-          const float dnnScore = caTripletDNN_eval::score(feat);
+          const float dnnScore = (tripletBank == DnnBank::kPrompt)
+                                     ? caTripletDNN_eval::score<DnnBank::kPrompt>(feat)
+                                     : caTripletDNN_eval::score<DnnBank::kDisplaced>(feat);
+          const float defThr = (tripletBank == DnnBank::kPrompt) ? caTripletDNN_prompt::kDefaultThreshold
+                                                                 : caTripletDNN_displaced::kDefaultThreshold;
+          const float thr = (tripletDNNThreshold >= 0.f) ? tripletDNNThreshold : defThr;
 #ifdef CA_TRIPLET_DUMP
           if (dumpScore)
             *dumpScore = dnnScore;  // capture the in-kernel score for the offline-vs-in-kernel check
-          // dump build: reject compiled out so every cut-accepted triplet is dumped (see the note above).
-#else
-          const float defThr = caTripletDNN::kDefaultThreshold;
-          const float thr = (tripletDNNThreshold >= 0.f) ? tripletDNNThreshold : defThr;
+          // dump build: the reject is compiled out ONLY for the iteration being dumped (dumpIteration >= 0),
+          // so every cut-accepted triplet of that iteration is dumped (see the note above). Any other
+          // iteration in the same job keeps the production reject, so the chain upstream of the dumped
+          // iteration (e.g. the prompt iteration and the hit mask it leaves for the displaced dump) is
+          // exactly the production one.
+          if (dumpIteration >= 0)
+            return true;
+#endif
           // PROMOTING form on purpose: `score >= threshold` on finite inputs is the decision to
           // ACCEPT the triplet, and the reject is its negation -- never `if (score < thr) return
           // false`. Under -Ofast (-ffinite-math-only) the compiler may assume no NaN operand and
@@ -554,7 +563,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           const bool dnnAccept = featFinite && (dnnScore >= thr);
           if (useTripletDNN && !dnnAccept)
             return false;
-#endif
         }
       }
 

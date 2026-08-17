@@ -20,6 +20,22 @@ namespace pixelTrack {
     return ret;
   }
 
+  // CA iteration that produced a track, stored per track as its provenance: promptLowPt is the
+  // offline low-pT pixel iteration, displaced the stub-seeded displaced iteration. notIteration is
+  // the end sentinel, so new entries go before it.
+  enum class Iteration : uint8_t { promptHighPt, promptLowPt, displaced, notIteration };
+  constexpr uint32_t iterationSize{uint8_t(Iteration::notIteration)};
+  constexpr std::string_view iterationName[iterationSize]{"promptHighPt", "promptLowPt", "displaced"};
+  inline Iteration iterationByName(std::string_view name) {
+    auto qp = std::find(iterationName, iterationName + iterationSize, name) - iterationName;
+    auto ret = static_cast<Iteration>(qp);
+
+    if (ret == pixelTrack::Iteration::notIteration)
+      throw std::invalid_argument(std::string(name) + " is not a pixelTrack::Iteration!");
+
+    return ret;
+  }
+
 #ifdef GPU_SMALL_EVENTS
   // kept for testing and debugging
   constexpr uint32_t maxNumber() { return 2 * 1024; }

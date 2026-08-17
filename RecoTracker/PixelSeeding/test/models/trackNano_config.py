@@ -1,39 +1,33 @@
 """Track-level training dataset: one row per reconstructed track, with the features the
 selectors see and the truth the track validation uses.
 
-It adds tables to an existing reconstruction process (the base config, see _import_chassis)
-and writes them as nanoAOD. Two row spaces per iteration, joined offline by an
-order-preserving (pt, phi) match:
-  Trk<X>Full  : every track in the SoA, before selection      -> the fitted features
+Adds tables to an existing reconstruction process (the base config; see _import_chassis) and
+writes them as nanoAOD. Two row spaces per iteration, joined offline by (pt, phi):
+  Trk<X>Full  : every track in the SoA, before selection -> fitted features
   Trk<X>CA    : the same tracks' hit and stub features
-  Trk<X>Truth : the legacy conversion at quality NANO_MINQUALITY -> matched/duplicate/truth kinematics
+  Trk<X>Truth : legacy conversion at quality NANO_MINQUALITY -> matched/duplicate/truth kinematics
+With NANO_MERGED=1 the same three tables exist for X = Merged (the merged collection both
+iterations produce together). Feeds the track DNN and both final HP selectors. Multithreaded.
 
-It feeds the track DNN (train_disp_nano.py) and both final high-purity selectors
-(nano_loader.py + build_tree_model.py, train_prompt_hp_nano.py). Multithreaded.
+  NANO_SAMPLE, NANO_NEVT, NANO_OUT, NANO_SKIP, NANO_FILES, NANO_THREADS: see below.
+  NANO_MINQUALITY  'loose' (track DNN population) | 'tight' (default, final selector)
+  NANO_CHASSIS     base reconstruction config module (make_base_config.sh generates one)
+  NANO_MERGED=1     adds TrkMerged* over the merged collection (both arms' HP output, twin-merged,
+                    OT-extended, GBL-refitted, de-duplicated) -- the population a final HP forest
+                    decides on. Needs a two-iteration chassis. Truth always carries BOTH labels.
+  NANO_CLUSTER=1     adds 8 pixel-cluster charge/shape columns to the MERGED CA table. Off by
+                    default (changes schema). NANO_CLUSTER_QLOW overrides the low-charge threshold.
+  NANO_MTV_LABEL=1  adds MTV-true columns matchedAny/duplicateAny to the PROMPT/DISPLACED
+                    truth tables. Off by default (changes schema). matched keeps its meaning.
 
-  NANO_SAMPLE      = label for the built-in input list: ttbarPU | displacedPU | displacedNoPU
-  NANO_NEVT        = events (default 1000)
-  NANO_OUT         = output file (default trackNano_<sample>.root)
-  NANO_SKIP        = skip first N events (default 0)
-  NANO_MINQUALITY  = quality of the truth conversion: 'loose' (the population the track DNN
-                     decides on) | 'tight' (default; the population the final selector sees)
-  NANO_FILES       = comma-separated input files, overriding the built-in list
-  NANO_THREADS     = threads/streams (default 1)
-  NANO_CHASSIS     = base reconstruction config module (default: resolved by search, see
-                     _import_chassis; make_base_config.sh generates one)
+Chain-state overrides (one set per iteration; default = inherit the producer config):
+NANO_PROMPT_GATE / _GATEOFF / _TRACKDNN / _TRACKTHR / _CAPS and NANO_DISP_* equivalents.
+Every dump prints a '[trackNano CHAIN-STATE]' line per iteration; a dataset is only valid for
+the state on that line. The retraining entry scripts set the right state for each step.
 
-Chain-state overrides, one set per iteration (default = inherit the producer configuration;
-see the block below): NANO_PROMPT_GATE / _GATEOFF / _TRACKDNN / _TRACKTHR / _CAPS and the
-NANO_DISP_* equivalents. Every dump prints a '[trackNano CHAIN-STATE]' line per iteration with
-the effective state; a dataset is only valid for the state on that line.
-
-The retraining entry scripts set the right state for each step:
-  retrain_prompt.sh dump --for gate|hp        retrain_displaced.sh dump --for gate|hp
-
-Iterations covered: prompt (hltPhase2PixelTracksSoA) and displaced
-(hltPhase2PixelTracksSoADisplaced, formerly hltPhase2PixelTracksSoALowPt -- either label
-resolves, see _resolve_label). The displaced truth uses a displaced-friendly truth-particle
-selection (transverse impact parameter below 60 cm, no in-time requirement).
+Iterations: prompt (hltPhase2PixelTracksSoA) and displaced
+(hltPhase2PixelTracksSoADisplaced or hltPhase2PixelTracksSoALowPt -- either label
+resolves). The displaced truth uses a displaced-friendly TP selection (tip < 60 cm, no in-time req).
 """
 import glob
 import os
@@ -225,6 +219,18 @@ _dm = getattr(process, _dispLabel)
 _ovPrompt = _apply_chain_overrides(_pm, "NANO_PROMPT")
 _ovDisp = _apply_chain_overrides(_dm, "NANO_DISP")
 
+# Third row space: the MERGED collection (hltPhase2PixelTracksSoAMerger = twin merge -> OT-hit
+# attach walk -> GBL refit -> final dedup, over BOTH arms' HP-selected outputs). It exists only on a
+# two-iteration chassis, so it is guarded on the module being there as well as on the switch.
+_MERGED = os.environ.get("NANO_MERGED", "0") == "1"
+# Pixel-cluster charge/shape aggregates on the merged CA table (schema change -> opt-in).
+_CLUSTER = os.environ.get("NANO_CLUSTER", "0") == "1"
+_CLUSTER_QLOW = float(os.environ.get("NANO_CLUSTER_QLOW", "7000"))
+if _MERGED and not hasattr(process, "hltPhase2PixelTracksSoAMerger"):
+    print("trackNano: NANO_MERGED=1 but this chassis has no hltPhase2PixelTracksSoAMerger "
+          "(single-iteration menu?) -- the merged tables are NOT emitted.")
+    _MERGED = False
+
 # The dump's provenance line, one per iteration. Read it in the log before using a dataset: the
 # dataset is only valid for the chain state printed here.
 for _label, _mod, _ov in (("prompt", _pm, _ovPrompt), ("displaced", _dm, _ovDisp)):
@@ -236,6 +242,19 @@ for _label, _mod, _ov in (("prompt", _pm, _ovPrompt), ("displaced", _dm, _ovDisp
              _shown(_mod, "maxNumberOfTuples"), _shown(_mod, "avgCellsPerCell"),
              _shown(_mod, "avgTracksPerCell"), os.environ.get("NANO_MINQUALITY", "tight"),
              ",".join(_ov) if _ov else "none (inheriting the configuration)"))
+
+# The merged row space has no combinatorics knobs of its own: it inherits BOTH lines above, plus the
+# two HP selectors it consumes. Its own provenance is which collections it merges and the operating
+# point of the attach/refit/dedup stages that only exist here.
+if _MERGED:
+    _mg = process.hltPhase2PixelTracksSoAMerger
+    print("[trackNano CHAIN-STATE] merged: hltPhase2PixelTracksSoAMerger inputTkSoAs=%s | "
+          "mergerMinQuality=%s twinMergeNSigma2=%s extHostMaxChi2Ndof=%s extMaxWalkLayers=%s | "
+          "minQuality=%s | row space = post-HP on BOTH arms (twin merge -> OT attach -> GBL refit "
+          "-> dedup); valid only for the two lines above"
+          % ([str(_t) for _t in _mg.inputTkSoAs], _shown(_mg, "minQuality"),
+             _shown(_mg, "twinMergeNSigma2"), _shown(_mg, "extHostMaxChi2Ndof"),
+             _shown(_mg, "extMaxWalkLayers"), os.environ.get("NANO_MINQUALITY", "tight")))
 
 # Prune validation/DQM paths: only the HLT reconstruction is needed.
 # Also prune the base config's own output EndPath (<eventcontent>output_step) and drop every
@@ -292,9 +311,39 @@ tpSelectorDisplaced = tpSelectorPixelTracks.clone(
     intimeOnly=cms.bool(False),
 )
 
+# All-inclusive TP selection = the MTV FAKE definition. MTV calls a reconstructed track fake iff it
+# is associated to NO TrackingParticle at all; the narrow selections above are the EFFICIENCY
+# denominators, and a track matched to a real particle that simply fails one of their cuts (pT<0.9,
+# a secondary, |tip|>2.5cm, out-of-time PU) is real by MTV and a fake by the narrow label. Training a
+# fake-rejection model on the narrow label therefore teaches it to kill real tracks. So the truth
+# tables carry BOTH: `matched` (narrow = the recall/efficiency class) and `matchedAny` (inclusive =
+# the training target). Nothing is cut here beyond charge, which the hit associator needs.
+tpSelectorAnyTP = tpSelectorPixelTracks.clone(
+    ptMin=cms.double(0.0),
+    tip=cms.double(1000.0),
+    lip=cms.double(1000.0),
+    minRapidity=cms.double(-10.0),
+    maxRapidity=cms.double(10.0),
+    intimeOnly=cms.bool(False),
+    signalOnly=cms.bool(False),
+    stableOnly=cms.bool(False),
+    chargedOnly=cms.bool(True),
+    minHit=cms.int32(0),
+)
+
+# NANO_MTV_LABEL=1 adds the inclusive association (and the matchedAny/duplicateAny columns) to the
+# PROMPT and DISPLACED truth tables too. Off by default because it changes those tables' schema;
+# the retraining scripts switch it on. The merged arm always carries both labels.
+_MTV_LABEL = os.environ.get("NANO_MTV_LABEL", "0") == "1"
+
 process.trainPromptAssoc = pixelTrackAssoc.clone(trackCollection="trainPromptTracks")
 process.trainDispAssoc = pixelTrackAssoc.clone(trackCollection="trainDispTracks",
                                                tpSelectorPSet=tpSelectorDisplaced)
+if _MTV_LABEL:
+    process.trainPromptAssocAny = pixelTrackAssoc.clone(trackCollection="trainPromptTracks",
+                                                        tpSelectorPSet=tpSelectorAnyTP)
+    process.trainDispAssocAny = pixelTrackAssoc.clone(trackCollection="trainDispTracks",
+                                                      tpSelectorPSet=tpSelectorAnyTP)
 
 # Feature tables: ALL SoA tracks, exact deployment ABI.
 process.trainPromptSoATab = hltPhase2PixelTrackSoATableProducer.clone(trackSrc="hltPhase2PixelTracksSoA")
@@ -309,6 +358,9 @@ process.trainDispCATable = cms.EDProducer(
     tableName=cms.string("TrkDispCA"),
     trackSrc=cms.InputTag(_dispLabel),
     mergedHitsSrc=cms.InputTag("hltPhase2PixelRecHitsStubsMerger"),
+    # Set explicitly rather than left to the C++ default: an empty/wrong OT SoA silently NaNs every
+    # OT-extended row (caTrackFeatures::fill returns false with no view) instead of raising.
+    otRecHitsSoASrc=cms.InputTag("hltPixelSeedingOTRecHitsSoA"),
     # Attach-purity: also emit a per-(track,hit) truth table (isOTExtra/isStub/isTrueForOwnTP).
     emitHitTruth=cms.bool(True),
     hitTableName=cms.string("TrkDispCAHit"),
@@ -322,20 +374,81 @@ process.trainPromptCATable = cms.EDProducer(
     tableName=cms.string("TrkPromptCA"),
     trackSrc=cms.InputTag("hltPhase2PixelTracksSoA"),
     mergedHitsSrc=cms.InputTag("hltPhase2PixelRecHitsStubsMerger"),
+    otRecHitsSoASrc=cms.InputTag("hltPixelSeedingOTRecHitsSoA"),  # explicit; see TrkDispCA above
     # Attach-purity: also emit a per-(track,hit) truth table (isOTExtra/isStub/isTrueForOwnTP).
     emitHitTruth=cms.bool(True),
     hitTableName=cms.string("TrkPromptCAHit"),
 )
 
 # Truth tables on the legacy conversions (kinematics for the join + truth columns).
-def _truthTable(src, name, assoc):
+# assocAny (optional): a second association run with tpSelectorAnyTP, contributing matchedAny /
+# duplicateAny. `matched` keeps its meaning (the efficiency-selected match) so nothing downstream
+# shifts; matchedAny is the MTV-true label a fake-rejection model should be trained against, and by
+# construction matchedAny >= matched row-wise.
+def _truthTable(src, name, assoc, assocAny=None):
     t = hltPixelTrackTable.clone(src=src, name=name)
     for _v in t.externalVariables.parameterNames_():
         getattr(t.externalVariables, _v).src = cms.InputTag(assoc, getattr(t.externalVariables, _v).src.getProductInstanceLabel())
+    if assocAny:
+        t.externalVariables.matchedAny = cms.PSet(
+            src=cms.InputTag(assocAny, "matched"),
+            doc=cms.string("1 if matched to ANY TrackingParticle (the MTV-true label: MTV calls a "
+                           "track fake iff this is 0). Training target for fake rejection."),
+            type=cms.string("uint8"))
+        t.externalVariables.duplicateAny = cms.PSet(
+            src=cms.InputTag(assocAny, "duplicate"),
+            doc=cms.string("1 if multiple reco tracks map to the same TP, under the all-inclusive "
+                           "TP selection"),
+            type=cms.string("uint8"))
     return t
 
-process.trainPromptTruthTable = _truthTable("trainPromptTracks", "TrkPromptTruth", "trainPromptAssoc")
-process.trainDispTruthTable = _truthTable("trainDispTracks", "TrkDispTruth", "trainDispAssoc")
+process.trainPromptTruthTable = _truthTable("trainPromptTracks", "TrkPromptTruth", "trainPromptAssoc",
+                                            "trainPromptAssocAny" if _MTV_LABEL else None)
+process.trainDispTruthTable = _truthTable("trainDispTracks", "TrkDispTruth", "trainDispAssoc",
+                                          "trainDispAssocAny" if _MTV_LABEL else None)
+
+# ---------------------------------------------------------------------------
+# MERGED row space (NANO_MERGED=1): TrkMergedFull / TrkMergedCA / TrkMergedTruth over
+# hltPhase2PixelTracksSoAMerger, i.e. the collection a FINAL high-purity forest would decide on.
+# It differs from the two per-arm row spaces in three ways worth remembering when training on it:
+#   * the population is already HP-selected once per arm, so it is a genuine second stage;
+#   * chi2/ndof are POST-GBL-refit and nHits is POST-extension;
+#   * `iteration` is meaningful only here (the two arms are otherwise indistinguishable), which is
+#     why the CA table is asked for emitMergedProvenance.
+# The TP selection is the DISPLACED one: the merged collection contains the displaced arm, and the
+# prompt selector's tip=2.5cm would label every genuine displaced track a fake.
+if _MERGED:
+    _mergedLabel = "hltPhase2PixelTracksSoAMerger"
+    process.trainMergedTracks = cms.EDProducer("PixelTrackProducerFromSoAAlpaka",
+                                               trackSrc=cms.InputTag(_mergedLabel),
+                                               **_convCommon)
+    process.trainMergedAssoc = pixelTrackAssoc.clone(trackCollection="trainMergedTracks",
+                                                     tpSelectorPSet=tpSelectorDisplaced)
+    # Always both labels on this arm: matched (displaced efficiency class) and matchedAny (MTV).
+    process.trainMergedAssocAny = pixelTrackAssoc.clone(trackCollection="trainMergedTracks",
+                                                        tpSelectorPSet=tpSelectorAnyTP)
+    process.trainMergedSoATab = hltPhase2PixelTrackSoATableProducer.clone(trackSrc=_mergedLabel)
+    process.trainMergedFullTable = hltPixelTrackSoATable.clone(src="trainMergedSoATab",
+                                                               name="TrkMergedFull")
+    process.trainMergedCATable = cms.EDProducer(
+        "CATrackFeaturesTableProducer",
+        tableName=cms.string("TrkMergedCA"),
+        trackSrc=cms.InputTag(_mergedLabel),
+        mergedHitsSrc=cms.InputTag("hltPhase2PixelRecHitsStubsMerger"),
+        # Load-bearing here: a missing OT SoA does not fail loudly, it NaNs the WHOLE feature row of
+        # every track carrying a tagged OT extra (caTrackFeatures::fill returns false with no view).
+        otRecHitsSoASrc=cms.InputTag("hltPixelSeedingOTRecHitsSoA"),
+        emitHitTruth=cms.bool(False),  # heavy (TrackerHitAssociator); the merged forest does not need it
+        emitMergedProvenance=cms.bool(True),  # iteration / ndof / nOTExtra / nAttached
+        # Pixel-cluster charge/shape block (NANO_CLUSTER=1). Off by default so an existing merged
+        # dataset's schema is unchanged; the threshold is a plain parameter, so re-picking it from
+        # the measured distribution costs a re-dump but never a rebuild.
+        emitClusterFeatures=cms.bool(_CLUSTER),
+        lowChargeThreshold=cms.double(_CLUSTER_QLOW),
+        hitTableName=cms.string("TrkMergedCAHit"),
+    )
+    process.trainMergedTruthTable = _truthTable("trainMergedTracks", "TrkMergedTruth",
+                                                "trainMergedAssoc", "trainMergedAssocAny")
 
 process.trainNanoTask = cms.Task(
     process.hltTPClusterProducer,
@@ -356,6 +469,16 @@ process.trainNanoPath = cms.Path(
     + process.trainDispTruthTable,
     process.trainNanoTask,
 )
+if _MTV_LABEL:
+    process.trainNanoTask.add(process.trainPromptAssocAny, process.trainDispAssocAny)
+if _MERGED:
+    process.trainNanoTask.add(process.trainMergedTracks,
+                              process.trainMergedAssoc,
+                              process.trainMergedAssocAny,
+                              process.trainMergedSoATab)
+    process.trainNanoPath += (process.trainMergedFullTable
+                              + process.trainMergedCATable
+                              + process.trainMergedTruthTable)
 process.schedule.append(process.trainNanoPath)
 
 _out = os.environ.get("NANO_OUT", "trackNano_%s.root" % _sample)

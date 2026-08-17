@@ -42,6 +42,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const device::EDGetToken<reco::OTRecHitsSoACollection> otRecHitToken_;
 
     const device::EDPutToken<reco::TrackingRecHitsSoACollection> outputRecHitsSoAToken_;
+
+    // Optional all-zero ("nothing masked") hit mask, the starting mask of a multi-iteration masked
+    // chain. When off, neither the product nor its zeroing exists.
+    const bool produceHitMask_;
+    device::EDPutToken<reco::TrackingRecHitsMaskingCollection> outputRecHitsMaskToken_;
   };
 
   SiPixelRecHitsStubsMerger::SiPixelRecHitsStubsMerger(const edm::ParameterSet& iConfig)
@@ -49,7 +54,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         pixelRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("pixelRecHitsSoA"))),
         stubsToken_(consumes(iConfig.getParameter<edm::InputTag>("stubsSoA"))),
         otRecHitToken_(consumes(iConfig.getParameter<edm::InputTag>("otRecHitsSoA"))),
-        outputRecHitsSoAToken_(produces()) {}
+        outputRecHitsSoAToken_(produces()),
+        produceHitMask_(iConfig.getParameter<bool>("produceHitMask")) {
+    if (produceHitMask_) {
+      outputRecHitsMaskToken_ = produces();
+    }
+  }
 
   void SiPixelRecHitsStubsMerger::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
     edm::ParameterSetDescription desc;
@@ -57,6 +67,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     desc.add<edm::InputTag>("pixelRecHitsSoA", edm::InputTag("siPixelRecHitsPreSplittingAlpaka"));
     desc.add<edm::InputTag>("stubsSoA", edm::InputTag("otStubProducer"));
     desc.add<edm::InputTag>("otRecHitsSoA", edm::InputTag("otRecHitsSoAConverter"));
+    desc.add<bool>("produceHitMask", true)
+        ->setComment(
+            "Also produce an all-zero (nothing masked) hit mask, the starting mask of a multi-iteration "
+            "masked chain. It costs one extra product and one device kernel launch per event; a single "
+            "iteration does not consume it.");
 
     descriptions.addWithDefaultLabel(desc);
   }
@@ -74,6 +89,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         for (uint32_t hitIdx : cms::alpakatools::uniform_elements(acc, nPixHits)) {
           hitsView.dPhiDr()[hitIdx] = 0.0f;
           hitsView.dPhiDrError()[hitIdx] = -1.0f;
+          hitsView.dPhiDrErrorPrec()[hitIdx] = -1.0f;  // same non-stub sentinel
           // Set lowerHitIdx to max value (invalid) for pixel hits
           hitsView.lowerHitIdx()[hitIdx] = UINT32_MAX;
           hitsView.stubFlags()[hitIdx] = 0;
@@ -156,6 +172,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
           // Set stub-specific fields
           hitsView.dPhiDr()[hitIdx] = stubsView.dPhiDr()[stubIdx];
           hitsView.dPhiDrError()[hitIdx] = stubsView.dPhiDrError()[stubIdx];
+          hitsView.dPhiDrErrorPrec()[hitIdx] = stubsView.dPhiDrErrorPrec()[stubIdx];  // read by the extension
           // Copy lowerHitIdx if PS stub for duplicate stub handling in CAFishbone
           bool isPS = ::reco::StubFlags::isPS(stubsView.flags()[stubIdx]);
           hitsView.lowerHitIdx()[hitIdx] = isPS ? stubsView.lowerHitIdx()[stubIdx] : UINT32_MAX;
@@ -257,21 +274,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto pixDesc = HitsLayoutType::ConstDescriptor(pixHitsView);
 
     constexpr std::size_t N = std::tuple_size_v<decltype(outDesc.buff)>;
-    // The 19 members of reco::TrackingHitsLayout (17 columns + 2 scalars). A layout change lands here
-    // rather than silently skipping the wrong column.
-    static_assert(N == 19, "TrackingHitsLayout member count changed: re-check the skip list below");
+    // Layout member count check: 18 columns + 2 scalars. A layout change lands here.
+    static_assert(N == 20, "TrackingHitsLayout member count changed: re-check the skip list below");
 
-    // The four STUB-SPECIFIC columns are overwritten in full, over exactly [0, nPixHits), by
-    // InitializePixelStubFieldsKernel a few lines below (dPhiDr = 0, dPhiDrError = -1,
-    // lowerHitIdx = UINT32_MAX, stubFlags = 0). Copying the pixel collection's values into them
-    // first is pure waste: 4 of the 19 D2D copies and megabytes per event of device traffic,
-    // every byte of which is overwritten before anything reads it. Both the copy and the
-    // init kernel are guarded by nPixHits > 0, so the ranges coincide exactly.
-    // The skip is by destination POINTER, not by column index, so it follows the members if the
-    // layout is ever reordered; if a pointer ever failed to match, the column would simply be copied
-    // as before (no correctness cliff).
+    // Skip the 5 stub-specific columns from the pixel->output D2D copy: they're overwritten in full
+    // by InitializePixelStubFieldsKernel. Skip is by destination pointer, so it follows the members
+    // if the layout is ever reordered.
     const void* const kInitialisedCols[] = {static_cast<const void*>(outHitsView.dPhiDr().data()),
                                             static_cast<const void*>(outHitsView.dPhiDrError().data()),
+                                            static_cast<const void*>(outHitsView.dPhiDrErrorPrec().data()),
                                             static_cast<const void*>(outHitsView.lowerHitIdx().data()),
                                             static_cast<const void*>(outHitsView.stubFlags().data())};
 
@@ -370,19 +381,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::cout << "Merge complete. offsetStubs = " << offsetStubsDebug << '\n';
 #endif
 
-    // Update the cached information and emit. Both cached scalars are HOST-KNOWN here, so there is
-    // nothing to read back:
-    //   - offsetBPIX2 is the pixel collection's own scalar, copied verbatim into the output by the
-    //     scalar branch of copyColumns() in step 1; the pixel producer set both its device scalar and
-    //     its host-side cache from clusters.offsetBPIX2() in the same constructor, so they agree by
-    //     construction (TrackingRecHitsDevice.h, "Constructor from clusters");
-    //   - offsetStubs is nPixHits -- this module wrote exactly that value into the device scalar in
-    //     step 2 above.
-    // The previous updateFromDevice(queue) copied the two words back D2H into plain class members,
-    // i.e. into PAGEABLE host memory, which turns cudaMemcpyAsync into a synchronising call: two
-    // full stream drains per event in a module that contains no alpaka::wait at all. Those two
-    // implicit syncs were the whole reason this module inflates x4.55 when the device is contended.
+    // Both cached scalars (offsetBPIX2, offsetStubs) are known on the host, so set them directly:
+    // reading them back with updateFromDevice would synchronise the stream.
     output.setOffsets(pixRecHitsColl.offsetBPIX2(), nPixHits);
+
+    // Starting mask of a masked chain: all zeros. Built before the hit SoA is moved into the event.
+    if (produceHitMask_) {
+      auto mask_d = reco::TrackingRecHitsMaskingCollection(queue, static_cast<uint32_t>(output.nHits()));
+
+      // The mask SoA is a single uint32_t column: zeroing it is a plain memset on the queue
+      // (no kernel, no launch-configuration guard; a 0-hit event gives an empty buffer).
+      auto maskBuffer = mask_d.buffer();  // alpaka::memset needs an lvalue view
+      alpaka::memset(queue, maskBuffer, 0);
+
+      iEvent.emplace(outputRecHitsMaskToken_, std::move(mask_d));
+    }
+
     iEvent.emplace(outputRecHitsSoAToken_, std::move(output));
   }
 

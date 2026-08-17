@@ -186,10 +186,15 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
                                                         uint32_t const* __restrict__ offsets,
                                                         PhiBinner<TrackerTraits> const* phiBinner,
                                                         HitToCell* outerHitHisto,
-                                                        uint32_t* __restrict__ pipelineCounters) {
+                                                        uint32_t* __restrict__ pipelineCounters,
+                                                        MapToHitConstView maskView) {
     const bool doClusterCut = doubletCuts.minInnerSizeB1() > 0 or doubletCuts.minInnerSizeB2() > 0;
     const bool doZSizeCut =
         doubletCuts.maxDSizeB1() > 0 or doubletCuts.maxDSize() > 0 or doubletCuts.maxDSizePred() > 0;
+    // The hit mask is optional: when no mask product is configured the caller hands over a
+    // default-constructed (null column, zero rows) view, which means "no hit is masked". Guarding on
+    // the row count keeps the view from ever being indexed in that case.
+    const bool doHitMask = maskView.metadata().size() > 0;
 
     const uint32_t nPairs = cc.metadata().size();
     using PhiHisto = PhiBinner<TrackerTraits>;
@@ -272,6 +277,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
       auto hoff = PhiHisto::histOff(outer);
       auto i = (0 == pairLayerId) ? j : j - innerLayerCumulativeSize[pairLayerId - 1];
       i += offsets[inner];
+
+      if (doHitMask and maskView[i].recHitMask() > 0)
+        continue;
 
       ALPAKA_ASSERT_ACC(i >= offsets[inner]);
       ALPAKA_ASSERT_ACC(i < offsets[inner + 1]);
@@ -429,6 +437,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
         for (uint32_t pIndex : cms::alpakatools::independent_group_elements_x(acc, maxpIndex)) {
           // FIXME implement alpaka::ldg and use it here? or is it const* __restrict__ enough?
           auto oi = p[pIndex];
+          if (doHitMask and maskView[oi].recHitMask() > 0)
+            continue;
           ALPAKA_ASSERT_ACC(oi >= offsets[outer]);
           ALPAKA_ASSERT_ACC(oi < offsets[outer + 1]);
 #ifdef DOUBLETS_DEBUG

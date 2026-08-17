@@ -61,12 +61,52 @@ namespace riemannFit {
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
+  namespace caExtension {
+    // Forward declaration: refitExtended takes the OT-rechit source (raw OT hits + module geometry)
+    // by pointer only; the full definition lives in CAExtensionKernels.h, pulled into BrokenLineFit.dev.cc.
+    struct OTHitsSource;
+  }  // namespace caExtension
+
+  // Inputs for the dedup merge-or-keep-both confirm. Threaded from the merger through
+  // CAHitMaskingAndMergerKernels::finalDedup so the union GBL refit reuses the merger's fit inputs
+  // (hv/cm/otSource/rhoMap/bfield mirror refitUnitedTracks). A null pointer, or enable == false,
+  // makes the whole confirm path inert: the fallback then drops the contested loser outright,
+  // without a union refit.
+  struct MergerDedupConfirmInputs {
+    ::reco::TrackingRecHitConstView hv;
+    ::reco::CAModulesConstView cm;
+    const caExtension::OTHitsSource *otSource;  // raw OT rechit positions/errors (null => merged-only)
+    const float *rhoMap;                        // BL material-map device grid (EventSetup condition)
+    const float *bFieldMap;                     // normalized (Bz,Br) r-z field map (null => scalar bfield)
+    float bfield;
+    bool enable;  // run the union refit before a contested loser may be dropped
+    int delta;    // union-hit-loss budget for the verdict
+    // ---- dedup ranking/guard set, resolved at the finalDedup launch site. hv above is the hit view
+    // the weighted cluster count reads through ::reco::isStub. Carried in this struct so that finalDedup
+    // keeps one input argument; the merger dedup path always builds it.
+    bool finderOnly;        // the fallback scans and counts candidates but never drops one
+    bool rankClusters;      // length key = weighted cluster count (a stub counts 2)
+    bool rankNHits;         // length key = nHits alone, skipping the nLayers primary key
+    bool guardCrossArm;     // cross-arm keep-longest corner guard
+    float guardVertPosMin;  // guard engage threshold on |dxy| proxy (cm)
+    float guardChi2Margin;  // chi2/ndof margin the longer track must also win by (guard)
+    // 0-shared fallback tuning.
+    float fbNSigma2;       // fallback cov-gate width; <= 0 makes it track the shared-hit gate width
+    float fbDropBound;     // |eta| bound beyond which the fallback may not drop
+    bool fbEnable;         // master switch for the fallback drop
+    bool fbSameCharge;     // require both members to have the same charge before confirming
+    float fbAbsFloorDPhi;  // confirm box cut on |dphi|; 1e30 leaves it open
+    float fbAbsFloorDQoP;  // confirm box cut on |d(q/p)|; 1e30 leaves it open
+    float fbAbsFloorDCot;  // confirm box cut on |d(cot theta)|; 1e30 leaves it open
+  };
+
   template <typename TrackerTraits>
   class HelixFit {
   public:
     using HitView = ::reco::TrackingRecHitView;
     using HitConstView = ::reco::TrackingRecHitConstView;
     using OutputSoAView = ::reco::TrackSoAView;
+    using OutputHitSoAView = ::reco::TrackHitSoAView;
 
     using Tuples = caStructures::SequentialContainer;
     using TupleMultiplicity = caStructures::GenericContainer;
@@ -135,6 +175,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // statistic), and callers charge per-node increments of it. Off: each lump is charged its own Landau
     // MPV independently. Lump placement is the same either way. Read by both GBL node builders.
     void setCumulativeEloss(bool on) { cumulativeEloss_ = on; }
+    // When true, refitMergedTwins propagates the GBL refit's single-outlier drop to the emitted
+    // TrackHitSoA list (the fit-rejected hit is removed so nHits == nMeasFit for refit tracks; MTV
+    // shared-fraction / the SoA->legacy converter / the cov-dedup then see the fit's actual hit set).
+    // When false the rejected hit stays in the emitted list and only the fit ignores it. Merger final
+    // refit only.
+    void setDropOutlierFromHitList(bool on) { e3DropOutlierFromHitList_ = on; }
+    // Core-protected outlier: when true, refitExtended threads a per-lane pixel-core flag table to the
+    // outlier kernels so their worst-pull drop can only land on an appended extra, never on an original
+    // pixel-core hit -- if the worst node is a core hit the fit abstains and drops nothing. When false the
+    // drop lands on the worst node whatever it is. Merger final refit only. Composes with
+    // setDropOutlierFromHitList: the protected drop is then also removed from the emitted list, so only
+    // appended extras can be dropped AND removed.
+    void setOutlierCoreProtect(bool on) { refitOutlierCoreProtect_ = on; }
 
     // Enable a one-shot device-side dump of the first N fitted tracks at the
     // end of each launchBrokenLineKernels call.  Prints (phi0, d0, kappa,
@@ -162,18 +215,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                   Tuples const *__restrict__ foundNtuplets);
     void deallocate();
 
-    // Extended-N refit cap. N <= 12 keeps every refit launch under the 2064 B per-thread frame ceiling,
-    // so the launch costs no per-thread local-memory reservation. N = 13 and above grows the frame past
-    // that ceiling and reintroduces the reservation for every resident thread: do NOT raise this without
-    // re-measuring the frame.
+    // Extended-N refit cap. N <= 12 keeps every refit launch's per-thread stack frame under the ceiling
+    // at which the driver starts reserving local memory for every resident thread; do not raise it
+    // without re-measuring the frame.
     static constexpr uint32_t kRefitMaxN = 12;
 
-    // Extended-N refit concurrent-fit count = its own lane stride (see Map*S). The refit population is
-    // ~1k accepted-extended tracks/ev, compacted per N-bin, so it is sized independently of the main
-    // fit's 8192-wide stride: 2048 fits/N-bin is more than 1.6x the whole extended population, hence
-    // per-bin overflow is unreachable, and the buffers stride at 2048 instead of 8192 (~15 MB rather than
-    // ~58 MB transient per call). The hits/hits_ge Eigen maps AND the gnodes/scratch per-lane buffers all
-    // key off this.
+    // Extended-N refit concurrent-fit count = its own lane stride (see Map*S). The refit population
+    // (a few thousand tracks per event at most, compacted per N-bin) is sized independently of the main
+    // fit's 8192-wide stride; the hits/hits_ge Eigen maps and the gnodes/scratch per-lane buffers all
+    // key off this. The fused ladder partitions these lanes across the ten N-bins per event, so this is
+    // the number of tracks ONE PASS seats, not a cap: refitExtended repeats the pass until every track
+    // has been seated (ceil(nTracksCap / kRefitStride) rounds always suffice, since a track takes at
+    // most one lane). Raising it trades transient memory (~15 MB per in-flight call at 2048, roughly
+    // linear) for fewer rounds; everything downstream (the maps, the fused grid width kFusedBlocks, the
+    // round bound) is derived from it.
     static constexpr uint32_t kRefitStride = 2048;
     static_assert(kRefitStride <= riemannFit::maxNumberOfConcurrentFits);
 
@@ -187,8 +242,46 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                        const ::reco::CAModulesConstView &fr,
                        caStructures::SequentialContainer const *hitContainer,
                        const int32_t *acceptedByTuple,
+                       const caExtension::OTHitsSource *otSource,
                        uint32_t maxNumberOfTuples,
                        Queue &queue);
+
+    // Merger-side twin refit (Phase2OTStubs only; no-op otherwise). Builds a SequentialContainer over
+    // the MERGED track CSR (off <- tracks.hitOffsets, content aliases trackHits.id, no copy) and runs
+    // refitExtended over the united-winner mask (>=0 for winners), OVERWRITING each winner's state/cov/
+    // chi2/ndof with a full GBL fit of its post-union hit list (pixel + tagged OT extras). Sets tuples_/
+    // outputSoa_ from the merged views directly (no allocate()); tupleMultiplicity_ is unused by the
+    // refit path. mergedTracks == the output SoA (also read for hitOffsets); mergedHits supplies id.
+    void refitMergedTwins(const HitConstView &hv,
+                          const ::reco::CAModulesConstView &fr,
+                          OutputSoAView mergedTracks,
+                          OutputHitSoAView mergedHits,
+                          const int32_t *unitedMask,
+                          const caExtension::OTHitsSource *otSource,
+                          uint32_t nTracksCap,
+                          Queue &queue);
+
+    // Dedup union refit + verdict (Phase2OTStubs only; no-op otherwise).
+    // For each contested 0-shared fallback pair {loser i, partner j} captured by Kernel_dedupCovMark,
+    // build the de-duplicated union of the two tracks' hit lists, run ONE batched GBL refit of the unions
+    // (reusing refitExtended over a synthetic fixed-stride hit container + a scratch output SoA), and
+    // DROP the loser (drop[i]=1) iff the merged fit CONFIRMS same-particle: converged (finite) AND union
+    // hits outlier-dropped <= delta AND merged chi2/ndof <= max(chi2/ndof_i, chi2/ndof_j); else KEEP BOTH.
+    // Unions whose fit-selected count exceeds kRefitMaxN are kept both (never truncated). tracks/trackHits
+    // = the refined merged SoA (read-only: hit lists + per-track chi2/ndof); drop[] is adjusted in place.
+    // contestedPairs holds 2 uint32 per slot {i, j}; an unfilled slot is tagged 0xffffffff. diag (nullable)
+    // receives the verdict census in slots [12..15] (see Kernel_dedupCovMark).
+    void refitDedupUnions(const HitConstView &hv,
+                          const ::reco::CAModulesConstView &fr,
+                          const ::reco::TrackSoAConstView &tracks,
+                          const ::reco::TrackHitSoAConstView &trackHits,
+                          const uint32_t *contestedPairs,
+                          uint32_t nPairsCap,
+                          const caExtension::OTHitsSource *otSource,
+                          uint8_t *drop,
+                          int delta,
+                          uint32_t *diag,
+                          Queue &queue);
 
   private:
     static constexpr uint32_t maxNumberOfConcurrentFits_ = riemannFit::maxNumberOfConcurrentFits;
@@ -198,15 +291,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     TupleMultiplicity const *tupleMultiplicity_ = nullptr;
     OutputSoAView outputSoa_;
     float bField_;
-    const float *rhoMap_ = nullptr;       // BL material-map device grid (EventSetup condition; not owned)
-    const float *bMap_ = nullptr;         // normalized (Bz,Br) r-z field map (EventSetup condition; not owned)
-    bool outlierReject_ = true;           // in-fit smoothed-residual outlier drop
-    bool fitCorrections_ = false;         // CA main fit's correctness package (useFitCorrections)
-    bool fieldKernelWeights_ = false;     // fit-consistent curvature->pT conversion field
-    bool chargeSymmetric_ = false;        // charge-symmetric corrections
-    bool trajectoryCorrections_ = false;  // reference-trajectory corrections
-    bool scatteringLogAtTotal_ = false;   // Highland log at the track total
-    bool cumulativeEloss_ = false;        // cumulative-column typical loss
+    const float *rhoMap_ = nullptr;          // BL material-map device grid (EventSetup condition; not owned)
+    const float *bMap_ = nullptr;            // normalized (Bz,Br) r-z field map (EventSetup condition; not owned)
+    bool outlierReject_ = true;              // in-fit smoothed-residual outlier drop
+    bool fitCorrections_ = false;            // CA main fit's correctness package (useFitCorrections)
+    bool fieldKernelWeights_ = false;        // fit-consistent curvature->pT conversion field
+    bool chargeSymmetric_ = false;           // charge-symmetric corrections
+    bool trajectoryCorrections_ = false;     // reference-trajectory corrections
+    bool scatteringLogAtTotal_ = false;      // Highland log at the track total
+    bool cumulativeEloss_ = false;           // cumulative-column typical loss
+    bool e3DropOutlierFromHitList_ = false;  // remove the refit's dropped outlier from the emitted list
+    bool refitOutlierCoreProtect_ = false;   // abstain when the largest-pull node is a pixel-core hit
+    // Transient: per-merged-track dropped-hit-id buffer (owned by refitMergedTwins for the lifetime of
+    // one refit; refitExtended forwards it to the outlier kernels, the post-refit compaction consumes it).
+    uint32_t *e3DropHitId_ = nullptr;
     // Tuple-multiplicity per-N-bin cumulative offsets, pre-read by the caller into host memory (see
     // setHostTupleMultiplicityOffsets). Not owned; null on the refit path, which runs to the cap.
     const uint32_t *hostTupleMultiplicityOffsets_ = nullptr;

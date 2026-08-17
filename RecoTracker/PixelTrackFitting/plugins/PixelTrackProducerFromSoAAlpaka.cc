@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -37,6 +38,7 @@
 #include "Geometry/Records/interface/TrackerTopologyRcd.h"
 #include "Geometry/TrackerGeometryBuilder/interface/TrackerGeometry.h"
 #include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
+#include "RecoTracker/PixelSeeding/interface/OTHitTag.h"
 #include "RecoTracker/PixelTrackFitting/interface/alpaka/FitUtils.h"
 #include "RecoTracker/Record/interface/TrackerRecoGeometryRecord.h"
 #include "TrackingTools/AnalyticalJacobians/interface/JacobianLocalToCurvilinear.h"
@@ -99,6 +101,7 @@ private:
   const bool useOTExtension_;
   const bool expandStubs_;
   const bool requireQuadsFromConsecutiveLayers_;
+  const bool verbose_;
 };
 
 PixelTrackProducerFromSoAAlpaka::PixelTrackProducerFromSoAAlpaka(const edm::ParameterSet &iConfig)
@@ -114,7 +117,8 @@ PixelTrackProducerFromSoAAlpaka::PixelTrackProducerFromSoAAlpaka(const edm::Para
       minQuality_(pixelTrack::qualityByName(iConfig.getParameter<std::string>("minQuality"))),
       useOTExtension_(iConfig.getParameter<bool>("useOTExtension")),
       expandStubs_(iConfig.getParameter<bool>("expandStubs")),
-      requireQuadsFromConsecutiveLayers_(iConfig.getParameter<bool>("requireQuadsFromConsecutiveLayers")) {
+      requireQuadsFromConsecutiveLayers_(iConfig.getParameter<bool>("requireQuadsFromConsecutiveLayers")),
+      verbose_(iConfig.getUntrackedParameter<bool>("verbose")) {
   if (minQuality_ == pixelTrack::Quality::notQuality) {
     throw cms::Exception("PixelTrackConfiguration")
         << iConfig.getParameter<std::string>("minQuality") + " is not a pixelTrack::Quality";
@@ -197,6 +201,9 @@ void PixelTrackProducerFromSoAAlpaka::fillDescriptions(edm::ConfigurationDescrip
   // this option for removing tracks with exactly 4 hits is a temporary solution to reduce the fake rate in Phase-2
   // and is to be replaced by a smarter inclusive track selection in the CA directly
   desc.add<bool>("requireQuadsFromConsecutiveLayers", false);
+
+  // Per-event hit-conservation diagnostic (OT-extra -> legacy rechit resolution). OFF by default.
+  desc.addUntracked<bool>("verbose", false);
 
   descriptions.addWithDefaultLabel(desc);
 }
@@ -492,6 +499,11 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   auto const &tsoa = iEvent.get(trackSoAToken_);
   auto const quality = tsoa.view().tracks().quality();
   auto const hitOffs = tsoa.view().tracks().hitOffsets();
+  // Plain column accessor for pt, used by the sort comparator below. Reading it as
+  // tsoa.view().tracks()[i].pt() builds a full element proxy for every comparison -- and the
+  // tracks layout carries two Eigen columns (state, covariance) whose Eigen::Map members are
+  // built by that proxy's constructor. Same values, just not rebuilt O(N log N) times.
+  auto const trackPt = tsoa.view().tracks().pt();
   auto const hitIdxs = tsoa.view().trackHits().id();
   auto nTracks = tsoa.view().tracks().nTracks();
 
@@ -505,7 +517,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   // sort good-quality tracks by pt, keep bad-quality tracks at the bottom
   std::sort(sortIdxs.begin(), sortIdxs.end(), [&](int32_t const i1, int32_t const i2) {
     if (quality[i1] >= minQuality_ && quality[i2] >= minQuality_)
-      return tsoa.view().tracks()[i1].pt() > tsoa.view().tracks()[i2].pt();
+      return trackPt[i1] > trackPt[i2];
     else
       return quality[i1] > quality[i2];
   });
@@ -523,6 +535,14 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   uint32_t nTotalZMismatchEtaPos = 0;
   uint32_t nTotalZMismatchEtaNeg = 0;
 #endif
+
+  // A track-hit id with caOTHitTag::kOTHitTag set is a raw OT rechit attached by the extension
+  // stage; its low bits are the OT SoA row. It resolves to a legacy Phase2TrackerRecHit1D via
+  // the OT portion of the hitmap (hitmap[nPixelHits + row]), populated only on the expandStubs OT
+  // path. Where that map is unavailable the tagged extra is dropped, never crashing.
+  const bool otTagResolvable = useOTExtension_ && expandStubs_ && otRecHitsSoAHost != nullptr;
+  // Per-event diagnostic tallies of the tagged-OT-extra branch (one-shot print below).
+  uint32_t nOTExtrasResolved = 0, nOTExtrasDropped = 0;
 
   // loop over (sorted) tracks
   for (const auto &it : sortIdxs) {
@@ -547,6 +567,14 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
     if (expandStubs_ && stubsSoAHost != nullptr && offsetStubs >= 0) {
       for (auto iHit = start; iHit < end; ++iHit) {
         auto hitIdx = hitIdxs[iHit];
+        if (caOTHitTag::isOTId(hitIdx)) {
+          // Tagged raw-OT extra: one legacy rechit, no stub expansion. Counts as neither expanded
+          // nor removed when resolvable; otherwise it is dropped (removed), matching the fill pass.
+          const uint32_t o = caOTHitTag::otIdx(hitIdx);
+          if (!(otTagResolvable && (nPixelHits + o) < nTotalHits))
+            nRemovedHits++;
+          continue;
+        }
         if (hitIdx < nTotalHits) {
           // Check if this is a stub hit
           if (hitIdx >= static_cast<uint32_t>(offsetStubs)) {
@@ -565,6 +593,13 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       // Count removed hits only
       for (auto iHit = start; iHit < end; ++iHit) {
         auto hitIdx = hitIdxs[iHit];
+        if (caOTHitTag::isOTId(hitIdx)) {
+          // Tagged OT extra: resolvable only on the expandStubs OT path (false here) -> dropped.
+          const uint32_t o = caOTHitTag::otIdx(hitIdx);
+          if (!(otTagResolvable && (nPixelHits + o) < nTotalHits))
+            nRemovedHits++;
+          continue;
+        }
         if (hitIdx >= nTotalHits) {
           nRemovedHits++;
         }
@@ -578,6 +613,19 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
     int hitOutputIdx = 0;
     for (auto iHit = start; iHit < end; ++iHit) {
       auto hitIdx = hitIdxs[iHit];
+      if (caOTHitTag::isOTId(hitIdx)) {
+        // Tagged raw-OT extra -> its legacy Phase2TrackerRecHit1D via the OT hitmap (same lookup as
+        // a stub's lower/upper sensor hit: hitmap[nPixelHits + otSoARow]). Unresolvable tagged ids
+        // are dropped (counted as removed above), keeping the hits vector correctly sized.
+        const uint32_t o = caOTHitTag::otIdx(hitIdx);
+        if (otTagResolvable && (nPixelHits + o) < nTotalHits) {
+          hits[hitOutputIdx++] = hitmap[nPixelHits + o];
+          ++nOTExtrasResolved;
+        } else {
+          ++nOTExtrasDropped;
+        }
+        continue;
+      }
       if (hitIdx < nTotalHits) {
         // Check if this is a stub hit that needs expansion
         if (expandStubs_ && stubsSoAHost != nullptr && offsetStubs >= 0 &&
@@ -629,6 +677,17 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
     int nZMismatchHits = 0;
     for (auto iHit = start; iHit < start + nHits; ++iHit) {
       auto hitIdx = hitIdxs[iHit];
+      if (caOTHitTag::isOTId(hitIdx)) {
+        // Tagged raw-OT extra: advance finalHitIdx iff it was resolved into the hits vector above.
+        const uint32_t o = caOTHitTag::otIdx(hitIdx);
+        const bool resolved = otTagResolvable && (nPixelHits + o) < nTotalHits;
+        if (printDetails)
+          std::cout << "  Hit[" << (iHit - start) << "]: OT-EXTRA (row=" << o << (resolved ? "" : " UNRESOLVED")
+                    << ")\n";
+        if (resolved)
+          finalHitIdx++;
+        continue;
+      }
       if (hitIdx >= nTotalHits) {
         if (printDetails) {
           std::cout << "  Hit[" << (iHit - start) << "]: REMOVED (hitIdx=" << hitIdx << " >= nTotalHits=" << nTotalHits
@@ -906,6 +965,16 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   }
   std::cout << "===================================\n";
 #endif
+
+  // One-shot diagnostic (first few events with tagged OT extras only; silent otherwise): confirms
+  // that raw-OT extras attached by the extension stage resolve into legacy rechits here, i.e.
+  // MTV sees them. "dropped" counts unresolvable tags (no OT hitmap / out-of-range row).
+  if (verbose_ && nOTExtrasResolved + nOTExtrasDropped > 0) {
+    static std::atomic<int> otExtraPrints{0};
+    if (otExtraPrints.fetch_add(1) < 8)
+      std::cout << "[PixelTrackProducerFromSoAAlpaka] tagged OT extras -> legacy hits: resolved=" << nOTExtrasResolved
+                << " dropped=" << nOTExtrasDropped << std::endl;
+  }
 
   // store tracks
   storeTracks(iEvent, tracks, trackerTopology);

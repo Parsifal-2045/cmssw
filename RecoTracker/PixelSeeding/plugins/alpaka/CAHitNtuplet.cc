@@ -265,6 +265,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     using HitsOnDevice = reco::TrackingRecHitsSoACollection;
     using HitsOnHost = ::reco::TrackingRecHitHost;
 
+    using MapToHit = reco::TrackingRecHitsMaskingCollection;
+    using MapToHitConstView = ::reco::TrackingRecHitsMaskingConstView;
+
     using TkSoAHost = ::reco::TracksHost;
     using TkSoADevice = reco::TracksSoACollection;
 
@@ -721,6 +724,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // Only registered/emitted in CA_TRIPLET_DUMP builds; production builds carry nothing.
     const device::EDPutToken<TripletDumpSoACollection> tokenTripletDump_;
 #endif
+    // Optional per-iteration hit mask. An empty "hitMask" InputTag means "no masking": nothing is
+    // consumed and the kernels receive an empty view. Only the HLT iterations that run after a
+    // masking module set it; every offline configuration leaves it empty.
+    const bool hasHitMask_;
+    device::EDGetToken<MapToHit> tokenHitMask_;
 
     const ::reco::FormulaEvaluator maxNumberOfDoublets_;
     const ::reco::FormulaEvaluator maxNumberOfTuples_;
@@ -745,6 +753,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #ifdef CA_TRIPLET_DUMP
         tokenTripletDump_(produces()),
 #endif
+        hasHitMask_(not iConfig.getParameter<edm::InputTag>("hitMask").label().empty()),
         maxNumberOfDoublets_(iConfig.getParameter<std::string>("maxNumberOfDoublets")),
         maxNumberOfTuples_(iConfig.getParameter<std::string>("maxNumberOfTuples")),
         minNumberOfDoublets_(iConfig.getParameter<uint32_t>("minNumberOfDoublets")),
@@ -754,6 +763,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     if (useFitCorrections_) {
       tokenBLMaterialMap_ = esConsumes();
       tokenBLBFieldMap_ = esConsumes();
+    }
+    if (hasHitMask_) {
+      tokenHitMask_ = device::EDGetToken<MapToHit>(consumes(iConfig.getParameter<edm::InputTag>("hitMask")));
     }
     iCache->tokenGeometry_ = esConsumes<edm::Transition::BeginRun>();
     iCache->tokenTopology_ = esConsumes<edm::Transition::BeginRun>();
@@ -767,6 +779,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     edm::ParameterSetDescription desc;
 
     desc.add<edm::InputTag>("pixelRecHitSrc", edm::InputTag("siPixelRecHitsPreSplittingAlpaka"));
+    desc.add<edm::InputTag>("hitMask", edm::InputTag(""))
+        ->setComment(
+            "Optional per-iteration hit mask (a reco::TrackingRecHitsMaskingCollection). Empty (the default) "
+            "means no masking: no product is consumed and every hit is available to the CA. Set it only for the "
+            "iterations that must skip the hits an earlier iteration already used.");
+    desc.add<std::string>(
+        "iterationName",
+        std::string("promptHighPt"));  // This is just an example, it has to be changed for each tracking iteration
 
     Algo::fillPSetDescription(desc);
     descriptions.addWithDefaultLabel(desc);
@@ -821,11 +841,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
            hits.nHits());
 #endif
 
+    // Optional mask: with no mask module configured the view stays default-constructed (null column,
+    // zero rows) and the doublet kernels skip every mask lookup.
+    MapToHitConstView maskView;
+    if (hasHitMask_) {
+      maskView = iEvent.get(tokenHitMask_).view();
+    }
+
     // The whole CA build (hit prep, doublets, connect, ntuplets) + one async D2H of the
     // tuple-multiplicity offsets. No blocking wait anywhere: the framework's seam runs
     // produce only after this queue has drained.
     pending_ = deviceAlgo_.beginTuplesAsync(
-        hits, geometry, bf, maxDoublets, maxTuples, iEvent.queue(), rhoMapDevice, bMapDevice);
+        hits, geometry, bf, maxDoublets, maxTuples, maskView, iEvent.queue(), rhoMapDevice, bMapDevice);
   }
 
   template <typename TrackerTraits>

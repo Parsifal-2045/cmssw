@@ -74,12 +74,19 @@ namespace caStructures {
     // covariance: lowering it tightens the gate (fewer merges), raising it merges more aggressively.
     // The Phase-1 specializations of those kernels keep their own hard-wired nSigma2Phase1 constant.
     float fastDupNSigma2_;
+
+    // Tracking iteration this configuration belongs to. Used to keep
+    // diagnostics (sizing-parameter accumulator, allocation report)
+    // separated when several CA instances run in the same job.
+    ::pixelTrack::Iteration iterationName_;
   };
 
   // Hits data formats
   using HitsView = ::reco::TrackingRecHitView;
   using HitModulesConstView = ::reco::HitModuleSoAConstView;
   using HitsConstView = ::reco::TrackingRecHitConstView;
+
+  using MapToHitConstView = ::reco::TrackingRecHitsMaskingConstView;
 
   // Tracks data formats
   using TkSoAView = ::reco::TrackSoAView;

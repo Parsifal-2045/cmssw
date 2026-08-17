@@ -4,8 +4,10 @@ hltPhase2PixelRecHitsStubsMerger = cms.EDProducer('SiPixelRecHitsStubsMerger@alp
   pixelRecHitsSoA = cms.InputTag('hltPhase2SiPixelRecHitsSoA'),
   stubsSoA = cms.InputTag('hltOTStubProducer'),
   otRecHitsSoA = cms.InputTag('hltPixelSeedingOTRecHitsSoA'),
+  produceHitMask = cms.bool(True),
   mightGet = cms.optional.untracked.vstring,
   alpaka = cms.untracked.PSet(
     backend = cms.untracked.string('')
   )
 )
+

@@ -9,8 +9,7 @@
 // emit exactly nValid rows.
 //
 // Columns mirror caStructures::TripletDumpSoA EXACTLY (18 BASE DNN features in train_triplet_dnn.py
-// order, the three CA layer ids, and the three merged-hit join keys).
-
+// order, the three CA layer ids, the three merged-hit join keys, and the iteration label).
 #include <vector>
 
 #include "DataFormats/NanoAOD/interface/FlatTable.h"
@@ -55,8 +54,8 @@ private:
         curvatureStubsErrSquared(nValid), curvature13(nValid), dPhi12(nValid), dPhi13(nValid), dPhi23(nValid),
         dr12(nValid), dr13(nValid), r1(nValid), r2(nValid), r3(nValid), z1(nValid), z2(nValid), z3(nValid),
         nStubs(nValid), curvature(nValid), inKernelScore(nValid);
-    // CA layer ids (int) and the three merged-hit join keys (uint32).
-    std::vector<int> lay1(nValid), lay2(nValid), lay3(nValid);
+    // CA layer ids + iteration label (int) and the three merged-hit join keys (uint32).
+    std::vector<int> lay1(nValid), lay2(nValid), lay3(nValid), iter(nValid);
     std::vector<uint32_t> h1(nValid), h2(nValid), h3(nValid);
 
     for (uint32_t i = 0; i < nValid; ++i) {
@@ -84,6 +83,7 @@ private:
       lay1[i] = row.lay1();
       lay2[i] = row.lay2();
       lay3[i] = row.lay3();
+      iter[i] = row.iter();
       h1[i] = row.h1();
       h2[i] = row.h2();
       h3[i] = row.h3();
@@ -113,6 +113,7 @@ private:
     table->addColumn<int>("lay1", lay1, "inner-hit CA layer id", -1);
     table->addColumn<int>("lay2", lay2, "middle-hit CA layer id", -1);
     table->addColumn<int>("lay3", lay3, "outer-hit CA layer id", -1);
+    table->addColumn<int>("iter", iter, "pixelTrack::Iteration enum value", -1);
     table->addColumn<uint32_t>("h1", h1, "inner merged-hit index (truth join key)", -1);
     table->addColumn<uint32_t>("h2", h2, "middle merged-hit index (truth join key)", -1);
     table->addColumn<uint32_t>("h3", h3, "outer merged-hit index (truth join key)", -1);

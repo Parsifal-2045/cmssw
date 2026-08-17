@@ -17,6 +17,7 @@
 #include "DataFormats/TrackSoA/interface/TrackDefinitions.h"
 #include "DataFormats/TrackSoA/interface/TracksHost.h"
 #include "DataFormats/TrackSoA/interface/alpaka/TrackUtilities.h"
+#include "DataFormats/TrackingRecHitSoA/interface/OTRecHitsSoA.h"
 #include "DataFormats/TrackingRecHitSoA/interface/TrackingRecHitsSoA.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/AtomicPairCounter.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/HistoContainer.h"
@@ -40,6 +41,11 @@
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
   using namespace ::caStructures;
+
+  // Forward declaration: finalDedup takes the merge-or-keep-both confirm inputs by pointer only
+  // (null => the confirm path is inert). The full definition lives in HelixFit.h, pulled into the
+  // finalDedup translation unit (CAHitNtupletGeneratorKernels.dev.cc).
+  struct MergerDedupConfirmInputs;
 
   namespace caHitNtupletGenerator {
 
@@ -100,10 +106,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       using TT = TrackerTraits;
       using QualityCuts = ::pixelTrack::QualityCutsT<TT>;  //track quality cuts
 
-      ParamsT(AlgoParams const& commonCuts, QualityCuts const& qualityCuts)
-          : algoParams_(commonCuts), qualityCuts_(qualityCuts) {}
+      ParamsT(AlgoParams const& commonCuts,
+              QualityCuts const& qualityCuts,
+              std::string const& tripletDumpIteration = std::string())
+          : algoParams_(commonCuts), tripletDumpIteration_(tripletDumpIteration), qualityCuts_(qualityCuts) {}
 
       const AlgoParams algoParams_;
+      // Host-side only: name of the single iteration whose built triplets are dumped, empty for all
+      // of them. Never reaches a kernel -- this struct stays on the host and only algoParams_ and
+      // qualityCuts_ are passed to the device.
+      const std::string tripletDumpIteration_;
       const QualityCuts qualityCuts_{// polynomial coefficients for the pT-dependent chi2 cut
                                      {0.68177776, 0.74609577, -0.08035491, 0.00315399},
                                      // max pT used to determine the chi2 cut
@@ -130,11 +142,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       using TT = TrackerTraits;
       using QualityCuts = ::pixelTrack::QualityCutsT<TT>;
 
-      ParamsT(AlgoParams const& commonCuts, QualityCuts const& qualityCuts)
-          : algoParams_(commonCuts), qualityCuts_(qualityCuts) {}
+      ParamsT(AlgoParams const& commonCuts,
+              QualityCuts const& qualityCuts,
+              std::string const& tripletDumpIteration = std::string())
+          : algoParams_(commonCuts), tripletDumpIteration_(tripletDumpIteration), qualityCuts_(qualityCuts) {}
 
       // quality cuts
       const AlgoParams algoParams_;
+      // Host-side only: name of the single iteration whose built triplets are dumped, empty for all
+      // of them. Never reaches a kernel -- this struct stays on the host and only algoParams_ and
+      // qualityCuts_ are passed to the device.
+      const std::string tripletDumpIteration_;
       const QualityCuts qualityCuts_{5.0f, /*chi2*/ 0.9f, /* pT in Gev*/ 0.4f, /*zip in cm*/ 12.0f /*tip in cm*/};
 
     };  // Params Phase1
@@ -183,8 +201,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     using DeviceSequentialOffsetsBuffer =
         std::optional<cms::alpakatools::device_buffer<Device, SequentialContainerOffsets[]>>;
 
+    // nOTHits: when the full-hits attach path is active (Phase2OTStubs, useOTRecHits, OT product
+    // present), the hit->tuple container domain is extended to nHits + nOTHits so tagged OT extras
+    // bin at nHits + otIdx (shared-hit / duplicate cleaning then sees OT hits too). 0 restricts the
+    // domain, and the buffer sizing, to nHits.
     CAHitNtupletGeneratorKernels(Params const& params,
                                  uint32_t nHits,
+                                 uint32_t nOTHits,
                                  uint32_t offsetBPIX2,
                                  uint32_t nDoublets,
                                  uint32_t nTracks,
@@ -201,6 +224,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     GenericContainerOffsets const* tupleMultiplicityOffsets() const { return device_tupleMultiplicityOffsets_->data(); }
     HitContainer const* hitContainer() const { return device_hitContainer_->data(); }
     PhiBinner const* hitPhiHist() const { return device_hitPhiHist_->data(); }
+    // Mutable access for the attach stage: accepted extensions rewrite the per-tuple hit
+    // lists in place (offsets + content) before classifyTuples consumes them.
+    HitContainer* hitContainerMutable() { return device_hitContainer_->data(); }
     HitToCell const* hitToCell() const { return device_hitToCell_->data(); }
 
     // Pipeline counter pointer: returns device pointer when enabled, nullptr otherwise
@@ -241,7 +267,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                        const ::reco::CANtupletCutsSoAConstView& ntupletCuts,
                        Queue& queue);
 
-    void classifyTuples(const HitsConstView& hh, TkSoAView& track_view, Queue& queue);
+    // otView: the raw OT-rechit position view (nullptr => merged-hits-only). When the attach path
+    // added tagged OT extras, the track classifier feature walk resolves them through this view so
+    // OT-extended tracks are DNN-scored; the count/fill hit->tuple pass maps tagged ids to the
+    // nHits + otIdx domain (member nOTHits_).
+    void classifyTuples(const HitsConstView& hh,
+                        TkSoAView& track_view,
+                        Queue& queue,
+                        ::reco::OTRecHitsConstView const* otView = nullptr);
 
     // Returns the doublet count the countDoubletsFirst count-only pass read back to the host
     // (0 when countDoubletsFirst_ is off, or when the event was too empty to run the passes).
@@ -254,6 +287,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                            const ::reco::CALayersSoAConstView& ll,
                            const ::reco::CADoubletCutsSoAConstView& doubletCuts,
                            uint32_t offsetBPIX2,
+                           const MapToHitConstView& maskView,
                            Queue& queue);
 
     // Allocate the cell-derived buffers (cell->cell, cell->track, triplet/track-cell
@@ -393,6 +427,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCells_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nTriplets_;
     std::optional<cms::alpakatools::device_view<Device, uint32_t>> device_nCellTracks_;
+    // {offset bound, first dropped tuple} of the content-overflow repair (Kernel_findTupleContentOverflow)
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> device_tupleClampBound_;
 
     std::optional<CAPairSoACollection> deviceTriplets_;
     std::optional<CAPairSoACollection> deviceTracksCells_;
@@ -418,10 +454,104 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // fewer idle blocks. Capacity checks keep using maxNumberOfDoublets_.
     uint32_t launchCells_ = 0;
 
+    // OT-hit domain size for the hit->tuple container (0 => merged-hits-only). Set in the ctor from
+    // the constructor arg; classifyTuples threads it into the count/fill pass so tagged OT extras
+    // bin at nHits + otIdx.
+    uint32_t nOTHits_ = 0;
+
     // SoA element counts chosen in allocateAfterDoublets, kept so the GPU_DEBUG
     // allocation report can size the SoA collections without recomputation.
     uint32_t tripletsN_ = 0;
     uint32_t tracksCellsN_ = 0;
+  };
+
+  class CAHitMaskingAndMergerKernels {
+  public:
+    CAHitMaskingAndMergerKernels() = default;
+    ~CAHitMaskingAndMergerKernels() = default;
+
+    CAHitMaskingAndMergerKernels(const CAHitMaskingAndMergerKernels&) = delete;
+    CAHitMaskingAndMergerKernels(CAHitMaskingAndMergerKernels&&) = delete;
+    CAHitMaskingAndMergerKernels& operator=(const CAHitMaskingAndMergerKernels&) = delete;
+    CAHitMaskingAndMergerKernels& operator=(CAHitMaskingAndMergerKernels&&) = delete;
+
+    void updateMasking(::reco::TrackingRecHitsMaskingView& mask_view,
+                       const ::reco::TrackSoAConstView& trackd_view,
+                       const ::reco::TrackHitSoAConstView& trackhitd_view,
+                       const pixelTrack::Quality minQuality,
+                       uint32_t const& iterationIndex,
+                       Queue& queue,
+                       bool maskAttachedHits = false);
+
+    void filterTracks(::reco::TrackSoAView& track_view,
+                      ::reco::TrackHitSoAView& trackHit_view,
+                      const ::reco::TrackSoAConstView& inpTrack_view,
+                      const ::reco::TrackHitSoAConstView& inpTrackHit_view,
+                      const pixelTrack::Quality minQuality,
+                      const double matchFraction,
+                      Queue& queue,
+                      const int32_t* loserOf = nullptr,
+                      const int32_t* isLoser = nullptr,
+                      const bool twinMergeRefit = false,
+                      const bool refitAllTracks = false,
+                      int32_t* unitedMaskOut = nullptr,
+                      // pocket gate: per-track arm carried through the compaction (input order in, merged-SoA
+                      // order out). Both null when no arm is tracked, and then nothing is written.
+                      const uint8_t* pocketArmIn = nullptr,
+                      uint8_t* pocketArmIdOut = nullptr);
+
+    // Strict cross-arm twin merge. Fills bestTwin/loserOf/isLoser device arrays
+    // (all sized nTracks). isLoser is zero-initialised here before use.
+    void twinMerge(const ::reco::TrackSoAConstView& inpTrack_view,
+                   const ::reco::TrackHitSoAConstView& inpTrackHit_view,
+                   const int32_t* armOfTrack,
+                   const float twinDEta,
+                   const float twinDPhi,
+                   const int twinMinShared,
+                   const bool twinTier2,
+                   const float twinDEta2,
+                   const float twinDPhi2,
+                   const float twinNSigma2,
+                   const int twinMinSharedFwd,
+                   const pixelTrack::Quality minQuality,
+                   int32_t* bestTwin,
+                   int32_t* loserOf,
+                   int32_t* isLoser,
+                   int const& nTracks,
+                   Queue& queue);
+
+    // Final post-refit de-dup (cov-dedup): mark duplicate losers over the refined merged tracks via
+    // shared-hit co-occurrence pairing + a covariance-scaled 3-param gate (nSigma2 from
+    // kDedupNSigma2Default unless the caller overrides it), with the always-on 0-shared forward
+    // fallback, then compact into out_view. nHits/nOTHits size the hit-id key space
+    // ([0, nHits+nOTHits)). confirm (optional) carries the merger's GBL-refit inputs for the
+    // merge-or-keep-both confirm on 0-shared fallback pairs; null (or its enable=false) makes the
+    // fallback drop its loser outright, with no refit check.
+    void finalDedup(::reco::TrackSoAView& out_view,
+                    ::reco::TrackHitSoAView& outHit_view,
+                    const ::reco::TrackSoAConstView& tracks_view,
+                    const ::reco::TrackHitSoAConstView& trackHit_view,
+                    int const& nTracksCap,
+                    uint32_t nHits,
+                    uint32_t nOTHits,
+                    Queue& queue,
+                    const MergerDedupConfirmInputs* confirm = nullptr);
+    // Device-side gather/compact. Reads each input's actual nTracks() and hitOffsets() on device
+    // (no host readback) and compacts all track columns + trackHits columns (id, detId, attached)
+    // of all inputs into a dense merged layout, writing the merged nTracks scalar and the shifted
+    // hitOffsets on device, and filling the per-track arm labels in the merged order.
+    // nInputs must be <= 2 (the two inputs are passed as separate view arguments).
+    void mergeGather(::reco::TrackSoAView& outTrack_view,
+                     ::reco::TrackHitSoAView& outHit_view,
+                     const ::reco::TrackSoAConstView& inp0Track_view,
+                     const ::reco::TrackHitSoAConstView& inp0Hit_view,
+                     const ::reco::TrackSoAConstView& inp1Track_view,
+                     const ::reco::TrackHitSoAConstView& inp1Hit_view,
+                     int nInputs,
+                     int32_t* armBuf,
+                     const int32_t arm0,
+                     const int32_t arm1,
+                     Queue& queue);
   };
 
 }  // namespace ALPAKA_ACCELERATOR_NAMESPACE

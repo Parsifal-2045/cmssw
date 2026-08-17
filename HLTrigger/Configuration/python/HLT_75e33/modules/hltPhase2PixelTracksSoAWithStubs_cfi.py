@@ -235,8 +235,12 @@ for i, lp in enumerate(layerPairs):
 hltPhase2PixelTracksSoAWithStubs = cms.EDProducer('CAHitNtupletAlpakaPhase2OTStubs@alpaka',
     pixelRecHitSrc = cms.InputTag('hltPhase2PixelRecHitsStubsMerger'),
 
-    # In-kernel classifiers: ON; their working points are BAKED in the weight headers (CATripletDNNWeights_*.h,
-    # CATrackDNNWeights_*.h) by the retraining scripts, so no explicit threshold is set here (-1 = baked).
+    # Prompt iteration: nothing has run before it, so no hit is masked. The empty tag is the
+    # "no masking" value, and it keeps the CA from consuming a mask product at all.
+    hitMask = cms.InputTag(''),
+    iterationName = cms.string('promptHighPt'),
+    # In-kernel triplet and track classifiers. Their working points are baked into the weight headers
+    # (CATripletDNNWeights_*.h, CATrackDNNWeights_*.h), so no explicit threshold is set here.
     useTripletDNN = cms.bool(True),
     useTrackDNN = cms.bool(True),
 

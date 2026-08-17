@@ -1,25 +1,28 @@
-// CATrackFeaturesTableProducer - nano flat table with the displaced track classifier's
-// 35-feature vector (CATrackDNN ABI), computed HOST-SIDE from the final track SoA hit
-// lists via the shared RecoTracker/PixelSeeding/interface/CATrackFeatures.h -- the same
-// single-source-of-truth function Kernel_classifyTracks evaluates on device.
+// CATrackFeaturesTableProducer - nano flat table with the in-kernel track DNN's 12-feature
+// vector (CATrackDNN ABI) plus extra hit/stub columns, computed HOST-SIDE from the final track
+// SoA hit lists via the shared CATrackFeatures.h -- the same single-source-of-truth function
+// Kernel_classifyTracks evaluates on device. Pair with Trk<X>Truth (join offline by phi).
+// Rows: ALL tracks in SoA order (same row space as Trk<X>Full); <3 hits / corrupt hit lists
+// get NaN features (drop offline).
 //
-// This is the robust ntuple route for displaced track-classifier training data
-// (replaces the printf dump): pair this table with the TrkDispTruth table from
-// trackNano_config.py and join offline by (fitPt, phi).
+// The four DEPLOYED extras (rzChi2 / meanStubKappa / leverArm / rMax = PixelTrackFeaturesSoA
+// columns 28-31) come from fill()'s rzKappaOut out-parameter, so they are bit-identical to the HP
+// selector's feature kernel. Only meanClusterY / nTilted / tiltedFrac still come from a separate
+// host study walk (skips tagged OT extras, which index the OT SoA and are never stubs).
 //
-// Rows: ALL tracks of the SoA in SoA order (same row space as TrkDispFull);
-// tracks with <3 hits / corrupt hit lists get NaN features (drop offline).
+// OPTIONAL MERGED-COLLECTION PROVENANCE (emitMergedProvenance=True, OFF by default): four extra
+// track-level columns iteration / ndof / nOTExtra / nAttached. The merged collection is the only
+// place iteration is meaningful (neither this table nor PixelTrackSoATab carries it otherwise).
+//
+// OPTIONAL PIXEL-CLUSTER AGGREGATES (emitClusterFeatures=True, OFF by default): eight extra
+// track-level columns from the SiPixelCluster charge/shape on the track's PIXEL hits in the
+// merged rechit SoA. Every input is a DataFormats/TrackingRecHitSoA column the device kernel has
+// in hand, so the block is device-portable as written.
 //
 // OPTIONAL ATTACH-PURITY TABLE (emitHitTruth=True, OFF by default). A SECOND FlatTable, one row
 // PER (track, hit) in SoA hit-list order, carrying per-hit truth so the purity of the in-CA fit
-// extension's attached OT rechits can be measured against the track's own TrackingParticle. This
-// producer walks the PRE-conversion track SoA, where the tag bit caOTHitTag::isOTId(h) marks an
-// attached raw-OT extra and origRecHitIdx resolves it to the flat Phase2 rechit collection, so it
-// can join hits to TPs the same way HitTruthTableProducer does (TrackerHitAssociator over
-// Phase2TrackerRecHit1DCollectionNew; Phase2OTDigiSimLink -> SimHitIdpr -> TP). The track's own TP
-// is the plurality TP over the track's resolvable (stub + OT-extra) hits -- an in-producer,
-// hit-based match (same family as the associator the truth tables use), used here because the SoA
-// row space differs from the legacy-converted-track row space the tpKey ValueMap keys on. Emit
+// extension's attached OT rechits can be measured against the track's own TrackingParticle. The
+// track's own TP is the plurality TP over the track's resolvable (stub + OT-extra) hits. Emit
 // ownTpNShared so a shared-hit threshold can be applied offline.
 
 #include <algorithm>
@@ -68,6 +71,10 @@ public:
         tracksToken_(consumes<reco::TracksHost>(params.getParameter<edm::InputTag>("trackSrc"))),
         hitsToken_(consumes<reco::TrackingRecHitHost>(params.getParameter<edm::InputTag>("mergedHitsSrc"))),
         otHitsToken_(consumes<reco::OTRecHitsHost>(params.getParameter<edm::InputTag>("otRecHitsSoASrc"))),
+        emitMergedProvenance_(params.getParameter<bool>("emitMergedProvenance")),
+        emitClusterFeatures_(params.getParameter<bool>("emitClusterFeatures")),
+        pixelBarrelModuleEnd_(params.getParameter<unsigned int>("pixelBarrelModuleEnd")),
+        lowChargeThreshold_(float(params.getParameter<double>("lowChargeThreshold"))),
         emitHitTruth_(params.getParameter<bool>("emitHitTruth")),
         hitTableName_(params.getParameter<std::string>("hitTableName")),
         minSharedForOwnTP_(params.getParameter<int>("minSharedForOwnTP")) {
@@ -98,6 +105,27 @@ public:
     // Raw OT-rechit SoA: resolves tagged OT extras attached by the in-CA fit extension so the
     // deployed 12-feature vector matches the device Kernel_classifyTracks on OT-extended tracks.
     desc.add<edm::InputTag>("otRecHitsSoASrc", edm::InputTag("hltPixelSeedingOTRecHitsSoA"));
+
+    // Merged-collection provenance columns (iteration/ndof/nOTExtra/nAttached). OFF by default so
+    // the per-arm datasets already produced stay byte-identical; the merged dump turns it on, where
+    // iteration is the only place the two arms are still distinguishable (TracksSoA.h).
+    desc.add<bool>("emitMergedProvenance", false)
+        ->setComment("Also emit per-track provenance columns (iteration/ndof/nOTExtra/nAttached)");
+
+    // Pixel-CLUSTER shape/charge aggregates (OFF by default). Everything they use lives in
+    // DataFormats/TrackingRecHitSoA (TrackingRecHitsSoA.h: chargeAndStatus() -- a
+    // SiPixelHitStatusAndCharge with a 24-bit `charge` field in ELECTRONS plus the CPE status
+    // bitfield -- clusterSizeX(), clusterSizeY(), detectorIndex()), so a device kernel can rebuild
+    // them from the same merged-hit SoA the feature kernel already reads.
+    desc.add<bool>("emitClusterFeatures", false)
+        ->setComment("Also emit per-track pixel-cluster charge/shape aggregates (no vertex information)");
+    // Pixel BARREL/ENDCAP split, needed only for the path-length normalisation of the charge.
+    // Modules indexed in DetId order: pixel barrel occupies [0, 864) for the Phase-2 pixel
+    // topology (4 TBPX layers). Exposed as a parameter so a different geometry needs no rebuild.
+    desc.add<unsigned int>("pixelBarrelModuleEnd", 864)
+        ->setComment("First pixel ENDCAP module index (detectorIndex < this == barrel)");
+    desc.add<double>("lowChargeThreshold", 7000.0)
+        ->setComment("Path-length-normalised cluster charge (electrons) below which a pixel hit counts as low-charge");
 
     // --- Optional attach-purity per-hit truth table (OFF by default; test-config only). ---
     desc.add<bool>("emitHitTruth", false)
@@ -166,15 +194,36 @@ private:
     std::vector<float> phiCol(nTracks, kNaN);  // join key vs the truth table
     std::vector<int> qualityCol(nTracks, -1);  // SoA quality enum value
 
-    // --- Candidate features (host-only study; targeting the hard 1-10cm band). The existing
-    // CA features capture stub-INTERNAL consistency (logChi2Stub, kErr); these add extrapolation/shape,
-    // which the current set lacks. If any prove out, port to caTrackFeatures::fill for deployment.
-    // Order == kExtraNames.
-    // nTilted/tiltedFrac target the tilted-module fakes (|eta|~1-2, <5cm): barrel stubs on TILTED
-    // modules (StubFlags !isFlat) -- biased bend on tilted sensors -> near-beamline combinatorial fakes.
+    // --- Columns 0-3 are DEPLOYED (PixelTrackFeaturesSoA columns 28-31, read by the HP selector);
+    // columns 4-6 are host-only candidates: the CA features capture stub-INTERNAL consistency
+    // (logChi2Stub, kErr), these add extrapolation/shape. Order == kExtraNames. nTilted/tiltedFrac
+    // count barrel stubs on TILTED modules (StubFlags !isFlat), whose biased bend produces
+    // near-beamline fakes at |eta|~1-2.
     static const char* kExtraNames[7] = {
         "meanStubKappa", "leverArm", "rMax", "rzChi2", "meanClusterY", "nTilted", "tiltedFrac"};
     std::vector<std::vector<float>> ex(7, std::vector<float>(nTracks, kNaN));
+
+    // Merged-collection provenance (emitMergedProvenance_ only): the SoA columns the two table
+    // producers otherwise drop. -1 = the track's hit span is empty/corrupt (no row content at all).
+    std::vector<int> iterCol, ndofCol, nOTExtraCol, nAttachedCol;
+    if (emitMergedProvenance_) {
+      iterCol.assign(nTracks, -1);
+      ndofCol.assign(nTracks, -1);
+      nOTExtraCol.assign(nTracks, -1);
+      nAttachedCol.assign(nTracks, -1);
+    }
+
+    // Pixel-cluster charge/shape aggregates (emitClusterFeatures_ only). Computed over the track's
+    // PIXEL hits only: stub rows and OT extras carry no cluster information (the stubs merger and
+    // the OT converter both zero charge/clusterSizeX/clusterSizeY explicitly). -1 on every column
+    // when the track has no pixel hit with cluster information at all.
+    // Order == kClusterNames.
+    static const char* kClusterNames[8] = {
+        "nPixHits", "minCharge", "meanCharge", "minChargeNorm", "maxSizeY", "meanSizeY", "maxSizeX", "nLowCharge"};
+    std::vector<std::vector<float>> cl;
+    if (emitClusterFeatures_)
+      cl.assign(8, std::vector<float>(nTracks, -1.f));
+    const uint32_t offsetStubsMain = hh.offsetStubs();
 
     float feat[caTrackFeatures::kNFeat];
     for (int it = 0; it < nTracks; ++it) {
@@ -184,39 +233,105 @@ private:
         continue;
       const auto* hitsBegin = trackHits.id().data() + start;
       const auto* hitsEnd = trackHits.id().data() + end;
+
+      // Provenance is independent of whether the feature walk succeeds, so it is filled on the
+      // whole valid-span row space (an all-NaN feature row still says which iteration produced it).
+      if (emitMergedProvenance_) {
+        iterCol[it] = int(tracks[it].iteration());
+        ndofCol[it] = int(tracks[it].ndof());
+        int nOT = 0, nAtt = 0;
+        for (uint32_t k = start; k < end; ++k) {
+          if (caOTHitTag::isOTId(trackHits[k].id()))
+            ++nOT;  // raw-OT extra attached by the extension walk
+          if (trackHits[k].attached() == 1)
+            ++nAtt;  // any hit added by the extension stage (superset of the OT extras)
+        }
+        nOTExtraCol[it] = nOT;
+        nAttachedCol[it] = nAtt;
+      }
+
+      // --- Pixel-cluster aggregates. Filled on the whole valid-span row space (like provenance),
+      // so a row whose feature walk fails still carries them. Path-length normalisation: state()(3)
+      // = cotan(theta). A barrel sensor's normal is radial -> path ~ t/|sin(theta)|, so the normalised
+      // charge is Q*|sin(theta)|; an endcap sensor's normal is along z -> Q*|cos(theta)|. Same as the
+      // offline pixel cluster-charge cuts.
+      if (emitClusterFeatures_) {
+        const float cot = tracks[it].state()(3);
+        const float invHyp = 1.f / std::sqrt(1.f + cot * cot);
+        const float absSinTheta = invHyp;                  // barrel path factor
+        const float absCosTheta = std::abs(cot) * invHyp;  // endcap path factor
+        int nPix = 0, nLow = 0;
+        float qMin = 0.f, qSum = 0.f, qnMin = 0.f;
+        float syMax = 0.f, sySum = 0.f, sxMax = 0.f;
+        for (uint32_t k = start; k < end; ++k) {
+          const uint32_t h = trackHits[k].id();
+          if (caOTHitTag::isOTId(h))
+            continue;  // raw OT extra: indexes the OT SoA, no cluster information there
+          if (h >= uint32_t(nHitsTot) || h >= offsetStubsMain)
+            continue;  // stub row (charge/sizes zeroed by the merger) or corrupt index
+          const float q = float(hh[h].chargeAndStatus().charge);
+          if (!(q > 0.f))
+            continue;  // defensive: a pixel row with no charge carries no usable cluster
+          const bool barrel = uint32_t(hh[h].detectorIndex()) < pixelBarrelModuleEnd_;
+          const float qn = q * (barrel ? absSinTheta : absCosTheta);
+          const float sx = float(hh[h].clusterSizeX());
+          const float sy = float(hh[h].clusterSizeY());
+          if (nPix == 0) {
+            qMin = q;
+            qnMin = qn;
+          } else {
+            qMin = std::min(qMin, q);
+            qnMin = std::min(qnMin, qn);
+          }
+          qSum += q;
+          sySum += sy;
+          syMax = std::max(syMax, sy);
+          sxMax = std::max(sxMax, sx);
+          if (qn < lowChargeThreshold_)
+            ++nLow;
+          ++nPix;
+        }
+        if (nPix > 0) {
+          cl[0][it] = float(nPix);
+          cl[1][it] = qMin;
+          cl[2][it] = qSum / float(nPix);
+          cl[3][it] = qnMin;
+          cl[4][it] = syMax;
+          cl[5][it] = sySum / float(nPix);
+          cl[6][it] = sxMax;
+          cl[7][it] = float(nLow);
+        }
+      }
+
+      // The four DEPLOYED extras (rzChi2/meanStubKappa/leverArm/rMax) come from fill()'s rzKappaOut,
+      // NOT from the host study walk below: the study walk skips bit30-tagged OT extras, while the
+      // deployed kernel includes them, so a host recomputation would be a train-vs-serve skew on
+      // every OT-extended track (exactly the tail a merged-collection model is meant to judge).
+      // Sentinels match the kernel (rzChi2 = -1 when undefined, not NaN).
+      float rzk[4] = {-1.f, 0.f, 0.f, 0.f};
       const bool ok = caTrackFeatures::fill(
-          hitsBegin, hitsEnd, hh, nHitsTot, float(tracks[it].nLayers()), tracks[it].chi2(), feat, nullptr, otViewPtr);
+          hitsBegin, hitsEnd, hh, nHitsTot, float(tracks[it].nLayers()), tracks[it].chi2(), feat, rzk, otViewPtr);
       if (!ok)
         continue;
       for (int f = 0; f < caTrackFeatures::kNFeat; ++f)
         cols[f][it] = feat[f];
       phiCol[it] = tracks[it].state()(0);
       qualityCol[it] = int(tracks[it].quality());
+      ex[0][it] = rzk[1];  // meanStubKappa
+      ex[1][it] = rzk[2];  // leverArm
+      ex[2][it] = rzk[3];  // rMax
+      ex[3][it] = rzk[0];  // rzChi2 (-1 = undefined, as the kernel writes it)
 
-      // Candidate-feature host walk over the same hit list.
-      float r0 = -1.f, rMax = 0.f, sumKw = 0.f, sumKwk = 0.f;
-      int nClY = 0, nrz = 0, nTilted = 0;
-      double sumClY = 0.0, Sr = 0, Sz = 0, Srr = 0, Srz = 0, Szz = 0;
+      // Study-only host walk over the same hit list. Tagged OT extras index the OT SoA, not hh, and
+      // are never stubs -> skip them here (do NOT break, which would truncate at the first OT hit).
+      int nClY = 0, nTilted = 0;
+      double sumClY = 0.0;
       for (const uint32_t* ph = hitsBegin; ph != hitsEnd; ++ph) {
         const uint32_t h = *ph;
-        // Tagged OT extras index the OT SoA, not hh, and are never stubs -> skip them in this
-        // host-only study walk (do NOT break, which would truncate the sums at the first
-        // OT hit). The 12-feature vector above is OT-aware via fill(); these study-only
-        // columns (leverArm/rMax/rzChi2/...) omit OT extras.
         if (caOTHitTag::isOTId(h))
           continue;
         if (h >= uint32_t(nHitsTot))
           break;
-        const float rg = hh[h].rGlobal(), zg = hh[h].zGlobal();
-        if (r0 < 0.f)
-          r0 = rg;
-        rMax = std::max(rMax, rg);
-        Sr += rg;
-        Sz += zg;
-        Srr += double(rg) * rg;
-        Srz += double(rg) * zg;
-        Szz += double(zg) * zg;
-        ++nrz;
         const short cly = hh[h].clusterSizeY();
         if (cly > 0) {
           sumClY += cly;
@@ -226,25 +341,6 @@ private:
           const auto flags = hh[h].stubFlags();
           if (::reco::StubFlags::isBarrel(flags) && !::reco::StubFlags::isFlat(flags))
             ++nTilted;  // tilted barrel module (|eta|~1-2 transition)
-          const float s = hh[h].dPhiDrError();
-          if (s > 0.f) {
-            const float d = hh[h].dPhiDr();
-            float den, w;  // same shared kappa formula as CATrackFeatures::fill (single source)
-            caTrackFeatures::stubDenWeight(rg * rg, d, s, den, w);
-            const float k = d / std::sqrt(den);
-            sumKw += w;
-            sumKwk += w * k;
-          }
-        }
-      }
-      ex[0][it] = (sumKw > 0.f) ? sumKwk / sumKw : 0.f;  // meanStubKappa
-      ex[1][it] = rMax - r0;                             // leverArm
-      ex[2][it] = rMax;                                  // rMax
-      if (nrz >= 3) {                                    // reduced chi2 of a straight line z = a + b r (RSS from sums)
-        const double D = nrz * Srr - Sr * Sr;
-        if (std::abs(D) > 0.0) {
-          const double b = (nrz * Srz - Sr * Sz) / D, a = (Sz - b * Sr) / nrz;
-          ex[3][it] = float(std::max(0.0, (Szz - a * Sz - b * Srz)) / std::max(1, nrz - 2));
         }
       }
       ex[4][it] = (nClY > 0) ? float(sumClY / nClY) : 0.f;  // meanClusterY
@@ -256,10 +352,35 @@ private:
     for (int f = 0; f < caTrackFeatures::kNFeat; ++f)
       table->addColumn<float>(kNames[f], cols[f], "CA track classifier feature", -1);
     for (int f = 0; f < 7; ++f)
-      table->addColumn<float>(
-          kExtraNames[f], ex[f], "candidate track feature under study (extrapolation/shape, host-only)", -1);
+      table->addColumn<float>(kExtraNames[f],
+                              ex[f],
+                              f < 4 ? "deployed CA track feature (PixelTrackFeaturesSoA columns 28-31, from "
+                                      "caTrackFeatures::fill's rzKappaOut -- OT-aware, bit-identical to the kernel)"
+                                    : "candidate track feature under study (extrapolation/shape, host-only)",
+                              -1);
     table->addColumn<float>("phi", phiCol, "track phi (join key vs the truth table)", -1);
     table->addColumn<int>("quality", qualityCol, "SoA quality enum value", -1);
+    if (emitMergedProvenance_) {
+      table->addColumn<int>(
+          "iteration", iterCol, "pixelTrack::Iteration that produced the track (-1 = empty/corrupt hit span)", -1);
+      table->addColumn<int>("ndof", ndofCol, "fitted degrees of freedom (0 = never fitted, -1 = no hit span)", -1);
+      table->addColumn<int>("nOTExtra", nOTExtraCol, "# raw-OT extras on the track (caOTHitTag-tagged hit ids)", -1);
+      table->addColumn<int>(
+          "nAttached", nAttachedCol, "# hits added by the extension stage (trackHits.attached()==1)", -1);
+    }
+    if (emitClusterFeatures_) {
+      static const char* kClusterDocs[8] = {
+          "# pixel hits on the track carrying cluster information (charge > 0)",
+          "min SiPixelCluster charge over the track's pixel hits (electrons)",
+          "mean SiPixelCluster charge over the track's pixel hits (electrons)",
+          "min path-length-normalised cluster charge (Q*|sin(theta)| barrel, Q*|cos(theta)| endcap, electrons)",
+          "max cluster sizeY over the track's pixel hits",
+          "mean cluster sizeY over the track's pixel hits",
+          "max cluster sizeX over the track's pixel hits",
+          "# pixel hits whose normalised charge is below lowChargeThreshold"};
+      for (int f = 0; f < 8; ++f)
+        table->addColumn<float>(kClusterNames[f], cl[f], kClusterDocs[f], -1);
+    }
     iEvent.put(std::move(table), tableName_);
 
     if (emitHitTruth_)
@@ -461,6 +582,14 @@ private:
   const edm::EDGetTokenT<reco::TracksHost> tracksToken_;
   const edm::EDGetTokenT<reco::TrackingRecHitHost> hitsToken_;
   const edm::EDGetTokenT<reco::OTRecHitsHost> otHitsToken_;
+
+  // Optional merged-collection provenance columns on the main table.
+  const bool emitMergedProvenance_;
+
+  // Optional pixel-cluster charge/shape aggregates on the main table.
+  const bool emitClusterFeatures_;
+  const unsigned int pixelBarrelModuleEnd_;
+  const float lowChargeThreshold_;
 
   // Optional attach-purity table members (used only when emitHitTruth_).
   const bool emitHitTruth_;

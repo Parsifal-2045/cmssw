@@ -209,22 +209,44 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     return xx0;  // dimensionless X/X0
   }
 
-  // ENDPOINT PARTITION of a segment's material between its two EXISTING end nodes -- the zero-extra-node
-  // two-moment model. Same march, same sample positions and the same rhoAt lookups as segmentXX0: the ONLY
-  // added work is one multiply-add per sample and one divide per segment.
-  //
-  // With q(l) the X/X0 density along (r0,z0)->(r1,z1) and d(l) = distance from the sample to the ARRIVAL end
-  // (r1,z1):   W = int q dl,  S1 = int q d dl.  Charging  fDep*W  at the DEPARTURE end and  (1-fDep)*W  at the
-  // arrival end, with
-  //     fDep = S1 / (W * L) = <d> / L   in [0,1],
-  // reproduces the segment's total material AND its first moment about either end EXACTLY (the lever of the
-  // departure share about the arrival end is fDep*W*L = S1). It is exact to the second moment too whenever the
-  // material sits at the two ends (modules with services between, the worst case for a single kink), and
-  // otherwise reproduces the far-end offset variance as S1*L against the true S2, where a single kink at the
-  // arrival node produces it as zero.
-  //
-  // Returns W, the same value segmentXX0 returns for the same `trapezoid` (same samples, same weights, same
-  // accumulation order), so the partition never changes a segment's material total -- only where it is charged.
+  // Two-equivalent-thin-scatterer split of the material along (r0,z0)->(r1,z1) (Kleinwort's GBL thick-scatterer
+  // model), used for the distributed upstream (beamline->first hit) material. With q(l) the X/X0 density along
+  // the segment and d(l) the distance from the sample to the (r1,z1) END: W = int q dl, S1 = int q d dl,
+  // S2 = int q d^2 dl. A pair of thin scatterers -- one at path distance d1 = S2/S1 upstream of the end carrying
+  // the fraction w1 = S1^2/(S2 W) of the scattering variance, one AT the end with 1-w1 -- reproduces all three
+  // moments (angle variance, angle-offset covariance, offset variance at the end).
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Moments(
+      const TAcc& acc, const float* rho, double r0, double z0, double r1, double z1, double& d1, double& w1) {
+    const double L = alpaka::math::sqrt(acc, (r1 - r0) * (r1 - r0) + (z1 - z0) * (z1 - z0));
+    int nseg = int(2. * L);
+    if (nseg < 2)
+      nseg = 2;
+    const double dl = L / (nseg - 1);
+    double W = 0., S1 = 0., S2 = 0.;
+    for (int k = 0; k < nseg; ++k) {
+      const double f = double(k) / (nseg - 1);
+      const double q = blMaterialMap::rhoAt(rho, float(r0 + f * (r1 - r0)), float(z0 + f * (z1 - z0))) * dl;
+      const double d = (1. - f) * L;
+      W += q;
+      S1 += q * d;
+      S2 += q * d * d;
+    }
+    d1 = 0.;
+    w1 = 0.;
+    if (W > 0. && S1 > 0. && S2 > 0.) {
+      d1 = S2 / S1;
+      w1 = S1 * S1 / (S2 * W);  // in (0, 1] by Cauchy-Schwarz
+    }
+    return W;  // total X/X0, identical to segmentXX0 up to rounding
+  }
+
+  // ENDPOINT PARTITION of a segment's material between its two existing end nodes. Same march, sample
+  // positions and rhoAt lookups as segmentXX0. With q(l) the X/X0 density along (r0,z0)->(r1,z1) and d(l) the
+  // distance from the sample to the ARRIVAL end (r1,z1), W = int q dl and S1 = int q d dl; charging fDep*W at
+  // the departure end and (1-fDep)*W at the arrival end, with fDep = S1/(W L) = <d>/L in [0,1], reproduces the
+  // segment's total AND its first moment about either end exactly (a single kink at the arrival node models
+  // the first moment as zero). Returns W, the same value segmentXX0 returns for the same `trapezoid`.
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Endpoint(const TAcc& acc,
                                                            const float* rho,

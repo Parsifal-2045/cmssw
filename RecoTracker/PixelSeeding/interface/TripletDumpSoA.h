@@ -1,13 +1,11 @@
 #ifndef RecoTracker_PixelSeeding_interface_TripletDumpSoA_h
 #define RecoTracker_PixelSeeding_interface_TripletDumpSoA_h
 
-// Per-built-triplet training-dataset row, captured on device by Kernel_connect ONLY in
-// CA_TRIPLET_DUMP builds (the buffer is allocated, written, and emitted under #ifdef
-// CA_TRIPLET_DUMP, so production builds carry nothing). It is the multithread-safe, ROOT-robust
-// nanoAOD capture path. Columns 0..17 are the 18 BASE features fed to the triplet DNN (exact order +
-// formulas == BASE_FEATURES in RecoTracker/PixelSeeding/test/train_triplet_dnn_v2.py; the 11
-// DERIVED features are recomputed offline from these + lay1/2/3). h1/h2/h3 are the three global
-// MERGED-hit indices (truth join key).
+// Per-built-triplet training-dataset row, captured by Kernel_connect only in CA_TRIPLET_DUMP
+// builds (production builds carry nothing). Columns 0..17 are the 18 base triplet-DNN features, in
+// the order and with the formulas of the training script's BASE_FEATURES; the derived features are
+// recomputed offline from these and lay1/2/3. h1/h2/h3 = merged-hit indices (truth join key),
+// iter = iteration label.
 
 #include <alpaka/alpaka.hpp>
 
@@ -43,11 +41,12 @@ namespace caStructures {
                       SOA_COLUMN(int32_t, lay1),
                       SOA_COLUMN(int32_t, lay2),
                       SOA_COLUMN(int32_t, lay3),
-                      // --- merged-hit indices (truth join key) ---
+                      // --- merged-hit indices (truth join key) + iteration label ---
                       SOA_COLUMN(uint32_t, h1),
                       SOA_COLUMN(uint32_t, h2),
                       SOA_COLUMN(uint32_t, h3),
-                      // The in-kernel DNN score score(feat) for this triplet (-1 if not evaluated),
+                      SOA_COLUMN(int32_t, iter),
+                      // The in-kernel DNN score score<BANK>(feat) for this triplet (-1 if not evaluated),
                       // for the in-kernel-vs-offline consistency check.
                       SOA_COLUMN(float, inKernelScore),
                       // Number of valid rows (== device_nTriplets). The collection is allocated at the

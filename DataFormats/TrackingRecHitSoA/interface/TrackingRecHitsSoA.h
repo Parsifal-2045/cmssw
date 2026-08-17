@@ -11,40 +11,37 @@
 
 namespace reco {
 
-  GENERATE_SOA_LAYOUT(TrackingHitsLayout,
-                      SOA_COLUMN(float, xLocal),
-                      SOA_COLUMN(float, yLocal),
-                      SOA_COLUMN(float, xerrLocal),
-                      SOA_COLUMN(float, yerrLocal),
-                      SOA_COLUMN(float, xGlobal),
-                      SOA_COLUMN(float, yGlobal),
-                      SOA_COLUMN(float, zGlobal),
-                      SOA_COLUMN(float, rGlobal),
-                      SOA_COLUMN(int16_t, iphi),
-                      SOA_COLUMN(SiPixelHitStatusAndCharge, chargeAndStatus),
-                      SOA_COLUMN(int16_t, clusterSizeX),
-                      SOA_COLUMN(int16_t, clusterSizeY),
-                      SOA_COLUMN(uint16_t, detectorIndex),
-                      // Stub-specific fields for CA integration
-                      // dPhiDrError doubles as the stub predicate: reco::isStub(hits, i) == (dPhiDrError() >= 0).
-                      // EVERY producer of this SoA must therefore write it: -1 for pixel and OT hits, the
-                      // stub's error (>= 0) for merged stubs.
-                      SOA_COLUMN(float, dPhiDr),       // Stub direction (local track angle); 0 for non-stub hits
-                      SOA_COLUMN(float, dPhiDrError),  // Error on stub direction; -1 for non-stub hits
-                      // P-hit group ID: For stub hits, identifies which P-hit (lower sensor hit)
-                      // was used to form this stub. Stubs sharing the same P-hit have the same ID.
-                      // Used by CAFishbone to correctly handle duplicate stubs from the same P-hit.
-                      // Value UINT32_MAX indicates unset/invalid (for regular pixel hits).
-                      SOA_COLUMN(uint32_t, lowerHitIdx),
-                      // Packed stub flags from StubsSoA: isBarrel(bit0), isFlat(bit1), isValid(bit2), layer(bits3-5)
-                      // Read by the extension's per-class bend sigma-excess and by the track-classifier
-                      // feature vector (nPS/nBarrel); also by the doublet-finder debug printouts.
-                      // Zero for regular pixel hits. Decode with reco::StubFlags helpers.
-                      SOA_COLUMN(uint8_t, stubFlags),
-                      SOA_SCALAR(int32_t, offsetBPIX2),
-                      SOA_SCALAR(uint32_t, offsetStubs));  // Offset where stub-derived hits start
-                                                           // For stub hits: stubIndex = hitIndex - offsetStubs
-                                                           // Stubs must be added in same order as StubsSoACollection
+  GENERATE_SOA_LAYOUT(
+      TrackingHitsLayout,
+      SOA_COLUMN(float, xLocal),
+      SOA_COLUMN(float, yLocal),
+      SOA_COLUMN(float, xerrLocal),
+      SOA_COLUMN(float, yerrLocal),
+      SOA_COLUMN(float, xGlobal),
+      SOA_COLUMN(float, yGlobal),
+      SOA_COLUMN(float, zGlobal),
+      SOA_COLUMN(float, rGlobal),
+      SOA_COLUMN(int16_t, iphi),
+      SOA_COLUMN(SiPixelHitStatusAndCharge, chargeAndStatus),
+      SOA_COLUMN(int16_t, clusterSizeX),
+      SOA_COLUMN(int16_t, clusterSizeY),
+      SOA_COLUMN(uint16_t, detectorIndex),
+      // Stub columns. dPhiDrError doubles as the stub predicate, isStub == (dPhiDrError >= 0), so
+      // every hit producer must write it: -1 for pixel/OT hits, the stub's error (>= 0) for stubs.
+      SOA_COLUMN(float, dPhiDr),       // stub direction; 0 for non-stub hits
+      SOA_COLUMN(float, dPhiDrError),  // stub direction error; -1 for non-stub hits
+      // Same bend error from the precision (local-x) rows only, copied from StubsSoA::dPhiDrErrorPrec
+      // (see the derivation there); < 0 for non-stub hits.
+      SOA_COLUMN(float, dPhiDrErrorPrec),
+      // Lower-sensor (P-side) hit that formed a PS stub; stubs sharing it share the value, which the
+      // fishbone uses to spot duplicates. UINT32_MAX = unset (pixel hits, 2S stubs).
+      SOA_COLUMN(uint32_t, lowerHitIdx),
+      // Packed stub flags (StubsSoA); zero for pixel hits. Decode with reco::StubFlags.
+      SOA_COLUMN(uint8_t, stubFlags),
+      SOA_SCALAR(int32_t, offsetBPIX2),
+      SOA_SCALAR(
+          uint32_t,
+          offsetStubs));  // first stub hit; stubIndex = hitIndex - offsetStubs; must match StubsSoACollection order
 
   GENERATE_SOA_LAYOUT(HitModulesLayout, SOA_COLUMN(uint32_t, moduleStart));
 
@@ -68,6 +65,8 @@ namespace reco {
                       SOA_SCALAR(int32_t, endCapZPos),
                       SOA_SCALAR(int32_t, endCapZNeg))
 
+  GENERATE_SOA_LAYOUT(TrackingRecHitsMaskingLayout, SOA_COLUMN(uint32_t, recHitMask));
+
   using TrackingRecHitSoA = TrackingHitsLayout<>;
   using TrackingRecHitView = TrackingRecHitSoA::View;
   using TrackingRecHitConstView = TrackingRecHitSoA::ConstView;
@@ -87,6 +86,10 @@ namespace reco {
   ALPAKA_FN_HOST_ACC inline bool isStub(const TrackingRecHitConstView &hits, int32_t i) {
     return hits[i].dPhiDrError() >= 0.f;
   }
+
+  using TrackingRecHitsMaskingSoA = TrackingRecHitsMaskingLayout<>;
+  using TrackingRecHitsMaskingView = TrackingRecHitsMaskingSoA::View;
+  using TrackingRecHitsMaskingConstView = TrackingRecHitsMaskingSoA::ConstView;
 
 };  // namespace reco
 
