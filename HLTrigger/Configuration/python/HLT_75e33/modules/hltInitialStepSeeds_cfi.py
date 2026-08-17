@@ -25,3 +25,7 @@ hltPhase2LegacyTracking.toModify(hltInitialStepSeeds,
 
 from Configuration.ProcessModifiers.phase2_hlt_vertexTrimming_cff import phase2_hlt_vertexTrimming
 phase2_hlt_vertexTrimming.toModify(hltInitialStepSeeds, InputVertexCollection = "hltPhase2TrimmedPixelVertices")
+
+from Configuration.ProcessModifiers.phase2CAStubs_cff import phase2CAStubs
+# Stub-expanded pixel tracks carry OT rechits of every stub; seed from pixel hits only.
+phase2CAStubs.toModify(hltInitialStepSeeds, removeOTRechits = True)
