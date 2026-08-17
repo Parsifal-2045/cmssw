@@ -29,9 +29,19 @@ namespace reco {
                       SOA_EIGEN_COLUMN(Vector5f, state),
                       SOA_EIGEN_COLUMN(Vector15f, covariance),
                       SOA_SCALAR(int, nTracks),
-                      SOA_COLUMN(uint32_t, hitOffsets))
+                      SOA_COLUMN(uint32_t, hitOffsets),
+                      // Fitted degrees of freedom (2 * measurements-in-fit - 5, outlier drops
+                      // included; 0 = never fitted). Written by the GBL fit so downstream chi2
+                      // consumers and the legacy converter see the honest ndof.
+                      SOA_COLUMN(int8_t, ndof))
 
-  GENERATE_SOA_LAYOUT(TrackHitsLayout, SOA_COLUMN(uint32_t, id), SOA_COLUMN(uint32_t, detId))
+  // attached: 0 = hit found by the CA (original), 1 = attached by the in-fit extension stage.
+  // A later iteration's hit masking skips attached hits (original-hits masking policy) and
+  // classifiers/nano can count them.
+  GENERATE_SOA_LAYOUT(TrackHitsLayout,
+                      SOA_COLUMN(uint32_t, id),
+                      SOA_COLUMN(uint32_t, detId),
+                      SOA_COLUMN(uint8_t, attached))
 
   GENERATE_SOA_BLOCKS(TrackBlocksLayout, SOA_BLOCK(tracks, TrackLayout), SOA_BLOCK(trackHits, TrackHitsLayout))
 
