@@ -115,6 +115,12 @@ from ..modules.hltPhase2PixelRecHitsStubsMerger_cfi import hltPhase2PixelRecHits
 from ..modules.hltSiPixelClusters_cfi import hltSiPixelClusters
 from ..modules.hltSiPixelRecHits_cfi import hltSiPixelRecHits
 
+from ..modules.hltPhase2PixelTrackHighPtMasking_cfi import hltPhase2PixelTrackHighPtMasking
+from ..modules.hltPhase2PixelTracksSoADisplaced_cfi import hltPhase2PixelTracksSoADisplaced
+from ..modules.hltPhase2PixelTrackHighPuritySelectorDisplaced_cfi import hltPhase2PixelTrackHighPuritySelectorDisplaced
+from ..modules.hltPhase2PixelTracksSoAMerger_cfi import hltPhase2PixelTracksSoAMerger
+from ..modules.hltPhase2PixelTrackHighPuritySelectorMerged_cfi import hltPhase2PixelTrackHighPuritySelectorMerged
+
 _HLTPhase2PixelTracksAndVerticesSequenceCAStubs = cms.Sequence(
     HLTBeamSpotSequence
     +hltPhase2PixelTracksAndHighPtStepTrackingRegions # needed by highPtTripletStep iteration
@@ -131,8 +137,42 @@ _HLTPhase2PixelTracksAndVerticesSequenceCAStubs = cms.Sequence(
     +HLTPhase2PixelVertexingSequence
 )
 
+_HLTPhase2PixelTracksAndVerticesSequenceCAStubsTwoIterations = cms.Sequence(
+    HLTBeamSpotSequence
+    +hltPhase2PixelTracksAndHighPtStepTrackingRegions # needed by highPtTripletStep iteration
+    +hltPhase2PixelFitterByHelixProjections # Currently needed by tracker muons
+    +hltPhase2PixelTrackFilterByKinematics  # Currently needed by tracker muons
+    +hltSiPixelClusters                     # legacy pixel clusters for the legacy rechits
+    +hltSiPixelRecHits                      # legacy pixel rechits for the legacy converter
+    +hltPixelSeedingOTRecHitsSoA
+    +hltOTStubProducer
+    +hltPhase2PixelRecHitsStubsMerger
+    +hltPhase2PixelTracksSoA                     # prompt stub CA via the modifier (label preserved)
+    +hltPhase2PixelTrackTorchHighPuritySelector  # prompt forest selector via the modifier (label preserved)
+    +hltPhase2PixelTrackHighPtMasking            # masks the hits of the prompt tracks
+    +hltPhase2PixelTracksSoADisplaced            # displaced stub CA on the masked hits
+    +hltPhase2PixelTrackHighPuritySelectorDisplaced
+    +hltPhase2PixelTracksSoAMerger               # merge + OT extension + refit, once
+    +hltPhase2PixelTrackHighPuritySelectorMerged # final high-purity selection, on the merged collection
+    +hltPhase2PixelTracks
+    +HLTPhase2PixelVertexingSequence
+)
+
 from Configuration.ProcessModifiers.phase2CAStubs_cff import phase2CAStubs
-phase2CAStubs.toReplaceWith(
+from Configuration.ProcessModifiers.pixelTrackMask_cff import pixelTrackMask
+
+(phase2CAStubs & ~pixelTrackMask).toReplaceWith(
     HLTPhase2PixelTracksAndVerticesSequence,
     _HLTPhase2PixelTracksAndVerticesSequenceCAStubs
 )
+
+(phase2CAStubs & pixelTrackMask).toReplaceWith(
+    HLTPhase2PixelTracksAndVerticesSequence,
+    _HLTPhase2PixelTracksAndVerticesSequenceCAStubsTwoIterations,
+)
+
+# In the two-iteration arm the OT-hit attach extension, the final refit and the duplicate removal
+# run once, in hltPhase2PixelTracksSoAMerger, over the high-purity tracks of both iterations.
+# hltPhase2PixelTrackHighPuritySelectorMerged takes the final high-purity decision on that output
+# and the legacy converter (hltPhase2PixelTracks) is pointed at it, so every downstream consumer
+# sees the merged and selected collection.

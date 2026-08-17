@@ -1,26 +1,30 @@
 # Retraining the pixel-track machine-learned models
 
 Everything needed to retrain, check and deploy the models used by the two pixel+outer-tracker
-track reconstruction iterations. Two entry points do the work:
+track reconstruction iterations and by the selector on their merged output. Three entry points
+do the work:
 
 ```bash
 ./retrain_prompt.sh    <step> [options]     # hltPhase2PixelTracksSoAWithStubs
 ./retrain_displaced.sh <step> [options]     # hltPhase2PixelTracksSoADisplacedWithStubs
+./retrain_merged.sh    <step> [options]     # hltPhase2PixelTrackHighPuritySelectorMerged
 ```
 
-Both take the same steps and the same options.
-Run either with `--help` for the full list. Every step prints each command before running
+The first two take the same steps and the same options; the third has only the final selector.
+Run any of them with `--help` for the full list. Every step prints each command before running
 it, and `--dry-run` prints them without running anything.
 
 ## The models
 
-Each iteration has three trainable models, trained in this order:
+Each iteration has three trainable models, trained in this order, and the merged collection has
+one more:
 
 | script | step | model | where it runs | deployed as | to deploy |
 |---|---|---|---|---|---|
 | prompt, displaced | `triplet` | per-triplet gate | inside the track-building kernel | `plugins/alpaka/CATripletDNNWeights_<arm>.h` | rebuild |
 | prompt, displaced | `gate` | track DNN (loose -> tight) | inside the track classification kernel | `plugins/alpaka/CATrackDNNWeights_<arm>.h` | rebuild |
 | prompt, displaced | `hp` | final high-purity selector of the iteration | a separate module after reconstruction | `RecoTracker/FinalTrackSelectors/data/PixelTrackTorchHighPuritySelector/<arm>_tree31_<tag>_<date>.bin` | copy the file |
+| merged | `hp` | final high-purity selector of the merged collection | after the merger | `.../merged_tree42_<tag>_<date>.bin` | copy the file |
 
 `<arm>` is `prompt` or `disp`. The first two models are compiled into the kernels, so deploying
 them means rebuilding; the selectors are read at run time, so deploying one means copying a file
@@ -39,7 +43,7 @@ What each step does:
 
 ## The final selectors
 
-Both final selectors are gradient-boosted forests run by `PixelTrackForestHighPuritySelector@alpaka`
+All three final selectors are gradient-boosted forests run by `PixelTrackForestHighPuritySelector@alpaka`
 (`useHitFeatures=True`), reading a compact `.bin`. Every model consumes a prefix of the
 `PixelTrackFeaturesSoA` column layout, in column order:
 
@@ -47,11 +51,12 @@ Both final selectors are gradient-boosted forests run by `PixelTrackForestHighPu
 |---|---|---|---|---|---|
 | prompt | `hltPhase2PixelTrackTorchHighPuritySelector` (the forest replaces the Torch model under `phase2CAStubs`) | `hltPhase2PixelTrackTorchHighPuritySelector_cfi.py` | `prompt_tree31_ew4m0_20260829.bin` | 31: 17 fit and covariance, 10 hit and stub, `rzChi2`, `meanStubKappa`, `leverArm`, `rMax` | fp32 |
 | displaced | `hltPhase2PixelTrackHighPuritySelectorDisplaced` | `hltPhase2PixelTrackHighPuritySelectorDisplaced_cfi.py` | `disp_tree31_wp_20260821.bin` | the same 31 | fp16 |
+| merged | `hltPhase2PixelTrackHighPuritySelectorMerged` | `hltPhase2PixelTrackHighPuritySelectorMerged_cfi.py` | `merged_tree42_finalhpfrw_20260823.bin` | 42: the 31, then `nAttached`, `nOTExtras`, `iterationId`, `ndof`, then 7 pixel-cluster columns | fp32 |
 
 The configuration files are in `HLTrigger/Configuration/python/HLT_75e33/modules/`. One trainer,
-`train_merged_forest.py`, produces both; each `hp` step calls it with the recipe of the file
+`train_merged_forest.py`, produces all three; each `hp` step calls it with the recipe of the file
 the chain runs today, and stages the result under the trainer's own name
-`<arm>_tree<N>_<tag>_<date>.bin` in `--work`. The two chains, exactly as the scripts print them
+`<arm>_tree<N>_<tag>_<date>.bin` in `--work`. The three chains, exactly as the scripts print them
 (`$W` = `--work`, `$M` = this directory):
 
 **Prompt** (`./retrain_prompt.sh hp --work $W ...`):
@@ -82,6 +87,23 @@ Update in `hltPhase2PixelTrackHighPuritySelectorDisplaced_cfi.py`: `model`, and 
 threshold parameters `scoreThreshold`, `scoreThresholdLowDxy`, `dxyRampKnee` together (see
 "Working points").
 
+**Merged** (`./retrain_merged.sh dump ...`, then `./retrain_merged.sh hp --work $W ...`; the dump
+runs with `NANO_MERGED=1 NANO_CLUSTER=1` and both iterations' buffers enlarged):
+
+```bash
+python3 $M/nano_loader.py cache-merged $W/merged43_cache.npz $W/trackNano_<sample>_merged.root ...
+python3 $M/train_merged_forest.py --cache $W/merged43_cache.npz --out $W/merged_forest \
+    --feats 35 --abi-order nAttached,nOTExtra,iteration,ndof \
+    --extra-cols minCharge,meanCharge,minChargeNorm,maxSizeY,meanSizeY,maxSizeX,nLowCharge \
+    --label mtv --recall 0.995 --arm merged --recall-axis A_nodup --dup-as-fake 1.0 \
+    --fake-region-weight abseta:1.2:1.8:1.5,absdxy:1:inf:1.5 --ntrees 900 --no-fp16 --seed 0 \
+    --tag wp --date <date> --threads 16 --wp-rule uniform
+# staged: $W/merged_forest/merged_tree42_wp_<date>.bin
+```
+
+Update in `hltPhase2PixelTrackHighPuritySelectorMerged_cfi.py`: `model`, and `scoreThreshold`,
+`scoreThresholdLowDxy`, `dxyRampKnee` together.
+
 Each `hp` step also leaves `result.json` (every metric, the working point, the feature list and
 the full recipe) and `thrmap.txt` (score threshold against true-track recall, with fake
 rejection) next to the staged file, and reads the `.bin` back through `read_compact_tree.py`,
@@ -93,7 +115,7 @@ training target) and `y_eff` (matched to a TrackingParticle passing the efficien
 recall axis). Recall is quoted on the second, fake rejection on the tracks matched to nothing;
 the true tracks that fail an efficiency cut are positives in training and on neither axis.
 The displaced chain trains against the narrow label instead (`--label legacy`), as the deployed
-displaced file was; `LABEL=mtv` switches it to the label of the other chain.
+displaced file was; `LABEL=mtv` switches it to the label of the other two.
 
 ### Working-point rules
 
@@ -101,7 +123,7 @@ displaced file was; `LABEL=mtv` switches it to the label of the other chain.
 Early stopping optimises fake rejection at that threshold, so the rule shapes the model, not
 only its cut. `WP_RULE=uniform|global|profile` sets it in the entry scripts.
 
-* `uniform` (the default): the largest threshold at which the true-track
+* `uniform` (the default of all three chains): the largest threshold at which the true-track
   recall is at least `--recall` (0.995) in every pT, |eta| and |dxyBS| bin of the trainer's
   standard edges (pT 0.9/1.5/3/10/30, |eta| 1.5/2.5, |dxyBS| 0.1/0.5/1/2/5, each axis open at
   the top). Bins with fewer than 100 true tracks do not constrain it; with no usable bin the
@@ -124,6 +146,8 @@ below), which every `hp` step says at the end.
 * Prompt: the deployed file's recipe (31 features, true high-pT tracks up-weighted, fp32
   export) except for the rule: that file was trained against the per-bin profile of its
   predecessor; `WP_RULE=profile` does the same against the file deployed today.
+* Merged: the deployed file's recipe in full; its uniform 0.995 per-bin target is the default
+  rule now.
 * Displaced: the deployed file was made by an earlier form of the same recipe, and three things
   differ. It was trained against the narrow label (kept: `LABEL=legacy` is the default here);
   the tracks with an undefined `rzChi2` were dropped from its training rows, while the cache
@@ -143,12 +167,13 @@ and compiled in:
   track DNN promoted, so that dump runs the full chain;
 * regenerate each step's dataset only after the previous step is deployed **and built**.
 
-**Across collections: prompt, then displaced.** The displaced iteration
+**Across collections: prompt, then displaced, then merged.** The displaced iteration
 reconstructs the hits the prompt iteration did not use, so its input population changes whenever
-a prompt model changes.
+a prompt model changes; the merged collection is produced by both, so its selector comes last
+and its dataset needs a base configuration that runs both iterations and the merger.
 
-**After any change to the track fit** (fit refactor, magnetic field, material description):
-re-run the `gate` and `hp` steps. Their features are fit outputs,
+**After any change to the track fit** (fit refactor, magnetic field, material description,
+refit in the merger): re-run the `gate` step and the `hp` steps. Their features are fit outputs,
 and a model trained on an older fit is quietly mismatched; `compare_track_dnn_banks.py` scores
 the baked track-DNN header directly and makes that visible.
 
@@ -188,8 +213,8 @@ IN="ttbarPU=/data/ttbar,displacedPU=/data/susy,qcdPU=/data/qcd"
 ```
 
 Every training step is given all the per-sample datasets at once and trains on their union;
-the files are named `trackNano_<sample>_<quality>.root` and `tripletNano_<sample>.root`
-in `--work`. `--chassis <module>` alone is also enough to
+the files are named `trackNano_<sample>_<quality>.root`, `tripletNano_<sample>.root` and
+`trackNano_<sample>_merged.root` in `--work`. `--chassis <module>` alone is also enough to
 produce a dataset, since a chassis carries its own input file list.
 
 A step with neither option looks for the standard dataset names in `--work`; if they are not
@@ -220,7 +245,7 @@ on unchanged and replaces the iterative tracking behind it with a pass-through, 
 cheap; `--modifiers` sets a different set verbatim.
 
 The tracking-only menu runs the whole chain the training data comes from -- both iterations, the
-two selectors -- and skips everything else. Use `--chassis <module>` (or
+stub merger, all three selectors -- and skips everything else. Use `--chassis <module>` (or
 `NANO_CHASSIS` / `DS_CHASSIS`) to dump on top of a different configuration instead; its
 directory must be on `PYTHONPATH`.
 
@@ -262,7 +287,7 @@ Each step prints the value the configuration currently carries and where it live
 |---|---|---|
 | triplet gate | largest threshold whose per-track survival stays above a floor in the worst (displacement, momentum) group | `tripletDNNThreshold` on the CA producer; when it is not set there, the value baked into the header applies |
 | track DNN | per-track recall -- legitimate here, one decision per track | `trackDNNThreshold` on the CA producer; same fallback |
-| final selector | true-track recall in every pT / eta / dxy bin (the `uniform` rule above) | `scoreThreshold` on the selector; the displaced selector also has `scoreThresholdLowDxy` and `dxyRampKnee` |
+| final selector | true-track recall in every pT / eta / dxy bin (the `uniform` rule above) | `scoreThreshold` on the selector; the displaced and merged selectors also have `scoreThresholdLowDxy` and `dxyRampKnee` |
 
 The triplet gate is the one to be careful with. A track leaves about ten real triplets behind,
 so a rule stated as "keep 99 % of real triplets" keeps only about 0.99^10 ~ 90 % of the tracks,
@@ -270,7 +295,7 @@ which is why the default rule works on per-track survival. The global-recall rul
 for comparison with `THRESHOLD_RULE=global`; selecting it also prints what the default rule
 would have chosen.
 
-The displaced final selector uses **two** thresholds joined by a ramp:
+The displaced and merged final selectors use **two** thresholds joined by a ramp:
 `scoreThresholdLowDxy` applies at zero transverse impact parameter, `scoreThreshold` from
 `dxyRampKnee` centimetres outwards. A retrained model moves both -- re-scan them together over
 the displaced region.
@@ -294,7 +319,8 @@ Each step ends by printing what it produced, where it goes and what to update. I
 The configurations to edit are in `HLTrigger/Configuration/python/HLT_75e33/modules/`:
 `hltPhase2PixelTracksSoAWithStubs_cfi.py`, `hltPhase2PixelTracksSoADisplacedWithStubs_cfi.py`,
 `hltPhase2PixelTrackTorchHighPuritySelector_cfi.py` (upstream label; the prompt forest is a
-`phase2CAStubs` `toReplaceWith` on it), `hltPhase2PixelTrackHighPuritySelectorDisplaced_cfi.py`.
+`phase2CAStubs` `toReplaceWith` on it), `hltPhase2PixelTrackHighPuritySelectorDisplaced_cfi.py`,
+`hltPhase2PixelTrackHighPuritySelectorMerged_cfi.py`.
 
 ## A full pass
 
@@ -320,6 +346,12 @@ scram b code-format && scram b -j
 
 # 4. the same three steps with ./retrain_displaced.sh (its selector: disp_tree31_wp_<date>.bin,
 #    with the three threshold parameters re-scanned together)
+
+# 5. the merged selector, once both iterations are deployed and built
+./retrain_merged.sh dump --work $W --input $EVENTS --events 1000
+./retrain_merged.sh hp   --work $W
+#    copy the staged merged_tree42_wp_<date>.bin, edit the configuration (model; the three
+#    threshold parameters re-scanned together)
 ```
 
 `--dry-run` prints every command a step would run without running it. To produce a dataset
@@ -358,17 +390,18 @@ checks only, and deploying it is a change of model, to be validated as one.
 |---|---|
 | `retrain_prompt.sh` | entry point for the prompt iteration (triplet gate, track DNN, final selector) |
 | `retrain_displaced.sh` | entry point for the displaced iteration (the same three) |
+| `retrain_merged.sh` | entry point for the merged collection (its dataset and final selector) |
 | `retrain_common.sh` | shared option parsing, environment, dataset dumps, deployed-value lookups, the shared part of the selector training, reports |
 | `retrain_triplet_gate.sh` | the `triplet` step for either iteration: train, score on a disjoint event range, bake the header |
 | `retrain_track_dnn.sh` | the `gate` step for either iteration: train, compare against the bank in use, bake the header |
 | `make_base_config.sh` | generate the base reconstruction configuration the dumps run on top of |
-| `trackNano_config.py` | reconstruction job writing the track-level dataset (features + truth, both iterations) |
+| `trackNano_config.py` | reconstruction job writing the track-level dataset (features + truth, both iterations, optionally the merged collection with its cluster columns) |
 | `triplet_dump_cfg.py` | reconstruction job writing the per-triplet dataset (needs the dump build) |
 | `train_triplet_dnn.py` | trainer for the per-triplet gate, including the scoring tables and the header export |
 | `train_disp_nano.py` | trainer for the track DNN (either iteration), including the header export |
 | `compare_track_dnn_banks.py` | score a baked track-DNN header by reproducing its forward pass, and compare it with another bank or with the model it was baked from |
-| `nano_loader.py` | build feature caches from the track-level datasets: `cache-arm` (31 features, per iteration); `cache`, `cache-ext`, `cache-prompt`, `cache-prompt27` serve the comparison and studies |
-| `train_merged_forest.py` | the final-selector trainer: recipe, working-point rules, compact export and read-back |
+| `nano_loader.py` | build feature caches from the track-level datasets: `cache-arm` (31 features, per iteration), `cache-merged` (31 + provenance + cluster columns); `cache`, `cache-ext`, `cache-prompt`, `cache-prompt27` serve the comparison and studies |
+| `train_merged_forest.py` | the final-selector trainer for all three collections: recipe, working-point rules, compact export and read-back |
 | `make_profile.py` | measure a deployed selector on a cache, bin by bin, for the `profile` working-point rule |
 | `read_compact_tree.py` | read a compact `.bin` and score rows with it, the way the selector kernel does |
 | `export_compact_tree.py` | write a booster as the compact binary the selector loads (used by the trainer) |

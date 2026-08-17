@@ -8,5 +8,5 @@ HLTInitialStepPVSequence = cms.Sequence(hltFirstStepPrimaryVerticesUnsorted+
                                         hltPhase2TowerMakerForAll+
                                         hltAk4CaloJetsForTrk)
 
-from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
-ngtScouting.toReplaceWith(HLTInitialStepPVSequence,HLTInitialStepPVSequence.copyAndExclude([hltFirstStepPrimaryVerticesUnsorted]))
+from Configuration.ProcessModifiers.ngtScouting_cff import ngtScoutingBase
+ngtScoutingBase.toReplaceWith(HLTInitialStepPVSequence,HLTInitialStepPVSequence.copyAndExclude([hltFirstStepPrimaryVerticesUnsorted]))

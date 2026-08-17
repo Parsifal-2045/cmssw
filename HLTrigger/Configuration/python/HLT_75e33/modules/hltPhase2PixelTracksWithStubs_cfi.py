@@ -15,3 +15,10 @@ hltPhase2PixelTracksWithStubs = cms.EDProducer("PixelTrackProducerFromSoAAlpaka"
     expandStubs = cms.bool(True),
     requireQuadsFromConsecutiveLayers = cms.bool(False)
 )
+
+# Two-iteration stub chain (pixelTrackMask): the converter's trackSrc is the FINAL
+# HP selection (hltPhase2PixelTrackHighPuritySelectorMerged), not the merger directly.
+from Configuration.ProcessModifiers.pixelTrackMask_cff import pixelTrackMask
+pixelTrackMask.toModify(hltPhase2PixelTracksWithStubs,
+    trackSrc = cms.InputTag("hltPhase2PixelTrackHighPuritySelectorMerged"),
+)

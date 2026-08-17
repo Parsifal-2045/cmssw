@@ -24,6 +24,11 @@ from ..modules.hltSiPixelClusters_cfi import hltSiPixelClusters
 from ..modules.hltSiPixelRecHits_cfi import hltSiPixelRecHits
 from ..modules.hltSiPhase2Clusters_cfi import hltSiPhase2Clusters
 from ..modules.hltSiPhase2RecHits_cfi import hltSiPhase2RecHits
+from ..modules.hltPhase2PixelTrackHighPtMasking_cfi import hltPhase2PixelTrackHighPtMasking
+from ..modules.hltPhase2PixelTracksSoADisplaced_cfi import hltPhase2PixelTracksSoADisplaced
+from ..modules.hltPhase2PixelTrackHighPuritySelectorDisplaced_cfi import hltPhase2PixelTrackHighPuritySelectorDisplaced
+from ..modules.hltPhase2PixelTracksSoAMerger_cfi import hltPhase2PixelTracksSoAMerger
+from ..modules.hltPhase2PixelTrackHighPuritySelectorMerged_cfi import hltPhase2PixelTrackHighPuritySelectorMerged
 from ..sequences.HLTBeginSequence_cfi import *
 from ..sequences.HLTEndSequence_cfi import *
 
@@ -58,6 +63,16 @@ HLTPixelTrackingSequence = cms.Sequence(
     #+ hltExtendedPhase2PixelVerticesSoA # not yet ready
 )
 
+# Second pixel-track iteration on the hits the first one left unused, and the merger of the two
+# iterations with its final selector (the pixelTrackMask chain).
+HLTPixelTrackingSecondIterationSequence = cms.Sequence(
+    hltPhase2PixelTrackHighPtMasking
+    + hltPhase2PixelTracksSoADisplaced
+    + hltPhase2PixelTrackHighPuritySelectorDisplaced
+    + hltPhase2PixelTracksSoAMerger
+    + hltPhase2PixelTrackHighPuritySelectorMerged
+)
+
 HLTLSTSequence = cms.Sequence(
     hltInitialStepSeeds
     + hltInputLST
@@ -78,6 +93,7 @@ DST_HeterogeneousReco = cms.Path(
     + hltL1GTAcceptFilter
     + HLTLocalTrackerSequence
     + HLTPixelTrackingSequence
+    + HLTPixelTrackingSecondIterationSequence
     + HLTLSTSequence
     + HLTHeterogeneousHGCalRecoSequence
     + HLTEndSequence

@@ -99,8 +99,8 @@ _HLTInitialStepSequenceNGTScouting = cms.Sequence(
     +hltInitialStepTracksT4T5TCLST
 )
 
-from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
-ngtScouting.toReplaceWith(HLTInitialStepSequence,_HLTInitialStepSequenceNGTScouting)
+from Configuration.ProcessModifiers.ngtScouting_cff import ngtScoutingBase
+ngtScoutingBase.toReplaceWith(HLTInitialStepSequence,_HLTInitialStepSequenceNGTScouting)
 
 
 from ..modules.hltInitialStepTrackCandidatesMkFitFit_cfi import *
@@ -127,5 +127,5 @@ _HLTInitialStepSequenceTrackCutClassifierMkFitFit = _HLTInitialStepSequenceMkFit
 _HLTInitialStepSequenceTrackCutClassifierMkFitFit += HLTInitialStepCutClassifierHPSelectionSequence 
 
 from Configuration.ProcessModifiers.trackCutClassifier_cff import trackCutClassifier
-(trackCutClassifier & ~ngtScouting).toReplaceWith(HLTInitialStepSequence, _HLTInitialStepSequenceTrackCutClassifier)
-(trackCutClassifier & trackingMkFitFit & ~ngtScouting).toReplaceWith(HLTInitialStepSequence, _HLTInitialStepSequenceTrackCutClassifierMkFitFit)
+(trackCutClassifier & ~ngtScoutingBase).toReplaceWith(HLTInitialStepSequence, _HLTInitialStepSequenceTrackCutClassifier)
+(trackCutClassifier & trackingMkFitFit & ~ngtScoutingBase).toReplaceWith(HLTInitialStepSequence, _HLTInitialStepSequenceTrackCutClassifierMkFitFit)

@@ -570,7 +570,7 @@ HLTGenValSourceTAU = cms.EDProducer("HLTGenValSource",
     trigEvent = cms.InputTag("hltTriggerSummaryAOD","","HLT")
 )
 
-from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
+from Configuration.ProcessModifiers.ngtScouting_cff import ngtScoutingBase
 
 # List of module names (as strings)
 hltGenValSourceLabels = [
@@ -586,7 +586,7 @@ hltGenValSourceLabels = [
 # change the path to monitor in the case of NGT scouting
 for label in hltGenValSourceLabels:
     if label in globals():
-        ngtScouting.toModify(globals()[label],
+        ngtScoutingBase.toModify(globals()[label],
                              hltPathsToCheck = ['DST_NGTScouting'])
 
 from RecoMET.Configuration.RecoGenMET_cff import genMetCalo,genMetTrue

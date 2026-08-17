@@ -38,7 +38,7 @@ _hltGeneralTracksLegacy = hltGeneralTracks.clone(
 hltPhase2LegacyTracking.toReplaceWith(hltGeneralTracks, _hltGeneralTracksLegacy)
 
 
-from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
+from Configuration.ProcessModifiers.ngtScouting_cff import ngtScoutingBase
 from Configuration.ProcessModifiers.trackingLST_cff import trackingLST
 
 _hltGeneralTracksNGTScouting = cms.EDProducer("RecoTrackSelector",
@@ -72,5 +72,5 @@ _hltGeneralTracksNGTScoutingLST = hltGeneralTracks.clone(
     setsToMerge = {0: dict(pQual=True, tLists=[0,1])}
 )
 
-(ngtScouting & ~trackingLST).toReplaceWith(hltGeneralTracks, _hltGeneralTracksNGTScouting)
-(ngtScouting & trackingLST).toReplaceWith(hltGeneralTracks, _hltGeneralTracksNGTScoutingLST)
+(ngtScoutingBase & ~trackingLST).toReplaceWith(hltGeneralTracks, _hltGeneralTracksNGTScouting)
+(ngtScoutingBase & trackingLST).toReplaceWith(hltGeneralTracks, _hltGeneralTracksNGTScoutingLST)
