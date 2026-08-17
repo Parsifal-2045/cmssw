@@ -12,7 +12,7 @@
 #include <alpaka/alpaka.hpp>
 
 // CMSSW headers
-#include "FWCore/MessageLogger/interface/MessageLogger.h"  // finalDedup count-and-clamp overflow warning
+#include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/HistoContainer.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/config.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/memory.h"
@@ -23,6 +23,7 @@
 #include "CAFishbone.h"
 #include "CAHitNtupletGeneratorKernels.h"
 #include "CAHitNtupletGeneratorKernelsImpl.h"
+#include "HelixFit.h"
 
 //#define GPU_DEBUG
 // #define NTUPLE_DEBUG
@@ -30,23 +31,18 @@
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
-// The sizing accumulator is used by the CA_STATS report and by the GPU_DEBUG
-// per-event allocation report, so it must be compiled for either toggle.
+// The sizing accumulator serves both the CA_STATS report and the GPU_DEBUG allocation report.
 #if defined(CA_STATS) || defined(GPU_DEBUG)
-  // Define a thread and event safe accumulator for sizing-parameter
-  // recommendations based on observed maxima and averages.
-  //
+  // Thread- and event-safe accumulator for sizing-parameter recommendations.
   // Fixed-avg parameters (size = max_keys * avg):
   //   index 0 -> avgHitsPerTrack
   //   index 1 -> avgCellsPerHit
   //   index 2 -> avgCellsPerCell
   //   index 3 -> avgTracksPerCell
-  //
   // Scaling-with-nHits parameters (size = slope * nHits):
   //   index 0 -> maxNumberOfDoublets (slope = nCells  / nHits)
   //   index 1 -> maxNumberOfTuples   (slope = nTuples / nHits)
-  // Track maxNHits as well so f(nHits) can be evaluated at the
-  // observed worst case for a concrete recommendation.
+  // maxNHits is tracked too, so f(nHits) can be evaluated at the observed worst case.
   namespace {
     struct SizingAccumulator {
       std::mutex mtx;
@@ -58,26 +54,34 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       double maxRatio[2] = {0., 0.};
       double sumRatio[2] = {0., 0.};
       uint32_t maxNHits = 0u;
-      // Aggregate allocation tracking
       uint64_t allocN = 0;
       uint64_t allocBytesSum = 0;
       uint64_t allocBytesMax = 0;
     };
-    // Single accumulator: the recommendations are aggregated over every CA instance
-    // running in the job.
-    inline SizingAccumulator &sizingAccumulator() {
-      static SizingAccumulator s;
-      return s;
+    // One slot per pixelTrack::Iteration so several CA instances running
+    // in the same job do not pollute each other's recommendations.
+    inline SizingAccumulator &sizingAccumulator(::pixelTrack::Iteration it) {
+      static std::array<SizingAccumulator, ::pixelTrack::iterationSize> s;
+      return s[static_cast<uint8_t>(it)];
     }
   }  // namespace
 #endif  // CA_STATS || GPU_DEBUG
+
+  // Inclusive prefix scan of a OneToManyAssoc's offsets through the multi-level iterativePrefixScan.
+  // The generic OneToManyAssoc::launchFinalize uses one multiBlockPrefixScan launch whose dynamic
+  // shared memory grows with the number of 1024-entry blocks and so exceeds the 48 kB launch limit
+  // for the large CA containers. Same numbers; on the serial backend a plain sequential scan.
+  template <typename TView>
+  inline void finalizeAssocOffsets(TView const &view, Queue &queue) {
+    cms::alpakatools::iterativePrefixScan<Acc1D>(view.offStorage, view.offStorage, view.offSize, queue);
+  }
 
   // Sizing rule of the cells + cell->track-offsets arena (see the member declaration in the header).
   // Returns the arena's extent in SimpleCell units, or 0 when one allocation is not cheaper than two.
   template <typename TrackerTraits>
   uint32_t CAHitNtupletGeneratorKernels<TrackerTraits>::cellArenaExtent(uint32_t cellBound, uint32_t maxDoublets) {
     // The allocator's bin: the smallest power of two >= bytes, floored at its 256 B minimum bin
-    // (binGrowth 2, minBin 8, maxBin 30 -- HeterogeneousCore/AlpakaInterface/interface/AllocatorConfig.h).
+    // (binGrowth 2, minBin 8, maxBin 30).
     auto bin = [](std::size_t bytes) {
       std::size_t b = 256;
       while (b < bytes)
@@ -96,14 +100,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   }
 
   // Which of the three packings of the four cell-scale buffers is cheapest for this event's bounds.
-  // The allocator's bins are powers of two, so which packing wins depends on where 12*cellBound falls
-  // inside its bin; all three are evaluated and the smallest total is taken.
-  // The minimum is over the bytes ALLOCATED for the four buffers, not the bytes resident at every
-  // instant of the event: kThreeCellIndexArrays puts the hit->cell storage and the cell->cell offsets
-  // in the same buffer as the cell->track offsets, which lives to the end of the event, so
-  // releaseBuildScratch() cannot hand those two back after launchKernels. It still allocates less in
-  // the largest events and lowers the per-stream peak live set, which is what a smaller device or more
-  // streams per job would feel first.
+  // The allocator's bins are powers of two, so the winner depends on where 12*cellBound falls inside
+  // its bin; all three are evaluated and the smallest total is taken. The minimum is over the bytes
+  // allocated, not the bytes resident at every instant: kThreeCellIndexArrays shares a buffer with
+  // the cell->track offsets, which live to the end of the event, so releaseBuildScratch() cannot
+  // hand those two back after launchKernels.
   template <typename TrackerTraits>
   typename CAHitNtupletGeneratorKernels<TrackerTraits>::CellLayout
   CAHitNtupletGeneratorKernels<TrackerTraits>::chooseCellLayout(uint32_t cellBound, uint32_t maxDoublets) {
@@ -130,12 +131,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   template <typename TrackerTraits>
   CAHitNtupletGeneratorKernels<TrackerTraits>::CAHitNtupletGeneratorKernels(Params const &params,
                                                                             uint32_t nHits,
+                                                                            uint32_t nOTHits,
                                                                             uint32_t offsetBPIX2,
                                                                             uint32_t maxDoublets,
                                                                             uint32_t maxTuples,
                                                                             uint16_t nLayers,
                                                                             Queue &queue)
-      : m_params(params) {
+      : m_params(params), nOTHits_(nOTHits) {
     //////////////////////////////////////////////////////////
     // ALLOCATIONS FOR THE INTERMEDIATE RESULTS (STAYS ON WORKER)
     //////////////////////////////////////////////////////////
@@ -156,21 +158,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // defer simpleCells/hitToCellStorage and allocate to the actual number of doublets produced
     const bool countFirst = algoParams.countDoubletsFirst_;
 
-    // CELL BOUND. A separate name from maxDoublets because the two are not the same thing: this one
-    // bounds the CELL ARRAY and the hit->cell association that carries one entry per cell, while
-    // maxDoublets is ALSO the basis of the content capacities (nCellsToCells, nCellsToTracks) and of the
-    // key-space extent nBins, all of which are computed in allocateAfterDoublets and keep following the
-    // cap formula whatever this bound does.
-    //
-    // The bound is capped at an allocator bin edge. maxDoublets is an envelope fit of the doublet demand;
-    // at its largest values the cell array (sizeof(SimpleCell) = 12 B) would be served from the caching
-    // allocator's next power-of-two bin although it fits the smaller one in almost every event, and the
-    // allocator never gives a block back, so one event above the edge would pin the larger block for the
-    // rest of the job. Capping the cell bound at the edge removes that bin; it is a capacity cut of at
-    // most a few percent in the rare events whose formula value exceeds the edge, far above the observed
-    // doublet demand. The content capacities are untouched: allocateAfterDoublets is still called with
-    // maxDoublets, so nCellsToCells and nCellsToTracks -- the ratios the truncation guards compare
-    // against -- do not move.
+    // Cell bound, distinct from maxDoublets: it bounds the cell array and the hit->cell association
+    // (one entry per cell), while maxDoublets also sets the content capacities and the key-space
+    // extent computed in allocateAfterDoublets.
+    // It is capped at an allocator bin edge: at the largest maxDoublets the 12 B per cell array would
+    // be served from the next power-of-two bin although it fits the smaller one in almost every event,
+    // and the allocator never gives a block back, so one such event would pin the larger block for the
+    // rest of the job. The content capacities are untouched, so the ratios the truncation guards
+    // compare against do not move.
     static constexpr uint32_t kMaxDoubletsForCellBin = (64u * 1024u * 1024u) / uint32_t(sizeof(SimpleCell));
     const uint32_t cellBound = std::min(maxDoublets, kMaxDoubletsForCellBin);
     // Packing of the four cell-scale buffers, evaluated per event (see chooseCellLayout). Only the
@@ -207,33 +202,32 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
 
     // Hits -> Track
-    // The handle and the per-hit offsets (key space) are always allocated here. The
-    // storage holds one entry per hit-in-track: with delayAllocations_ it is sized from
-    // the actual hits-in-tracks count in allocateAfterNtuplets (after launchKernels)
-    // Otherwise it is allocated here at the nHitsToTracks safety cap
+    // The handle and the per-hit offsets (key space) are always allocated here. The storage holds one
+    // entry per hit-in-track: with delayAllocations_ it is sized from the actual hits-in-tracks count
+    // in allocateAfterNtuplets, otherwise here at the nHitsToTracks safety cap.
+    // A non-zero nOTHits extends the hit->tuple domain to nHits + nOTHits, so tagged OT extras bin at
+    // nHits + otIdx and the duplicate cleaning accounts for them.
+    const uint32_t hitToTupleKeys = nHits + nOTHits_;
     device_hitToTuple_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
-    device_hitToTupleOffsets_ = cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, nHits + 1);
+    device_hitToTupleOffsets_ =
+        cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, hitToTupleKeys + 1);
     if (!delay) {
       device_hitToTupleStorage_ = cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, nHitsToTracks);
       device_hitToTupleView_ = {device_hitToTuple_->data(),
                                 device_hitToTupleOffsets_->data(),
                                 device_hitToTupleStorage_->data(),
-                                nHits + 1,
+                                hitToTupleKeys + 1,
                                 nHitsToTracks};
 
       HitToTuple::template launchZero<Acc1D>(device_hitToTupleView_, queue);
     }
 
     // (Outer) Hits-> Cells
-    // The storage holds exactly one entry per cell
-    // With countDoubletsFirst it is sized to the exact nCells in buildDoublets
-    // Otherwise to the maxDoublets safety cap here -- the same cap that bounds the cell array
-    // itself (device_simpleCells_) and that the doublet finder enforces when it appends. Sizing
-    // this container from a second, independent constant (a cells-per-outer-hit ratio) is a
-    // redundant failure mode: it can be short while maxDoublets is not, and the shortfall then
-    // silently truncates the hit->cell association rather than the cell list. One entry per cell,
-    // one bound.
-    // The handle and per-outer-hit offsets (key space) are always allocated.
+    // The storage holds exactly one entry per cell: with countDoubletsFirst it is sized to the exact
+    // nCells in buildDoublets, otherwise to the maxDoublets cap here, the same cap that bounds the
+    // cell array itself and that the doublet finder enforces when it appends. A second, independent
+    // constant would let this container truncate while maxDoublets does not: one entry per cell, one
+    // bound. The handle and per-outer-hit offsets (key space) are always allocated.
     device_hitToCell_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
     device_hitToCellOffsets_ = cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, outerHits + 1);
     if (!countFirst) {
@@ -260,9 +254,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // Scratch quality mirror used by the (order-independent) duplicate-removal kernels
     device_qualityScratch_ = cms::alpakatools::make_device_buffer<int32_t[]>(queue, maxTuples);
 
-    // Cell array. Allocated here, ahead of allocateAfterDoublets, because in the up-front allocation
-    // mode it doubles as the arena that also carries the cell->track offsets (see the header).
-    // With countDoubletsFirst the cells buffer is instead sized to the exact nCells in buildDoublets.
+    // Cell array, allocated ahead of allocateAfterDoublets because in the up-front allocation mode it
+    // doubles as the arena carrying the cell->track offsets. With countDoubletsFirst it is instead
+    // sized to the exact nCells in buildDoublets.
     if (!countFirst) {
       const uint32_t arenaExtent =
           (cellLayout == CellLayout::kCellsWithTrackOffsets) ? cellArenaExtent(cellBound, maxDoublets) : 0u;
@@ -275,12 +269,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       }
     }
 
-    // Cell -> Neighbor Cells and Cell -> Tracks (+ the triplet/track-cell SoA) are sized
-    // from the number of doublets
-    // With delayAllocations_ they are allocated in allocateAfterDoublets from the
-    // actual nCells (after buildDoublets)
-    // Otherwise they are allocated here at the maxDoublets safety cap by the same function
-    // with nCells = maxDoublets
+    // Cell -> neighbour cells and cell -> tracks (and the triplet/track-cell SoA) are sized from the
+    // number of doublets: with delayAllocations_ from the actual nCells in allocateAfterDoublets,
+    // otherwise here at the maxDoublets safety cap through the same function.
     if (!delay) {
       allocateAfterDoublets(maxDoublets, queue);
     }
@@ -300,6 +291,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                 nHitsToTracks};
 
     HitContainer::template launchZero<Acc1D>(device_hitContainerView_, queue);
+    device_tupleClampBound_ = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 2u);
 
     // No.Hits -> Track (track multiplicity)
     device_tupleMultiplicity_ = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
@@ -317,8 +309,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         maxTuples};
     TupleMultiplicity::template launchZero<Acc1D>(device_tupleMultiplicityView_, queue);
 
-    // Structures and Counters Storage. device_simpleCells_ was allocated above, before
-    // allocateAfterDoublets, so that it can carry the cell->track offsets in its tail.
+    // device_simpleCells_ is allocated above, ahead of allocateAfterDoublets, so that it can carry the
+    // cell->track offsets in its tail.
     device_extraStorage_ =
         cms::alpakatools::make_device_buffer<cms::alpakatools::AtomicPairCounter::DoubleWord[]>(queue, 5u);
     device_hitTuple_apc_ = reinterpret_cast<cms::alpakatools::AtomicPairCounter *>(device_extraStorage_->data());
@@ -360,8 +352,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto h_extra = cms::alpakatools::make_host_buffer<DW[]>(queue, 5u);
     alpaka::memcpy(queue, h_extra, *this->device_extraStorage_);
     alpaka::wait(queue);  // Necessary wait: the value is returned to the host caller, which uses it to
-                          // size the next launches. A device->host readback the framework cannot order
-                          // for us.
+                          // size the next launches.
     // device_nCells_ aliases extraStorage word [2].
     return static_cast<uint32_t>(alpaka::getPtrNative(h_extra)[2]);
   }
@@ -400,24 +391,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   void CAHitNtupletGeneratorKernels<TrackerTraits>::allocateAfterDoublets(uint32_t nCells, Queue &queue) {
     auto const &algoParams = m_params.algoParams_;
 
-    // Association-content sizes scale with the number of doublets actually found
-    // Keep the per-key avg multipliers but base them on nCells instead of the
-    // (much larger) maxDoublets safety cap
-    // Quiet-event floor. avgCellsPerCell_/avgTracksPerCell_ are averages fitted at high occupancy,
-    // and an average is not a capacity bound: there most doublets are combinatorial junk with no
-    // valid neighbour, so <cells per cell> is ~0.1, while in a clean event (a no-PU muon gun, say)
-    // essentially every doublet is a real track segment with a genuine neighbour and the ratio rises
-    // towards 1 while nCells, and hence the derived capacity, falls. The formula therefore shrinks
-    // exactly where the requirement grows. The surplus would be dropped silently by the capacity
-    // guards in Kernel_connect and CACell::find_ntuplets, and which entries survive is decided by
-    // who wins the atomic: deterministic on the serial backend, race order on the GPU, i.e. an
-    // efficiency loss that differs between backends and between runs.
-    // The floor is the clean-event bound -- at most kCleanEdgesPerCell edges per cell -- tracked
-    // linearly while the event is small enough for that to be affordable (kQuietCellsCap) and
-    // constant above it. The quiet and the high-occupancy regimes are orders of magnitude apart in
-    // nCells, which is what makes an absolute floor both sufficient and inert at high occupancy.
-    // Events whose demand exceeds the floor (no-PU high-pT dijets are the worst case) truncate
-    // through the counting guards and are reported by the overflow sentinel.
+    // Association-content sizes scale with the number of doublets actually found: keep the per-key
+    // average multipliers but base them on nCells instead of the much larger maxDoublets cap.
+    // Quiet-event floor: those averages are fitted at high occupancy, where most doublets are
+    // combinatorial junk with no valid neighbour, so cells per cell is ~0.1; in a clean event nearly
+    // every doublet has a genuine neighbour and the ratio rises towards 1 while nCells, and hence the
+    // derived capacity, falls. The surplus would be dropped silently by the capacity guards, in an
+    // order decided by who wins the atomic. The floor is the clean-event bound of at most
+    // kCleanEdgesPerCell edges per cell, tracked linearly up to kQuietCellsCap and constant above it.
     constexpr uint32_t kQuietCellsCap = 512u;
     constexpr uint32_t kCleanEdgesPerCell = 64u;
     const uint32_t quietFloor = std::min(nCells, kQuietCellsCap) * kCleanEdgesPerCell;
@@ -425,17 +406,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const uint32_t nCellsToTracks = std::max({uint32_t(nCells * algoParams.avgTracksPerCell_), quietFloor, 1u});
     const uint32_t nBins = nCells + 1u;  // one offset bin per cell (+1 for the total)
 
-    // Offsets vs storage: the two extents computed above have different natures.
-    //   nBins (the offsets extent of both associators) is a key-space extent: one word per cell plus
-    //   the total. Its only consumers are the nOnes() bounds (Kernel_connect's cell loop and
-    //   CACell::find_ntuplets), and every index they test is a cell id, hence < nCells by construction.
-    //   nCellsToCells / nCellsToTracks (the storage extents) are content capacities: the truncation
-    //   guards compare against them (Kernel_connect's maxTriplets test and the cell->track push in
-    //   CACell::find_ntuplets), so entries past them are dropped silently. Their per-cell ratios are
-    //   calibrated against the basis in force here; changing the basis without re-deriving the ratios
-    //   moves a content-reaching clamp.
-    // This function is called either once at construction with the maxDoublets safety cap -- no
-    // doublet count exists yet at that point -- or after the doublet build with the exact count.
+    // The two extents above have different natures. nBins, the offsets extent of both associators, is
+    // a key-space extent: one word per cell plus the total, and every index tested against it is a
+    // cell id, hence < nCells by construction. nCellsToCells and nCellsToTracks are content
+    // capacities: the truncation guards compare against them, so entries past them are dropped
+    // silently, and their per-cell ratios are calibrated against the basis in force here.
+    // This function is called either once at construction with the maxDoublets cap, when no doublet
+    // count exists yet, or after the doublet build with the exact count.
 
     // Cell -> Neighbor Cells. One bin per cell; bit 31 of each stored neighbor index
     // encodes layer-skipping (valid since nCells is well below 2^31).
@@ -481,12 +458,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
   template <typename TrackerTraits>
   void CAHitNtupletGeneratorKernels<TrackerTraits>::allocateAfterNtuplets(uint32_t nHitsInTracks, Queue &queue) {
-    // Hit -> Track storage holds exactly nHitsInTracks entries (sum over surviving
-    // tracks of their hit multiplicity)
-    // With delayAllocations_ it is sized here from the real count
-    // Otherwise it was already allocated in the constructor and this is a no-op
-    // (apart from the GPU_DEBUG report below)
-    // nHitsInTracks is 0 in that case
+    // Hit -> track storage holds exactly nHitsInTracks entries, the sum over surviving tracks of their
+    // hit multiplicity. With delayAllocations_ it is sized here from the real count; otherwise it was
+    // allocated in the constructor, nHitsInTracks is 0 and this is a no-op.
     if (m_params.algoParams_.delayAllocations_) {
       const uint32_t nStorage = std::max(nHitsInTracks, 1u);
       const uint32_t nHits = static_cast<uint32_t>(alpaka::getExtents(*device_hitToTupleOffsets_)[0u]) - 1u;
@@ -527,7 +501,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                   << std::setprecision(3) << std::setw(9) << (bytes / 1024.0) << " KiB)" << std::endl;
       };
 
-      std::cout << "================== Device allocation report ==================" << std::endl;
+      const auto allocIterTag = ::pixelTrack::iterationName[static_cast<uint8_t>(m_params.algoParams_.iterationName_)];
+      std::cout << "================== Device allocation report [" << allocIterTag
+                << "] ==================" << std::endl;
       report("counters_", oneIf(counters_), sizeof(Counters));
       report("device_hitToTuple_", oneIf(device_hitToTuple_), sizeof(GenericContainer));
       report("device_hitToTupleStorage_", extentOf(device_hitToTupleStorage_), sizeof(GenericContainerStorage));
@@ -579,7 +555,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       uint64_t snapAllocSum = 0;
       uint64_t snapAllocMax = 0;
       {
-        auto &agg = sizingAccumulator();
+        auto &agg = sizingAccumulator(this->m_params.algoParams_.iterationName_);
         std::lock_guard<std::mutex> lock(agg.mtx);
         ++agg.allocN;
         agg.allocBytesSum += static_cast<uint64_t>(total);
@@ -662,14 +638,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const auto nthTot = 64;
     const auto stride = 4;
     auto blockSize = nthTot / stride;
-    // The cell/tuple kernels here and below launch over the FULL container capacity. The
-    // loops inside are bounded by the true counts, so coverage never relies on the
-    // grid-stride wrap-around -- and with the extent at least the capacity, each index is
-    // visited by exactly one thread, which keeps the serial backend's visit order (and so
-    // its bit-exact output) independent of the capacity value.
-    //
-    // Grow blockSize (in multiples of 16, keeping blockSize*stride <= 1024) until the grid
-    // fits CUDA's 65535-block limit, whatever maxDoublets is.
+    // The cell and tuple kernels here and below launch over the full container capacity. Their loops
+    // are bounded by the true counts, so coverage never relies on the grid-stride wrap-around, and
+    // with the extent at least the capacity each index is visited by exactly one thread, which keeps
+    // the serial backend's visit order, and so its bit-exact output, independent of the capacity.
+    // blockSize grows in multiples of 16, keeping blockSize*stride <= 1024, until the grid fits
+    // CUDA's 65535-block limit.
     auto numberOfBlocks = cms::alpakatools::divide_up_by(launchCells, blockSize);
     while (numberOfBlocks >= 65536 && blockSize * stride < 1024) {
       blockSize += 16;
@@ -681,6 +655,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const Vec2D thrs{blockSize, stride};
     const auto kernelConnectWorkDiv = cms::alpakatools::make_workdiv<Acc2D>(blks, thrs);
 
+#ifdef CA_TRIPLET_DUMP
+    // Iteration label and selection for the dump lines: this module's pixelTrack::Iteration is stamped
+    // on every line, and a non-empty tripletDumpIteration makes the other iterations skip the dump
+    // (dumpIteration = -1).
+    const std::string &dumpIterSel = this->m_params.tripletDumpIteration_;
+    const auto thisIter = this->m_params.algoParams_.iterationName_;
+    const int dumpIteration =
+        (dumpIterSel.empty() || ::pixelTrack::iterationName[uint8_t(thisIter)] == std::string_view(dumpIterSel))
+            ? int(uint8_t(thisIter))
+            : -1;
+#endif
+    // Per-iteration compile-time weight bank for the in-kernel triplet DNN: the prompt iteration
+    // (promptHighPt) uses the prompt bank, every other iteration the displaced (default) bank.
+    // The CA plugin is one compiled kernel shared by both iterations, so this is a runtime arg.
+    const DnnBank tripletBank = (this->m_params.algoParams_.iterationName_ == ::pixelTrack::Iteration::promptHighPt)
+                                    ? DnnBank::kPrompt
+                                    : DnnBank::kDisplaced;
     alpaka::exec<Acc2D>(queue,
                         kernelConnectWorkDiv,
                         Kernel_connect<TrackerTraits>{},
@@ -690,8 +681,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         tripletCuts,
                         this->m_params.algoParams_.useTripletDNN_,
                         this->m_params.algoParams_.tripletDNNThreshold_,
+                        tripletBank,
 #ifdef CA_TRIPLET_DUMP
                         this->device_tripletDump_->view(),
+                        dumpIteration,
 #endif
                         this->deviceTriplets_->view(),
                         this->device_simpleCells_->data(),
@@ -701,12 +694,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         this->device_cellToNeighbors_->data(),
                         this->pipelineCountersPtr());
 
-    CellToCell::template launchFinalize<Acc1D>(this->device_cellToNeighborsView_, queue);
+    finalizeAssocOffsets(this->device_cellToNeighborsView_, queue);
 
 #ifdef CA_TRIPLET_DUMP
-    // Stamp the valid-row count into the dump SoA scalar (== *device_nTriplets_, the number of rows
-    // Kernel_connect actually wrote). Device->device copy on the same queue; the host consumer reads
-    // view().nValid() to know how many of the full-capacity rows are valid. Zero footprint when off.
+    // Stamp the valid-row count into the dump SoA scalar, the number of rows Kernel_connect wrote.
+    // Device-to-device copy on the same queue; the host consumer reads view().nValid() to know how
+    // many of the full-capacity rows are valid.
     alpaka::memcpy(queue,
                    cms::alpakatools::make_device_view(queue, this->device_tripletDump_->view().nValid()),
                    cms::alpakatools::make_device_view(queue, *this->device_nTriplets_->data()));
@@ -819,7 +812,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     }
 #endif
 
-    CellToTracks::template launchFinalize<Acc1D>(this->device_cellToTracksView_, queue);
+    finalizeAssocOffsets(this->device_cellToTracksView_, queue);
 
     // This pass fills the cell->TRACK edge list, so its grid is sized from avgTracksPerCell_.
     // The loop inside is a grid-stride uniform_elements over the true edge count, so the block
@@ -859,6 +852,22 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         this->device_hitTuple_apc_,
                         this->device_hitContainer_->data());
 
+    // Repair the CSR after a hit-container content overflow (see Kernel_findTupleContentOverflow):
+    // overflowed tuples become empty instead of describing unwritten content and nTracks is cut
+    // in front of them. The memset value 0xFFFFFFFF means "no clamp" and is what the no-overflow
+    // case leaves in place.
+    alpaka::memset(queue, *this->device_tupleClampBound_, 0xFF);
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_findTupleContentOverflow{},
+                        this->device_hitContainer_->data(),
+                        this->device_tupleClampBound_->data());
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_clampTupleContentOverflow{},
+                        this->device_hitContainer_->data(),
+                        this->device_tupleClampBound_->data());
+
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
 #endif
@@ -888,7 +897,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         tracks_hits_view,
                         this->device_hitContainer_->data(),
                         hh,
-                        this->device_hitTuple_apc_);
+                        this->device_hitTuple_apc_,
+                        this->device_tupleClampBound_->data());
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
@@ -952,7 +962,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         tracks_view,
                         this->device_hitContainer_->data(),
                         this->device_tupleMultiplicity_->data());
-    GenericContainer::template launchFinalize<Acc1D>(this->device_tupleMultiplicityView_, queue);
+    finalizeAssocOffsets(this->device_tupleMultiplicityView_, queue);
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
@@ -1002,36 +1012,23 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     alpaka::wait(queue);
 #endif
 
-    // Every build-only buffer has now had its last reader enqueued. Hand them back here instead of at
-    // the end of produce(): tens of MiB return to the caching allocator half an event early, which
-    // lets another stream reuse the bin instead of growing the pool.
+    // Every build-only buffer has now had its last reader enqueued. Handing them back here returns tens
+    // of MiB to the caching allocator half an event early, so another stream can reuse the bin instead
+    // of growing the pool.
     this->releaseBuildScratch();
   }
 
-  // Early release of the build-only scratch (called at the end of launchKernels). No new
-  // synchronisation: cms::alpakatools::CachingAllocator::free is stream-ordered, it records an event
-  // on the queue the block was allocated against and only re-issues the block once that event has
-  // completed, so the kernels already enqueued keep valid pointers for as long as they need them.
-  // For each buffer below the last reader is a kernel enqueued in launchKernels or earlier:
-  //   device_hitToCell_ (+Storage/Offsets)        last read by the late-fishbone CAFishbone launch
-  //                                               (classifyTuples' shared-hit cleaner uses
-  //                                               device_hitToTuple_, a different container);
-  //   device_cellToNeighbors_ (+Storage/Offsets)  last read by Kernel_find_ntuplets. The cell->TRACKS
-  //                                               container is NOT released: the duplicate remover
-  //                                               reads it in classifyTuples;
-  //   device_hitPhiHist_ / device_phiBinnerStorage_  read only by buildDoublets' doublet kernels;
-  //   deviceTriplets_ / deviceTracksCells_        afterwards only their capacity is wanted, which is the
-  //                                               host-side tripletsN_/tracksCellsN_ (read by the
-  //                                               overflow sentinel). Kernel_checkOverflows reads them
-  //                                               on device under doStats_, so then they stay alive.
-  // The allocation modes only move where the extents come from, before launchKernels. The views that
-  // alias these buffers are not read again either; the object lives for one event.
+  // No new synchronisation: CachingAllocator::free is stream-ordered, it records an event on the queue
+  // the block was allocated against and only re-issues the block once that event has completed, so the
+  // kernels already enqueued keep valid pointers. For each buffer released here the last reader is a
+  // kernel enqueued in launchKernels or earlier. The cell->tracks container is NOT released: the
+  // duplicate remover reads it in classifyTuples. Under doStats_ the triplet and track-cell SoA stay
+  // alive too, since Kernel_checkOverflows reads them on device.
   template <typename TrackerTraits>
   void CAHitNtupletGeneratorKernels<TrackerTraits>::releaseBuildScratch() {
 #if defined(GPU_DEBUG) || defined(CA_STATS)
-    // Diagnostic builds keep everything to the end of the event: allocateAfterNtuplets' per-buffer
-    // allocation report and the CA_STATS outerHits recovery read these buffers' real extents after
-    // launchKernels has returned.
+    // Diagnostic builds keep everything to the end of the event: their reports read these buffers'
+    // real extents after launchKernels has returned.
     return;
 #else
     device_hitToCellStorage_.reset();
@@ -1059,6 +1056,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       const ::reco::CALayersSoAConstView &ll,
       const ::reco::CADoubletCutsSoAConstView &doubletCuts,
       uint32_t offsetBPIX2,
+      const MapToHitConstView &maskPtr,
       Queue &queue) {
     using namespace caPixelDoublets;
     using namespace caHitNtupletGeneratorKernels;
@@ -1109,7 +1107,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           this->device_layerStarts_->data(),
                           this->device_hitPhiHist_->data(),
                           this->device_hitToCell_->data(),
-                          this->pipelineCountersPtr());
+                          this->pipelineCountersPtr(),
+                          maskPtr);
 
       const uint32_t nCellsFound = this->readbackNCells(queue);
       nCellsCounted = nCellsFound;
@@ -1144,9 +1143,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         this->device_layerStarts_->data(),
                         this->device_hitPhiHist_->data(),
                         this->device_hitToCell_->data(),
-                        this->pipelineCountersPtr());
+                        this->pipelineCountersPtr(),
+                        maskPtr);
 
-    HitToCell::template launchFinalize<Acc1D>(this->device_hitToCellView_, queue);
+    finalizeAssocOffsets(this->device_hitToCellView_, queue);
 
     threadsPerBlock = 512;
     blocks = cms::alpakatools::divide_up_by(this->launchCells_, threadsPerBlock);
@@ -1177,8 +1177,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   template <typename TrackerTraits>
   void CAHitNtupletGeneratorKernels<TrackerTraits>::classifyTuples(const HitsConstView &hh,
                                                                    TkSoAView &tracks_view,
-                                                                   Queue &queue) {
+                                                                   Queue &queue,
+                                                                   ::reco::OTRecHitsConstView const *otView) {
     using namespace caHitNtupletGeneratorKernels;
+    const pixelTrack::Iteration iterationName = this->m_params.algoParams_.iterationName_;
 
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
@@ -1209,6 +1211,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // classify tracks based on kinematics
     auto numberOfBlocks = cms::alpakatools::divide_up_by(maxTuples, blockSize);
     auto workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(numberOfBlocks, blockSize);
+    // Per-iteration compile-time weight bank for the in-kernel loose->tight DNN (see Kernel_connect).
+    const DnnBank trackBank =
+        (iterationName == ::pixelTrack::Iteration::promptHighPt) ? DnnBank::kPrompt : DnnBank::kDisplaced;
+    // OT-rechit view + count for the OT-aware feature walk. When no OT source was threaded
+    // (merged-hits-only), pass an empty view + 0 so the classifier never touches it.
+    const ::reco::OTRecHitsConstView otHitsView = (otView != nullptr) ? *otView : ::reco::OTRecHitsConstView{};
+    const uint32_t nOTForFeat = (otView != nullptr) ? this->nOTHits_ : 0u;
     alpaka::exec<Acc1D>(queue,
                         workDiv1D,
                         Kernel_classifyTracks<TrackerTraits>{},
@@ -1217,10 +1226,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                         hh,
                         this->m_params.qualityCuts_,
                         this->m_params.algoParams_.useTrackDNN_,
-                        this->m_params.algoParams_.trackDNNThreshold_);
+                        this->m_params.algoParams_.trackDNNThreshold_,
+                        trackBank,
+                        otHitsView,
+                        nOTForFeat);
 #ifdef GPU_DEBUG
     alpaka::wait(queue);
     std::cout << "Kernel_classifyTracks -> done!" << std::endl;
+#endif
+
+    alpaka::exec<Acc1D>(
+        queue, workDiv1D, Kernel_assignIteration{}, tracks_view, this->device_hitContainer_->data(), iterationName);
+#ifdef GPU_DEBUG
+    alpaka::wait(queue);
+    std::cout << "Kernel_assignIteration -> done!" << std::endl;
 #endif
 
     if (this->m_params.algoParams_.lateFishbone_) {
@@ -1241,11 +1260,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
     if (this->m_params.algoParams_.doFastDuplicateRemover_) {
       // mark duplicates (tracks that share a doublet)
-      // Two-tier work division (see the comment above Kernel_fastDuplicateRemover): one cell per
-      // thread, with the whole warp ganging up on the rare cells whose track list is longer than
-      // kDupCoopMinTracks. The block size MUST stay a multiple of the warp size: the kernel issues
-      // full-mask warp collectives, and its grid-stride loop is lane-aligned only if the grid
-      // stride is.
+      // Two-tier work division: one cell per thread, with the whole warp ganging up on the rare cells
+      // whose track list is longer than kDupCoopMinTracks. The block size must stay a multiple of the
+      // warp size: the kernel issues full-mask warp collectives and its grid-stride loop is
+      // lane-aligned only if the grid stride is.
       blockSize = 64;
       numberOfBlocks = cms::alpakatools::divide_up_by(launchCells, blockSize);
       workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(numberOfBlocks, blockSize);
@@ -1278,7 +1296,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           this->device_hitToTuple_->data(),
                           nhits);  // tagged OT extras bin at nhits + otIdx
 
-      GenericContainer::template launchFinalize<Acc1D>(this->device_hitToTupleView_, queue);
+      finalizeAssocOffsets(this->device_hitToTupleView_, queue);
       alpaka::exec<Acc1D>(queue,
                           workDiv1D,
                           Kernel_fillHitInTracks<TrackerTraits>{},
@@ -1412,21 +1430,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           this->device_nCellTracks_->data(),
                           uint32_t(tracks_view.metadata().size()),
                           this->maxNumberOfDoublets_,
-                          // The two CA pair-SoA capacities. These are the HOST-SIDE element counts the
-                          // collections were constructed from in allocateAfterDoublets, so reading
-                          // them off the class is the same number the views' metadata().size()
-                          // returned -- and it survives the build-only buffers being released at the
-                          // end of launchKernels.
+                          // The two CA pair-SoA capacities, as host-side element counts: the same
+                          // numbers the views' metadata().size() returned, and they survive the
+                          // build-only buffers being released at the end of launchKernels.
                           this->tripletsN_,
                           this->tracksCellsN_,
                           // hitContainer content slots (allocated in the ctor, extent host-known).
                           // This is the binding per-track-hit bound: the output trackHits SoA is
                           // sized from the same expression, so it is never the smaller of the two.
                           uint32_t(alpaka::getExtents(*this->device_hitContainerStorage_)[0u]),
-                          // hitToTuple content slots. Under delayed allocation the storage is sized
-                          // from the hits-in-tracks readback, i.e. to exactly the demand scalar this
-                          // check compares against, so the comparison carries no information and
-                          // 0xFFFFFFFF disables it (same value used when the storage is absent).
+                          // hitToTuple content slots. Under delayed allocation the storage is sized to
+                          // exactly the demand scalar this check compares against, so the comparison
+                          // carries no information and 0xFFFFFFFF disables it.
                           (this->m_params.algoParams_.delayAllocations_ || !this->device_hitToTupleStorage_)
                               ? 0xFFFFFFFFu
                               : uint32_t(alpaka::getExtents(*this->device_hitToTupleStorage_)[0u]),
@@ -1447,28 +1462,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     alpaka::wait(queue);
 
-    // Report the per-event statistics and recommendations for sizing the avg parameters.
-    // Each parameter sizes a storage buffer as cap = max_keys * avg.
-    // The buffer is safe iff actual_fill <= cap, i.e.
-    //     avg >= actual_fill / max_keys.
-    //
-    // After kernel execution the relevant fills are:
-    //
-    //   avgHitsPerTrack  -> fill = Sum_t nHits(t)  (= APC.n)
-    //                       max_keys = maxTuples
-    //   avgCellsPerHit   -> fill = nCells          (each cell has exactly 1 outer hit)
-    //                       max_keys = outerHits
-    //   avgCellsPerCell  -> fill = nTriplets       (one neighbor-link per triplet)
-    //                       max_keys = maxDoublets
-    //   avgTracksPerCell -> fill = nCellTrackPairs
-    //                       max_keys = maxDoublets
-    //
-    // All four counters live in device_extraStorage_:
-    //   [0,1] = AtomicPairCounter (m = nTracksFound, n = nHitsInTracks)
-    //   [2]   = nCells
-    //   [3] = nTriplets
-    //   [4] = nCellTrackPairs
-    std::cout << "========== CA Tracking Summary ==========" << std::endl;
+    // Sizing recommendations. Each avg parameter sizes a buffer as cap = max_keys * avg, which is safe
+    // iff actual_fill <= cap, i.e. avg >= actual_fill / max_keys. The fills are:
+    //   avgHitsPerTrack  -> Sum_t nHits(t) (= APC.n),                max_keys = maxTuples
+    //   avgCellsPerHit   -> nCells (one outer hit per cell),         max_keys = outerHits
+    //   avgCellsPerCell  -> nTriplets (one neighbour link each),     max_keys = maxDoublets
+    //   avgTracksPerCell -> nCellTrackPairs,                         max_keys = maxDoublets
+    // The counters live in device_extraStorage_: [0,1] = AtomicPairCounter (m = nTracksFound,
+    // n = nHitsInTracks), [2] = nCells, [3] = nTriplets, [4] = nCellTrackPairs.
+    const auto iterTag = ::pixelTrack::iterationName[static_cast<uint8_t>(this->m_params.algoParams_.iterationName_)];
+    std::cout << "========== CA Tracking Summary [" << iterTag << "] ==========" << std::endl;
     {
       using DW = cms::alpakatools::AtomicPairCounter::DoubleWord;
       auto h_extra = cms::alpakatools::make_host_buffer<DW[]>(queue, 5u);
@@ -1495,14 +1498,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       const uint32_t outerHitsR = static_cast<uint32_t>(alpaka::getExtents(*this->device_hitToCellOffsets_)[0u]) - 1u;
       auto const &a = this->m_params.algoParams_;
 
-      // Required (this event would not have overflowed if avg >= this). Each ratio MUST be
-      // referenced to the SAME basis the buffer is actually allocated against. For the two
-      // cell-keyed buffers that basis DEPENDS ON THE ALLOCATION MODE:
-      //   - countDoubletsFirst / delayAllocations -> allocateAfterDoublets(nCells)  basis = nCells
-      //   - neither (allocate up front)           -> allocateAfterDoublets(maxDoublets) basis = maxDoublets
-      // Rather than re-derive which lane ran, scale the CURRENT avg by the buffer's actual
-      // occupancy: capacity tripletsN_ = basis * avg_cur, so to fit nTriplets we need
-      //   avg_req = avg_cur * nTriplets / tripletsN_   (mode-independent, correct in both lanes).
+      // Required avg: this event would not have overflowed if avg >= it. Each ratio must be referenced
+      // to the same basis the buffer is allocated against, and for the two cell-keyed buffers that
+      // basis is nCells or maxDoublets depending on the allocation mode. Scaling the current avg by
+      // the buffer's occupancy, avg_req = avg_cur * nTriplets / tripletsN_, is correct in both.
       const float req_HpT = (maxTuples > 0) ? float(nHitsInTrk) / float(maxTuples) : 0.f;
       const float req_CpH = (outerHitsR > 0) ? float(nCellsF) / float(outerHitsR) : 0.f;
       const float req_CpC = (tripletsN_ > 0u) ? a.avgCellsPerCell_ * float(nTripletsF) / float(tripletsN_) : 0.f;
@@ -1542,7 +1541,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       double snapMeanRatio[2] = {0., 0.};
       uint32_t snapMaxNHits = 0u;
       {
-        auto &agg = sizingAccumulator();
+        auto &agg = sizingAccumulator(this->m_params.algoParams_.iterationName_);
         std::lock_guard<std::mutex> lock(agg.mtx);
         ++agg.n;
         for (int i = 0; i < 4; ++i) {
@@ -1578,12 +1577,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       const auto coutFlags = std::cout.flags();
       const auto coutPrec = std::cout.precision();
 
-      std::cout << "============= Sizing-parameter recommendation =============" << std::endl;
+      std::cout << "============= Sizing-parameter recommendation ["
+                << ::pixelTrack::iterationName[static_cast<uint8_t>(this->m_params.algoParams_.iterationName_)]
+                << "] =============" << std::endl;
       std::cout << "  Fills :  nHits=" << nhits << "  outerHits=" << outerHitsR << "  nTracksFound=" << nTracksFnd
                 << "  nHitsInTracks=" << nHitsInTrk << std::endl;
       std::cout << "           nCells=" << nCellsF << "  nTriplets=" << nTripletsF << "  nCellTrackPairs=" << nCTPairsF
                 << std::endl;
-      std::cout << "  Caps  :  maxDoublets=" << maxDoublets << "  maxTuples=" << maxTuples << std::endl;
+      std::cout << "  Caps  :  maxDoublets=" << this->maxNumberOfDoublets_ << "  maxTuples=" << maxTuples << std::endl;
 
       // Per-event rows.
       std::cout << "  -- this event --" << std::endl;
@@ -1875,6 +1876,483 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 #endif
   }
 
+  void CAHitMaskingAndMergerKernels::updateMasking(::reco::TrackingRecHitsMaskingView &mask_view,
+                                                   const ::reco::TrackSoAConstView &trackd_view,
+                                                   const ::reco::TrackHitSoAConstView &trackhitd_view,
+                                                   const pixelTrack::Quality minQuality,
+                                                   uint32_t const &iterationIndex,
+                                                   Queue &queue,
+                                                   bool maskAttachedHits) {
+    using namespace caHitNtupletGeneratorKernels;
+
+#ifdef GPU_DEBUG
+    alpaka::wait(queue);
+    std::cout << "Starting CAHitMaskingAndMergerKernels::updateMasking" << std::endl;
+#endif
+
+    int threadsPerBlock = 128;
+    // max(1, ...) guards against a 0-block launch (invalid CUDA launch configuration)
+    // when the track collection is empty (e.g. an empty event in a no-PU sample).
+    int blocks = std::max(1, int((trackd_view.metadata().size() + threadsPerBlock - 1) / threadsPerBlock));
+    const auto workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(blocks, threadsPerBlock);
+    // Parallel updateMasking: fills the already-sized ceil(nTracks/128) grid one thread per track
+    // (pure idempotent same-value writes; see Kernel_updateMaskingParallel in Impl.h).
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_updateMaskingParallel{},
+                        mask_view,
+                        trackd_view,
+                        trackhitd_view,
+                        minQuality,
+                        iterationIndex,
+                        maskAttachedHits);
+#ifdef GPU_DEBUG
+    alpaka::wait(queue);
+    std::cout << "Kernel_updateMasking -> done!" << std::endl;
+#endif
+  }
+
+  void CAHitMaskingAndMergerKernels::filterTracks(::reco::TrackSoAView &track_view,
+                                                  ::reco::TrackHitSoAView &trackHit_view,
+                                                  const ::reco::TrackSoAConstView &inpTrack_view,
+                                                  const ::reco::TrackHitSoAConstView &inpTrackHit_view,
+                                                  const pixelTrack::Quality minQuality,
+                                                  const double matchFraction,
+                                                  Queue &queue,
+                                                  const int32_t *loserOf,
+                                                  const int32_t *isLoser,
+                                                  const bool twinMergeRefit,
+                                                  const bool refitAllTracks,
+                                                  int32_t *unitedMaskOut,
+                                                  const uint8_t *pocketArmIn,
+                                                  uint8_t *pocketArmIdOut) {
+    using namespace caHitNtupletGeneratorKernels;
+
+#ifdef GPU_DEBUG
+    alpaka::wait(queue);
+    std::cout << "Starting CAHitMaskingAndMergerKernels::filterTracks" << std::endl;
+#endif
+
+    // Parallel Mark -> prefix-sum -> Scatter filter. nIn == 0 (empty event) leaves the output count to the
+    // caller, which never reaches this point with an empty input (PixelTracksSoAMerger early-returns).
+    const int32_t nIn = int32_t(inpTrack_view.metadata().size());
+
+    if (nIn > 0) {
+      const int threadsPerBlock = 128;
+      const int blocks = cms::alpakatools::divide_up_by(nIn, threadsPerBlock);
+      const auto workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(blocks, threadsPerBlock);
+
+      // Scratch (freed stream-ordered by the caching allocator after the launches below complete).
+      // keep[]/outHitCnt[] are fully written by the Mark kernel over [0,nIn) -> no memset needed.
+      auto keep = cms::alpakatools::make_device_buffer<int32_t[]>(queue, nIn);
+      auto outHitCnt = cms::alpakatools::make_device_buffer<int32_t[]>(queue, nIn);
+      auto tkOff = cms::alpakatools::make_device_buffer<int32_t[]>(queue, nIn);
+      auto hitOff = cms::alpakatools::make_device_buffer<int32_t[]>(queue, nIn);
+
+      alpaka::exec<Acc1D>(queue,
+                          workDiv1D,
+                          Kernel_filterTracksMark{},
+                          inpTrack_view,
+                          inpTrackHit_view,
+                          minQuality,
+                          matchFraction,
+                          loserOf,
+                          isLoser,
+                          keep.data(),
+                          outHitCnt.data());
+
+      cms::alpakatools::iterativePrefixScan<Acc1D>(keep.data(), tkOff.data(), uint32_t(nIn), queue);
+      cms::alpakatools::iterativePrefixScan<Acc1D>(outHitCnt.data(), hitOff.data(), uint32_t(nIn), queue);
+
+      alpaka::exec<Acc1D>(queue,
+                          workDiv1D,
+                          Kernel_filterTracksScatter{},
+                          track_view,
+                          trackHit_view,
+                          inpTrack_view,
+                          inpTrackHit_view,
+                          loserOf,
+                          twinMergeRefit,
+                          refitAllTracks,
+                          unitedMaskOut,
+                          keep.data(),
+                          outHitCnt.data(),
+                          tkOff.data(),
+                          hitOff.data(),
+                          nIn,
+                          pocketArmIn,
+                          pocketArmIdOut);
+    }
+#ifdef GPU_DEBUG
+    alpaka::wait(queue);
+    std::cout << "filterTracks -> done!" << std::endl;
+#endif
+  }
+
+  void CAHitMaskingAndMergerKernels::twinMerge(const ::reco::TrackSoAConstView &inpTrack_view,
+                                               const ::reco::TrackHitSoAConstView &inpTrackHit_view,
+                                               const int32_t *armOfTrack,
+                                               const float twinDEta,
+                                               const float twinDPhi,
+                                               const int twinMinShared,
+                                               const bool twinTier2,
+                                               const float twinDEta2,
+                                               const float twinDPhi2,
+                                               const float twinNSigma2,
+                                               const int twinMinSharedFwd,
+                                               const pixelTrack::Quality minQuality,
+                                               int32_t *bestTwin,
+                                               int32_t *loserOf,
+                                               int32_t *isLoser,
+                                               int const &nTracks,
+                                               Queue &queue) {
+    using namespace caHitNtupletGeneratorKernels;
+    if (nTracks <= 0)
+      return;
+    // isLoser must already be zero-initialised by the caller: it is written cross-thread in
+    // Kernel_twinConfirm. makeFilteredTracks memsets it before calling this.
+
+    const int threadsPerBlock = 128;
+    const int blocks = cms::alpakatools::divide_up_by(nTracks, threadsPerBlock);
+    const auto workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(blocks, threadsPerBlock);
+
+    // phi -> track pre-filter binner over this collection, so twinFindBest visits only the phi bins
+    // overlapping the twinDPhi window instead of all N tracks; the kernel's whole-ring guard makes it
+    // equivalent to an exhaustive scan, and the trackBinKey clamp keeps every key in [0,kTwinPhiBins)
+    // so the binner cannot overflow. nItems = -1 makes the binner iterate the device-side nTracks()
+    // instead of the capacity, so the tail, whose eta/phi are uninitialised, is never binned; a
+    // candidate there would be rejected at Kernel_twinFindBest's quality gate anyway.
+    const int32_t nBin = int32_t(inpTrack_view.metadata().size());
+    const uint32_t nKeys = uint32_t(kTwinPhiBins);
+    auto phiBinnerBuf = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
+    auto phiOffBuf = cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, nKeys + 1);
+    auto phiStoreBuf = cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, uint32_t(nBin));
+    auto phiOvf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 1);
+    alpaka::memset(queue, phiOvf, 0);
+    GenericContainerView view{phiBinnerBuf.data(), phiOffBuf.data(), phiStoreBuf.data(), nKeys + 1, uint32_t(nBin)};
+    GenericContainer::template launchZero<Acc1D>(view, queue);
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_trackBinCount{},
+                        inpTrack_view,
+                        int32_t(-1),
+                        phiBinnerBuf.data(),
+                        kTwinPhiBins,
+                        1,
+                        0.f,
+                        nKeys,
+                        phiOvf.data());
+    finalizeAssocOffsets(view, queue);
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_trackBinFill{},
+                        inpTrack_view,
+                        int32_t(-1),
+                        phiBinnerBuf.data(),
+                        kTwinPhiBins,
+                        1,
+                        0.f,
+                        nKeys,
+                        phiOvf.data());
+
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_twinFindBest{},
+                        inpTrack_view,
+                        inpTrackHit_view,
+                        armOfTrack,
+                        minQuality,
+                        twinDEta,
+                        twinDPhi,
+                        twinMinShared,
+                        twinTier2,
+                        twinDEta2,
+                        twinDPhi2,
+                        twinNSigma2,
+                        twinMinSharedFwd,
+                        phiBinnerBuf.data(),
+                        kTwinPhiBins,
+                        bestTwin);
+    // twinFindBest and twinConfirm cannot be fused: twinConfirm thread i reads bestTwin[j] with
+    // j = bestTwin[i], an arbitrary opposite-arm track index, so it needs the whole bestTwin[]
+    // finalized, a grid-wide producer to consumer barrier. The inter-kernel queue boundary provides
+    // it; alpaka::syncBlockThreads inside a fused kernel is only block-local.
+    alpaka::exec<Acc1D>(queue, workDiv1D, Kernel_twinConfirm{}, inpTrack_view, bestTwin, loserOf, isLoser);
+#ifdef GPU_DEBUG
+    alpaka::wait(queue);
+    std::cout << "CAHitMaskingAndMergerKernels::twinMerge -> done!" << std::endl;
+#endif
+  }
+
+  void CAHitMaskingAndMergerKernels::finalDedup(::reco::TrackSoAView &out_view,
+                                                ::reco::TrackHitSoAView &outHit_view,
+                                                const ::reco::TrackSoAConstView &tracks_view,
+                                                const ::reco::TrackHitSoAConstView &trackHit_view,
+                                                int const &nTracksCap,
+                                                uint32_t nHits,
+                                                uint32_t nOTHits,
+                                                Queue &queue,
+                                                const MergerDedupConfirmInputs *confirm) {
+    using namespace caHitNtupletGeneratorKernels;
+    if (nTracksCap <= 0)
+      return;
+
+    // drop[] flags (1 = this refined track is the duplicate loser). Zero-init: the mark kernel only
+    // ever sets 0/1 over [0,nTracks), but the compaction reads it, so clear the whole capacity.
+    auto drop = cms::alpakatools::make_device_buffer<uint8_t[]>(queue, nTracksCap);
+    alpaka::memset(queue, drop, 0);
+
+    // The dedup kernels can tally a per-reason breakdown of the dropped losers into an 18-word device
+    // buffer. It is left unarmed: reading it means a device-to-host copy the host consumes at once,
+    // i.e. a full stream drain every event, and nothing downstream uses the numbers. A null pointer
+    // switches those tallies off at the source.
+    uint32_t *const diagPtr = nullptr;
+
+    const int threadsPerBlock = 128;
+    const int blocks = cms::alpakatools::divide_up_by(nTracksCap, threadsPerBlock);
+    const auto markDiv = cms::alpakatools::make_workdiv<Acc1D>(blocks, threadsPerBlock);
+
+    // Cov-dedup: shared-hit co-occurrence pairing plus a covariance-scaled 3-parameter gate.
+    // Hit-id -> refined-track co-occurrence histogram over the key space [0, nHits + nOTHits): merged
+    // pixel/strip ids bin on the id, bit30-tagged OT extras compress to nHits + otIdx. The content is
+    // the trackHit CSR capacity, so the fill never overruns, and the count-and-clamp guard flags any
+    // out-of-range key in ovf[0] instead of writing out of bounds.
+    const uint32_t nKeys = nHits + nOTHits;
+    const uint32_t nContent = uint32_t(trackHit_view.metadata().size());  // input trackHit CSR capacity
+    auto ovf = cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 1);
+    alpaka::memset(queue, ovf, 0);
+
+    auto hitAssoc = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
+    auto hitOff = cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, nKeys + 1);
+    auto hitStore = cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, nContent);
+    GenericContainerView hitView{hitAssoc.data(), hitOff.data(), hitStore.data(), nKeys + 1, nContent};
+    GenericContainer::template launchZero<Acc1D>(hitView, queue);
+    alpaka::exec<Acc1D>(
+        queue, markDiv, Kernel_dedupHitCount{}, tracks_view, trackHit_view, hitAssoc.data(), nHits, nKeys, ovf.data());
+    finalizeAssocOffsets(hitView, queue);
+    alpaka::exec<Acc1D>(
+        queue, markDiv, Kernel_dedupHitFill{}, tracks_view, trackHit_view, hitAssoc.data(), nHits, nKeys, ovf.data());
+
+    // (iii) 0-shared forward fallback eta-phi track binner (always built; the mark kernel drops the
+    // in-bound 0-shared forward losers and diag-counts the out-of-bound ones).
+    const uint32_t nFbKeys = uint32_t(kDedupFbPhiBins) * uint32_t(kDedupFbEtaSlabs);
+    auto fbAssoc = cms::alpakatools::make_device_buffer<GenericContainer>(queue);
+    auto fbOff = cms::alpakatools::make_device_buffer<GenericContainerOffsets[]>(queue, nFbKeys + 1);
+    auto fbStore = cms::alpakatools::make_device_buffer<GenericContainerStorage[]>(queue, uint32_t(nTracksCap));
+    GenericContainerView fbView{fbAssoc.data(), fbOff.data(), fbStore.data(), nFbKeys + 1, uint32_t(nTracksCap)};
+    GenericContainer::template launchZero<Acc1D>(fbView, queue);
+    // nItems = -1 => the binner iterates the device-side nTracks() (the refined collection's real
+    // count), matching Kernel_dedupCovMark's range so the tail capacity slots are never binned.
+    alpaka::exec<Acc1D>(queue,
+                        markDiv,
+                        Kernel_trackBinCount{},
+                        tracks_view,
+                        int32_t(-1),
+                        fbAssoc.data(),
+                        kDedupFbPhiBins,
+                        kDedupFbEtaSlabs,
+                        kDedupFbEtaMax,
+                        nFbKeys,
+                        ovf.data());
+    finalizeAssocOffsets(fbView, queue);
+    alpaka::exec<Acc1D>(queue,
+                        markDiv,
+                        Kernel_trackBinFill{},
+                        tracks_view,
+                        int32_t(-1),
+                        fbAssoc.data(),
+                        kDedupFbPhiBins,
+                        kDedupFbEtaSlabs,
+                        kDedupFbEtaMax,
+                        nFbKeys,
+                        ovf.data());
+
+    // Cov-gate width and fallback neighbourhood reach, as passed to the dedup kernels:
+    //   s_scanNSigma2     = kDedupNSigma2Default (25) -> shared-hit-path cov-gate width, and the
+    //                       default for the fallback gate unless mergerFbNSigma2 overrides it.
+    //   s_scanFbEtaReach  = 1 -> fallback eta-slab reach de in [-r, r]; the loop's own slab-range
+    //                       clamp is the real bound, so the guard below only rejects absurd values.
+    //   s_scanFbPhiReach  = 1 -> fallback phi-bin reach dp2 in [-r, r], wrap kept; 2r+1 <=
+    //                       kDedupFbPhiBins so the wrapped window visits each bin at most once.
+    // The three are held runtime-opaque on purpose: they reach the kernels as arguments, and
+    // constant-folding them on a single-TU backend would unroll the neighbourhood walk into
+    // compile-time bounds, changing the float accumulation order. Do not make them constexpr.
+    static const float s_scanNSigma2 = [] {
+      volatile float v = kDedupNSigma2Default;
+      return float(v);
+    }();
+    static const int s_scanFbEtaReach = [] {
+      volatile int v = 1;
+      int r = v;
+      if (r < 0)
+        r = 0;
+      if (r > kDedupFbEtaSlabs)
+        r = kDedupFbEtaSlabs;
+      return r;
+    }();
+    static const int s_scanFbPhiReach = [] {
+      volatile int v = 1;
+      int r = v;
+      if (r < 0)
+        r = 0;
+      if (r > kDedupFbPhiBins / 2)
+        r = kDedupFbPhiBins / 2;
+      return r;
+    }();
+    // Fallback-dedup parameters come straight from the merger's confirm struct (or the compile-time
+    // defaults when no struct is passed). Plain values only: no NaN/-1 sentinel selection, which is
+    // not portable across the backends' translation units.
+    const bool fbConfirmOn = (confirm != nullptr) && confirm->enable;
+    const int fbDelta = (confirm != nullptr) ? confirm->delta : 1;
+    const float fbNSigma2 = (confirm != nullptr && confirm->fbNSigma2 > 0.f) ? confirm->fbNSigma2 : s_scanNSigma2;
+    const float fbDropBound = (confirm != nullptr) ? confirm->fbDropBound : kDedupFbDropAbsEtaMax;
+    const int fbEnable = (confirm != nullptr) ? (confirm->fbEnable ? 1 : 0) : 1;
+    const int fbSameCharge = (confirm != nullptr) ? (confirm->fbSameCharge ? 1 : 0) : 0;
+    const float fbAbsFloorDPhi = (confirm != nullptr) ? confirm->fbAbsFloorDPhi : 1.e30f;
+    const float fbAbsFloorDQoP = (confirm != nullptr) ? confirm->fbAbsFloorDQoP : 1.e30f;
+    const float fbAbsFloorDCot = (confirm != nullptr) ? confirm->fbAbsFloorDCot : 1.e30f;
+    // finderOnly needs no hit view; rankClusters/guardCrossArm are force-off unless a valid hit view
+    // is available (confirm present).
+    const int fbFinderOnly = (confirm != nullptr && confirm->finderOnly) ? 1 : 0;
+    const int rankClustersReq = (confirm != nullptr && confirm->rankClusters) ? 1 : 0;
+    // nHits-only ranking. Gated like rankClusters (confirm-present) for a uniform pattern, though
+    // nHits reads only the track SoA (::reco::nHits) and never dereferences the hit view.
+    const int rankNHitsReq = (confirm != nullptr && confirm->rankNHits) ? 1 : 0;
+    const int guardCrossArmReq = (confirm != nullptr && confirm->guardCrossArm) ? 1 : 0;
+    const int fbRankClusters = (confirm != nullptr) ? rankClustersReq : 0;
+    const int fbRankNHits = (confirm != nullptr) ? rankNHitsReq : 0;
+    const int fbGuardCrossArm = (confirm != nullptr) ? guardCrossArmReq : 0;
+    const float fbGuardVertPosMin = (confirm != nullptr) ? confirm->guardVertPosMin : 1.0f;
+    const float fbGuardChi2Margin = (confirm != nullptr) ? confirm->guardChi2Margin : 0.0f;
+    // Hit view for the cluster count / pixel-core arm proxy: the confirm struct's hv (empty when absent;
+    // never dereferenced then, since rankClusters/guardCrossArm are forced off).
+    const ::reco::TrackingRecHitConstView dedupHitView =
+        (confirm != nullptr) ? confirm->hv : ::reco::TrackingRecHitConstView{};
+
+    // Contested-pair list, allocated only when confirm is on. Two uint32 per slot {i,j}, slots default
+    // to 0xffffffff (unfilled); contestedCount is the atomic append cursor and contestedOverflow
+    // counts the pairs that did not fit, which are kept both.
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> contestedPairsBuf;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> contestedCountBuf;
+    std::optional<cms::alpakatools::device_buffer<Device, uint32_t[]>> contestedOvfBuf;
+    uint32_t *contestedPairsPtr = nullptr;
+    uint32_t *contestedCountPtr = nullptr;
+    uint32_t *contestedOvfPtr = nullptr;
+    const uint32_t contestedCap = fbConfirmOn ? kDedupConfirmMaxPairs : 0u;
+    if (fbConfirmOn) {
+      contestedPairsBuf.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 2u * contestedCap));
+      contestedCountBuf.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 1));
+      contestedOvfBuf.emplace(cms::alpakatools::make_device_buffer<uint32_t[]>(queue, 1));
+      alpaka::memset(queue, *contestedPairsBuf, 0xff);  // 0xffffffff -> unfilled slot tag
+      alpaka::memset(queue, *contestedCountBuf, 0);
+      alpaka::memset(queue, *contestedOvfBuf, 0);
+      contestedPairsPtr = contestedPairsBuf->data();
+      contestedCountPtr = contestedCountBuf->data();
+      contestedOvfPtr = contestedOvfBuf->data();
+    }
+
+    alpaka::exec<Acc1D>(queue,
+                        markDiv,
+                        Kernel_dedupCovMark{},
+                        tracks_view,
+                        trackHit_view,
+                        hitAssoc.data(),
+                        fbAssoc.data(),
+                        nHits,
+                        nKeys,
+                        drop.data(),
+                        diagPtr,
+                        s_scanNSigma2,
+                        s_scanFbEtaReach,
+                        s_scanFbPhiReach,
+                        fbNSigma2,
+                        fbDropBound,
+                        fbEnable,
+                        // merge-or-keep-both capture; with these off the fallback drops directly:
+                        fbConfirmOn ? 1 : 0,
+                        fbSameCharge,
+                        fbAbsFloorDPhi,
+                        fbAbsFloorDQoP,
+                        fbAbsFloorDCot,
+                        contestedPairsPtr,
+                        contestedCountPtr,
+                        contestedCap,
+                        contestedOvfPtr,
+                        // Dedup ranking and guard parameters:
+                        dedupHitView,
+                        fbFinderOnly,
+                        fbRankClusters,
+                        fbRankNHits,
+                        fbGuardCrossArm,
+                        fbGuardVertPosMin,
+                        fbGuardChi2Margin);
+
+    // Surface any count-and-clamp overflow; never fatal, since clamped writes were skipped and
+    // unregistered contested pairs are kept both. The two counters are consumed on device by a
+    // one-thread reporter kernel: reading them back would serialize the host against everything
+    // queued ahead of the copy, for a diagnostic.
+    const auto reportDiv = cms::alpakatools::make_workdiv<Acc1D>(1, 1);
+    alpaka::exec<Acc1D>(queue, reportDiv, Kernel_dedupOverflowReport{}, ovf.data(), contestedOvfPtr);
+
+    // Union refit and verdict: build the de-duplicated unions of the captured contested pairs, GBL-refit
+    // them and adjust drop[] (keep-both leaves drop[i] == 0) before the compaction consumes drop[].
+    // Runs only when the confirm is on.
+    if (fbConfirmOn) {
+      HelixFit<pixelTopology::Phase2OTStubs> fitter(confirm->bfield, /*fitNas4=*/false);
+      fitter.setMaterialMap(confirm->rhoMap);
+      fitter.setBFieldMap(confirm->bFieldMap);  // (Bz,Br) r-z map; null => the scalar bfield
+      fitter.setBField(confirm->bfield);
+      fitter.setOutlierReject(true);  // observe the GBL single-hard outlier drop -> the delta measure
+      fitter.refitDedupUnions(confirm->hv,
+                              confirm->cm,
+                              tracks_view,
+                              trackHit_view,
+                              contestedPairsPtr,
+                              contestedCap,
+                              confirm->otSource,
+                              drop.data(),
+                              fbDelta,
+                              diagPtr,
+                              queue);
+    }
+
+    // Parallel Counts -> prefix-sum -> Scatter compaction. WHICH tracks are dropped is decided in
+    // Kernel_dedupCovMark.
+    {
+      // keep and hitCnt share one 2*nTracksCap allocation with two pointers into it: one allocate/free
+      // pair and one memset instead of two of each.
+      auto keepAndHitCnt = cms::alpakatools::make_device_buffer<int32_t[]>(queue, 2 * std::size_t(nTracksCap));
+      int32_t *keep = keepAndHitCnt.data();
+      int32_t *hitCnt = keepAndHitCnt.data() + nTracksCap;
+      auto tkOff = cms::alpakatools::make_device_buffer<int32_t[]>(queue, nTracksCap);
+      auto hitOff = cms::alpakatools::make_device_buffer<int32_t[]>(queue, nTracksCap);
+      // Trailing entries [nTracks, nTracksCap) are not written by Counts -> zero them so the scans
+      // stay constant past the last real track (tkOff[cap-1] == total kept).
+      alpaka::memset(queue, keepAndHitCnt, 0);
+
+      alpaka::exec<Acc1D>(queue, markDiv, Kernel_finalDedupCounts{}, tracks_view, drop.data(), keep, hitCnt);
+
+      cms::alpakatools::iterativePrefixScan<Acc1D>(keep, tkOff.data(), uint32_t(nTracksCap), queue);
+      cms::alpakatools::iterativePrefixScan<Acc1D>(hitCnt, hitOff.data(), uint32_t(nTracksCap), queue);
+
+      alpaka::exec<Acc1D>(queue,
+                          markDiv,
+                          Kernel_finalDedupScatter{},
+                          out_view,
+                          outHit_view,
+                          tracks_view,
+                          trackHit_view,
+                          keep,
+                          tkOff.data(),
+                          hitOff.data(),
+                          nTracksCap);
+    }
+
+    // No host wait: the dedup histograms, drop flags and compaction scratch are function-scope caching
+    // allocator buffers, and the allocator only re-hands a freed block once the event recorded on its
+    // queue at free time has completed, so the queued launches that still read them are safe.
+  }
+
   /* This will make sense when we will be able to run this once per job in Alpaka
 
   template <typename TrackerTraits>
@@ -1883,6 +2361,42 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     alpaka::exec<Acc1D>(queue_, workDiv1D, Kernel_printCounters{}, this->counters_->data());
   }
   */
+
+  void CAHitMaskingAndMergerKernels::mergeGather(::reco::TrackSoAView &outTrack_view,
+                                                 ::reco::TrackHitSoAView &outHit_view,
+                                                 const ::reco::TrackSoAConstView &inp0Track_view,
+                                                 const ::reco::TrackHitSoAConstView &inp0Hit_view,
+                                                 const ::reco::TrackSoAConstView &inp1Track_view,
+                                                 const ::reco::TrackHitSoAConstView &inp1Hit_view,
+                                                 int nInputs,
+                                                 int32_t *armBuf,
+                                                 const int32_t arm0,
+                                                 const int32_t arm1,
+                                                 Queue &queue) {
+    using namespace caHitNtupletGeneratorKernels;
+
+    // Grid-stride kernel: every phase is thread-independent, so a multi-block grid is safe (each thread
+    // recomputes the per-input offsets from the device-side scalars, and the merged nTracks scalar is
+    // written by grid thread 0 and never read inside the kernel). The grid is sized from the dominant
+    // copy range, the hit capacity, clamped so tiny events do not launch empty blocks.
+    const uint32_t threadsPerBlock = 256;
+    const uint32_t hitCap = uint32_t(outHit_view.metadata().size());
+    const uint32_t blocks = std::clamp(cms::alpakatools::divide_up_by(std::max(hitCap, 1u), threadsPerBlock), 1u, 128u);
+    const auto workDiv1D = cms::alpakatools::make_workdiv<Acc1D>(blocks, threadsPerBlock);
+    alpaka::exec<Acc1D>(queue,
+                        workDiv1D,
+                        Kernel_mergeGather{},
+                        outTrack_view,
+                        outHit_view,
+                        inp0Track_view,
+                        inp0Hit_view,
+                        inp1Track_view,
+                        inp1Hit_view,
+                        nInputs,
+                        armBuf,
+                        arm0,
+                        arm1);
+  }
 
   template class CAHitNtupletGeneratorKernels<pixelTopology::Phase1>;
   template class CAHitNtupletGeneratorKernels<pixelTopology::Phase2>;
