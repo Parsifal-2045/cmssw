@@ -10,45 +10,40 @@
 #include <cmath>
 #include <cstdint>
 
+#include "DataFormats/TrackingRecHitSoA/interface/OTRecHitsSoA.h"
 #include "DataFormats/TrackingRecHitSoA/interface/StubsSoA.h"
 #include "DataFormats/TrackingRecHitSoA/interface/TrackingRecHitsSoA.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/config.h"
 #include "RecoTracker/PixelSeeding/interface/CircleEq.h"
+#include "RecoTracker/PixelSeeding/interface/OTHitTag.h"
 
 namespace caTrackFeatures {
 
   inline constexpr int kNFeat = 12;
 
-  // Shared inverse-variance stub-curvature kernel: from the squared transverse radius rg2, the
-  // per-stub bend d (=dPhiDr) and its error s (=dPhiDrError), return the bend denominator
-  // den = 1 + rg2*d^2 and the inverse-variance weight w = den^3 / s^2. Single source of the
-  // formula used by fill() (rg2 = xg^2+yg^2 for the fit features, rGlobal()^2 for the rzChi2 /
-  // meanStubKappa extras) and the host CATrackFeaturesTableProducer; the classify-kernel
-  // stub-consistency fallback uses the SAME formula. rg2 is passed by the caller because the
-  // xg^2+yg^2 and rGlobal()^2 forms differ at the bit level, so each site keeps its own to stay
-  // ABI-exact with the trained models.
+  // Shared inverse-variance stub-curvature kernel: given rg2, bend d=dPhiDr and error
+  // s=dPhiDrError, return den = 1 + rg2*d^2 and weight w = den^3 / s^2. rg2 is caller-passed:
+  // the xg^2+yg^2 and rGlobal()^2 forms differ at the bit level, so each call site keeps its own
+  // to stay ABI-exact with the trained models.
   ALPAKA_FN_HOST_ACC inline void stubDenWeight(float rg2, float d, float s, float &den, float &w) {
     den = 1.f + rg2 * d * d;
     w = den * den * den / (s * s);
   }
 
-  // Feature order == trained ABI (train_disp_nano.py FEATS / CATrackFeaturesTableProducer):
+  // Feature order == trained ABI (train_disp_nano.py FEATS):
   //   0 fitChi2  1 psFrac  2 r0  3 nPS  4 nh  5 spanZ
   //   6 nStubs   7 nl      8 logChi2Stub  9 kErr  10 dcaEst  11 nBarrel
   //
-  // HitIter: forward iterator/pointer over merged-hit indices (uint32-compatible).
-  // Returns false when the hit list is empty/corrupt (caller keeps its fallback).
+  // HitIter: forward iterator over merged-hit indices. Returns false on empty/corrupt list.
   //
-  // rzKappaOut (optional, Stage-2 only): when non-null, the SAME hit walk also produces the Stage-2
-  // extras out[0]=rzChi2 (reduced chi2 of a straight line z=a+b*r; combinatorial/tilted fakes break
-  // r-z linearity; -1 = undefined), out[1]=meanStubKappa (inverse-variance-weighted mean stub
-  // curvature), out[2]=leverArm (rMax-r0) and out[3]=rMax (max hit transverse radius). All use
-  // rGlobal() so that they match the host CA-features table and the training cache to the bit. The
-  // radial-extent pair (out[2..3]) lifts the |eta|~1.5 tilted-transition fake rejection. Null -> not
-  // computed: the Stage-1 12-feature path is unaffected and pays nothing (the extra reads/branches are
-  // guarded out, so Kernel_classifyTracks register pressure is unchanged). Written only on success; an early
-  // false return leaves the caller's initial out[] values untouched (the -1/0 sentinels). The caller
-  // MUST size out[] for 4 floats when non-null.
+  // otView: raw OT-rechit SoA for extension-walk hits; a hit id with kOTHitTag set indexes THIS
+  // view (otIdx(id)), not hh. Its global position enters the geometry features like a pixel hit;
+  // it is "not a stub" (OT SoA has no dPhiDr/stubFlags). Null view with tagged ids present -> false.
+  // rGlobal() is stored on the merged SoA but not on the OT SoA -> derived inline.
+  //
+  // rzKappaOut (Stage-2): when non-null, the SAME hit walk produces out[0]=rzChi2 (reduced chi2 of
+  // a straight line z=a+b*r; -1 undefined), out[1]=meanStubKappa, out[2]=leverArm (rMax-r0),
+  // out[3]=rMax. Null -> not computed (Stage-1 path unaffected). Caller MUST size out[] for 4 floats.
   template <typename HitIter>
   ALPAKA_FN_HOST_ACC inline bool fill(HitIter hitBegin,
                                       HitIter hitEnd,
@@ -57,7 +52,8 @@ namespace caTrackFeatures {
                                       float nLayers,
                                       float chi2,
                                       float *feat,
-                                      float *rzKappaOut = nullptr) {
+                                      float *rzKappaOut = nullptr,
+                                      ::reco::OTRecHitsConstView const *otView = nullptr) {
     int nh = 0;
     for (auto ph = hitBegin; ph != hitEnd; ++ph)
       ++nh;
@@ -80,11 +76,26 @@ namespace caTrackFeatures {
       const uint32_t h = *ph;
       float xg, yg, zg;
       bool otHit = false;
-      if (h >= static_cast<uint32_t>(nHitsTot))
-        return false;  // content overflow corruption guard
-      xg = hh[h].xGlobal();
-      yg = hh[h].yGlobal();
-      zg = hh[h].zGlobal();
+      if (caOTHitTag::isOTId(h)) {
+        // Raw OT-rechit extra: the id indexes the OT SoA, not hh. Without otView -> bail.
+        if (!otView)
+          return false;
+        const uint32_t o = caOTHitTag::otIdx(h);
+        // Corruption guard, symmetric to the h >= nHitsTot check below: a container-content
+        // overflow can produce garbage words with the tag bit set; never index the OT view out of range.
+        if (o >= uint32_t(otView->metadata().size()))
+          return false;
+        xg = (*otView)[o].xGlobal();
+        yg = (*otView)[o].yGlobal();
+        zg = (*otView)[o].zGlobal();
+        otHit = true;
+      } else {
+        if (h >= static_cast<uint32_t>(nHitsTot))
+          return false;  // content overflow corruption guard
+        xg = hh[h].xGlobal();
+        yg = hh[h].yGlobal();
+        zg = hh[h].zGlobal();
+      }
       if (i == 0) {
         x0 = xg, y0 = yg, z0 = zg, r0 = std::sqrt(xg * xg + yg * yg);
       }
