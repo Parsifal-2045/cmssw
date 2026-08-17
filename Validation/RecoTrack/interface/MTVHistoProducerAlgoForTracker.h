@@ -134,6 +134,12 @@ struct MTVHistoProducerAlgoForTrackerHistograms {
 
   //pulls of track params vs eta: to be used with fitslicesytool
   std::vector<METype> dxypull_vs_eta, ptpull_vs_eta, dzpull_vs_eta, phipull_vs_eta, thetapull_vs_eta;
+  // pull vs nhits: 2D distribution of the pull per nhits column, to study the pull shape as a function of hit count.
+  std::vector<METype> ptpull_vs_nhits, dxypull_vs_nhits, dzpull_vs_nhits;
+  // pull vs its own reported uncertainty: per-error-bin pull distribution, to compare the pull width against the
+  // reported covariance. pull vs the true (sim) impact parameter, as a function of displacement.
+  std::vector<METype> dxypull_vs_dxyerr, dzpull_vs_dzerr, ptpull_vs_pterr;
+  std::vector<METype> dxypull_vs_dxysim, dzpull_vs_dzsim;
   std::vector<METype> dxypull_vs_pt, ptpull_vs_pt, dzpull_vs_pt, phipull_vs_pt, thetapull_vs_pt;
   std::vector<METype> ptpull_vs_phi, phipull_vs_phi, thetapull_vs_phi;
 };
@@ -298,6 +304,9 @@ private:
   double minEta, maxEta;
   int nintEta;
   bool useFabsEta;
+  // book and fill the detailed pull diagnostics (pull vs nhits / vs reported error / vs sim value);
+  // default off, enabled by the stub-seeded validation configurations
+  bool doDetailedPullPlots;
   double minPt, maxPt;
   int nintPt;
   bool useInvPt;
