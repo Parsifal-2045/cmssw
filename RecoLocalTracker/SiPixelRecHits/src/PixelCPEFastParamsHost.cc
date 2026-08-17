@@ -52,7 +52,12 @@ void PixelCPEFastParamsHost<TrackerTraits>::fillParamsForDevice() {
   memset(&buffer_->averageGeometry(), 0, sizeof(pixelTopology::AverageGeometryT<TrackerTraits>));
 #endif
 
-  assert(m_DetParams.size() <= TrackerTraits::numberOfModules);
+  assert(m_DetParams.size() <= TrackerTraits::numberOfPixelModules);
+
+  // Phase-2 stubs read back the per-module genError parameters below (see errorFromDB<Phase2OTStubs>).
+  // Other topologies use the generic errorFromDB or the cluster-size table, so these sampling conventions
+  // only apply to the stubs topology.
+  constexpr bool kSampleForGenErrorReadback = std::is_same_v<TrackerTraits, pixelTopology::Phase2OTStubs>;
 
   for (auto i = 0U; i < m_DetParams.size(); ++i) {
     auto& p = m_DetParams[i];
@@ -105,8 +110,10 @@ void PixelCPEFastParamsHost<TrackerTraits>::fillParamsForDevice() {
 
     auto toMicron = [&](float x) { return std::min(511, int(x * 1.e4f + 0.5f)); };
 
-    // average angle
-    auto gvx = p.theOrigin.x() + 40.f * p.thePitchX;
+    // Sampling offset for the average incidence angle: 40 = half a Phase-1 ROC (80 rows).
+    // The stubs topology samples half of the actual ROC width instead (240 rows for Phase-2).
+    auto gvx = kSampleForGenErrorReadback ? p.theOrigin.x() + 0.5f * float(g.nRowsRoc) * p.thePitchX
+                                          : p.theOrigin.x() + 40.f * p.thePitchX;
     auto gvy = p.theOrigin.y();
     auto gvz = 1.f / p.theOrigin.z();
     //--- Note that the normalization is not required as only the ratio used
@@ -141,9 +148,12 @@ void PixelCPEFastParamsHost<TrackerTraits>::fillParamsForDevice() {
     float moduleOffsetX = -(0.5f * float(g.nRows) + TrackerTraits::bigPixXCorrection);
     auto const xoff = moduleOffsetX * g.thePitchX;
 
+    // The stubs readback jx = kNumErrorBins*(xpos + xoff)/(2*xoff) assigns bin ix to a cluster at local X = +x,
+    // so the host samples at origin.x + x for the stubs topology (origin.x - x otherwise). The sign matters for
+    // the steeply varying single-pixel sigmax1 near module edges, not for the flat multi-pixel sigmax.
     for (int ix = 0; ix < pixelCPEforDevice::kNumErrorBins; ++ix) {
       auto x = xoff * (1.f - (0.5f + float(ix)) / 8.f);
-      auto gvx = p.theOrigin.x() - x;
+      auto gvx = kSampleForGenErrorReadback ? (p.theOrigin.x() + x) : (p.theOrigin.x() - x);
       auto gvy = p.theOrigin.y();
       auto gvz = 1.f / p.theOrigin.z();
       cp.cotbeta = gvy * gvz;
@@ -163,7 +173,8 @@ void PixelCPEFastParamsHost<TrackerTraits>::fillParamsForDevice() {
 
     for (int ix = 0; ix < pixelCPEforDevice::kNumErrorBins; ++ix) {
       auto y = yoff * (1.f - (0.5f + float(ix)) / 8.f);
-      auto gvx = p.theOrigin.x() + 40.f * p.thePitchY;
+      auto gvx = kSampleForGenErrorReadback ? p.theOrigin.x() + 0.5f * float(g.nRowsRoc) * p.thePitchY
+                                            : p.theOrigin.x() + 40.f * p.thePitchY;
       auto gvy = p.theOrigin.y() - y;
       auto gvz = 1.f / p.theOrigin.z();
       cp.cotbeta = gvy * gvz;
@@ -229,11 +240,31 @@ void PixelCPEFastParamsHost<TrackerTraits>::fillParamsForDevice() {
       g.yfact[kk] = g.yfact[k - 1];
       g.minCh[kk] = g.minCh[k - 1];
     }
-    auto detx = 1.f / g.xfact[0];
-    auto dety = 1.f / g.yfact[0];
+    // Reference charge for the xfact/yfact normalisation. Stubs multiply them by the 20000-electron
+    // sigmax/sigmay tables, so normalise to that same charge; otherwise normalise to the lowest charge bin.
+    // cp still holds the average sampling angle here, so only qclus varied in the charge-bin loop above.
+    float detx, dety;
+    if constexpr (kSampleForGenErrorReadback) {
+      errorFromTemplates(p, cp, 20000.f);
+      detx = (cp.sigmax > 0.f) ? 1.f / cp.sigmax : 1.f / g.xfact[0];
+      dety = (cp.sigmay > 0.f) ? 1.f / cp.sigmay : 1.f / g.yfact[0];
+    } else {
+      detx = 1.f / g.xfact[0];
+      dety = 1.f / g.yfact[0];
+    }
     for (int kk = 0; kk < pixelCPEforDevice::kGenErrorQBins; ++kk) {
       g.xfact[kk] *= detx;
       g.yfact[kk] *= dety;
+    }
+
+    // Endcap: cap the scale factors at 1 so a charge bin can only shrink the table error, never inflate it.
+    if constexpr (kSampleForGenErrorReadback) {
+      if (!g.isBarrel) {
+        for (int kk = 0; kk < pixelCPEforDevice::kGenErrorQBins; ++kk) {
+          g.xfact[kk] = std::min(g.xfact[kk], 1.f);
+          g.yfact[kk] = std::min(g.yfact[kk], 1.f);
+        }
+      }
     }
     // sample y in "angle"  (estimated from cluster size)
     float ys = 8.f - 4.f;  // apperent bias of half pixel (see plot)
@@ -451,3 +482,4 @@ void PixelCPEFastParamsHost<TrackerTraits>::fillPSetDescription(edm::ParameterSe
 template class PixelCPEFastParamsHost<pixelTopology::Phase1>;
 template class PixelCPEFastParamsHost<pixelTopology::Phase2>;
 template class PixelCPEFastParamsHost<pixelTopology::HIonPhase1>;
+template class PixelCPEFastParamsHost<pixelTopology::Phase2OTStubs>;

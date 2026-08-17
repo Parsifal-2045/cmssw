@@ -1177,6 +1177,11 @@ namespace pixelTopology {
     static constexpr uint32_t maxFishboneHitsPerTrack = 8;
     static constexpr uint32_t maxHitsOnTrack = maxLayersPerTrack + maxFishboneHitsPerTrack;
     static constexpr uint32_t maxHitsOnTrackForFullFit = 6;
+    // Hit cap of the Riemann fit (RiemannFit.dev.cc), independent of maxHitsOnTrackForFullFit: it sizes the
+    // Riemann hit/geometry buffers and the N of its kernel instantiations. Tracks above it are fit with the
+    // first maxHitsOnTrackForRiemannFit hits. Kept separate so the BrokenLine/GBL cap can move per topology
+    // without instantiating the (large-frame) Riemann kernels at a higher N.
+    static constexpr uint32_t maxHitsOnTrackForRiemannFit = 6;
     static constexpr uint32_t avgHitsPerTrack = 7;
     static constexpr uint32_t maxCellsPerHit = 256;
     static constexpr uint32_t avgTracksPerHit = 10;
@@ -1229,6 +1234,9 @@ namespace pixelTopology {
     static constexpr int nStartingPairs = phase2PixelTopology::nStartingPairs;
 
     static constexpr uint16_t numberOfModules = phase2PixelTopology::nModulesPix;
+    // Pixel-module count regardless of how many outer-tracker modules a derived topology adds; sizes
+    // pixel-only conditions such as the CPE parameters, which describe pixel modules only.
+    static constexpr uint16_t numberOfPixelModules = phase2PixelTopology::nModulesPix;
 
     // 1000 bins < 1024 bins (10 bits) must be:
     // - < 32*32 (warpSize*warpSize for block prefix scan for CUDA)
@@ -1313,6 +1321,9 @@ namespace pixelTopology {
     static constexpr float avgCellsPerHit = 17.;
     static constexpr float avgCellsPerCell = 0.5;
     static constexpr float avgTracksPerCell = 0.09;
+
+    // Same value as Phase2 (restated so every topology in this family names its own Riemann cap explicitly).
+    static constexpr uint32_t maxHitsOnTrackForRiemannFit = 6;
   };
 
   struct Phase2OTStubs : public Phase2OT {
@@ -1367,9 +1378,16 @@ namespace pixelTopology {
     static constexpr uint32_t avgHitsPerTrack = 10;  // pixel+OT tracks have ~7 hits on average, up to ~14
     static constexpr uint32_t maxHitsForContainers = avgHitsPerTrack * maxNumberOfTuples;
     static constexpr uint32_t maxNumberOfQuadruplets = maxNumberOfTuples;
-    static constexpr float avgCellsPerHit = 23.;    // ~12% margin over peak ratio 20.6
-    static constexpr float avgCellsPerCell = 0.3;   // ~32% margin over peak ratio 0.23
-    static constexpr float avgTracksPerCell = 0.2;  // ~46% margin over peak ratio 0.14
+    static constexpr float avgCellsPerHit = 23.;
+    static constexpr float avgCellsPerCell = 0.3;
+    static constexpr float avgTracksPerCell = 0.2;
+
+    // Override maxHitsOnTrackForFullFit for stubs
+    static constexpr uint32_t maxHitsOnTrackForFullFit = 10;
+    // The Riemann cap deliberately stays at 6 here: it is decoupled from maxHitsOnTrackForFullFit so that
+    // raising the BrokenLine/GBL cap for stubs does not instantiate the Riemann kernels at a higher N
+    // (Kernel_CircleFit is the largest per-thread frame in the plugin).
+    static constexpr uint32_t maxHitsOnTrackForRiemannFit = 6;
   };
 
   struct Phase1 {
@@ -1389,6 +1407,8 @@ namespace pixelTopology {
     static constexpr uint32_t maxFishboneHitsPerTrack = 2;
     static constexpr uint32_t maxHitsOnTrack = maxLayersPerTrack + maxFishboneHitsPerTrack;
     static constexpr uint32_t maxHitsOnTrackForFullFit = 6;
+    // Hit cap of the Riemann fit, independent of maxHitsOnTrackForFullFit (see the Phase2 comment).
+    static constexpr uint32_t maxHitsOnTrackForRiemannFit = 6;
     static constexpr uint32_t avgHitsPerTrack = 5;
     static constexpr uint32_t maxCellsPerHit = 256;
     static constexpr uint32_t avgTracksPerHit = 6;
@@ -1439,6 +1459,8 @@ namespace pixelTopology {
     static constexpr int nStartingPairs = phase1PixelTopology::nStartingPairs;
 
     static constexpr uint16_t numberOfModules = phase1PixelTopology::numberOfModules;
+    // Pixel-module count; equals numberOfModules for pixel-only topologies (see the Phase2 note).
+    static constexpr uint16_t numberOfPixelModules = phase1PixelTopology::numberOfModules;
 
     static constexpr uint16_t numRowsInRoc = 80;
     static constexpr uint16_t numColsInRoc = 52;
