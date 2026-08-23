@@ -29,67 +29,20 @@
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
-  // EventSetup producer for the geometry-only blocks of the CA geometry SoA (per-module surface
-  // frames + per-CA-layer geometry classification + the layer-pair graph + per-layer fishbone
-  // cut). It runs the once-per-conditions module/layer fill (buildCAGeometryHost, lifted from the
-  // CAHitNtuplet globalBeginRun) so the walk/refit consumers can read the geometry from the
-  // EventSetup instead of a per-event event product. The doublet/triplet/ntuplet CUT blocks are
-  // per-producer configuration and are intentionally left default in this product.
-  //
-  // Produces the host collection; the framework copies it to the device once per IOV (generic
-  // CopyToDevice for the portable collection) when a consumer requests the device handle via a
-  // device::ESGetToken<reco::CAGeometrySoACollection, CAGeometryRecord>. Templated on TrackerTraits
-  // and registered per topology (mirroring CAHitNtupletAlpaka<TrackerTraits>); the topology is a
-  // template parameter, so buildCAGeometryHost<TrackerTraits> takes the correct `if constexpr`
-  // branch (Phase2OTStubs uses the StackedModuleGeometry OT ordering; Phase2OT collects OT-barrel
-  // P-in-PS modules and needs no stacked geometry; the pixel-only topologies collect pixel modules
-  // only). The StackedModuleGeometry record is consumed only for Phase2OTStubs.
+  // ESProducer for the geometry-only blocks (modules, layers) of the CA geometry SoA.
+  // Runs the module/layer walk once per IOV (buildCAGeometryHost) so all consumers (the
+  // OT-stub CA producers and PixelTracksSoAMerger) read one copy. The cut blocks have zero
+  // rows; each CA producer fills its own from its PSet. The StackedModuleGeometry record is
+  // consumed only for Phase2OTStubs.
   template <typename TrackerTraits>
   class CAGeometryESProducer : public ESProducer {
   public:
     CAGeometryESProducer(edm::ParameterSet const& iConfig)
-        : ESProducer(iConfig),
-          layerPairs_(
-              iConfig.getParameter<edm::ParameterSet>("geometry").getParameter<std::vector<unsigned int>>("pairGraph")),
-          skipsLayers_(iConfig.getParameter<edm::ParameterSet>("geometry")
-                           .getParameter<std::vector<unsigned int>>("skipsLayers")),
-          fishboneCuts_(
-              iConfig.getParameter<edm::ParameterSet>("geometry").getParameter<std::vector<double>>("fishboneCuts")) {
-      const std::vector<unsigned int> startingPairs =
-          iConfig.getParameter<edm::ParameterSet>("geometry").getParameter<std::vector<unsigned int>>("startingPairs");
-
-      // Size validation on the geometry-only surface, mirroring the CA producer that shares this
-      // geometry (CAHitNtupletAlpaka): the graph must be a non-empty list of layer pairs, everything
-      // per layer pair must agree with the pair count, and every layer id must exist. Here the layer
-      // count is declared by fishboneCuts, the only per-layer member of this producer. Without these
-      // checks an empty or inconsistent `geometry` PSet reaches buildCAGeometryHost, whose per-pair
-      // asserts and *std::max_element over the pair graph are undefined on an empty range.
-      const size_t nPairs = layerPairs_.size() / 2;
-      const size_t nLayers = fishboneCuts_.size();
-      if (layerPairs_.empty())
-        throw cms::Exception("Configuration") << "CAGeometryESProducer: geometry.pairGraph is empty.";
-      if (layerPairs_.size() % 2 != 0)
-        throw cms::Exception("Configuration")
-            << "CAGeometryESProducer: geometry.pairGraph has an odd number of entries (" << layerPairs_.size() << ").";
-      if (skipsLayers_.size() != nPairs)
-        throw cms::Exception("Configuration")
-            << "CAGeometryESProducer: geometry.skipsLayers has " << skipsLayers_.size()
-            << " entries but the CA graph has " << nPairs << " layer pairs.";
-      for (const unsigned int& i : startingPairs)
-        if (i >= nPairs)
-          throw cms::Exception("Configuration") << "CAGeometryESProducer: geometry.startingPairs contains the pair id "
-                                                << i << " but the CA graph only has " << nPairs << " layer pairs.";
-      for (size_t i = 0; i < layerPairs_.size(); ++i)
-        if (layerPairs_[i] >= nLayers)
-          throw cms::Exception("Configuration")
-              << "CAGeometryESProducer: geometry.pairGraph refers to the layer " << layerPairs_[i]
-              << " but geometry.fishboneCuts only declares " << nLayers << " layers.";
-
-      // The `geometry` PSet is upstream's CA surface: `startingPairs` is a list of pair IDs, while the
-      // geometry builder wants one flag per pair.
-      startingPair_.assign(nPairs, 0u);
-      for (unsigned int id : startingPairs)
-        startingPair_[id] = 1u;
+        : ESProducer(iConfig), nLayers_(iConfig.getParameter<unsigned int>("nLayers")) {
+      // nLayers sizes the layers block (nLayers+1 rows); zero is degenerate. It is not
+      // cross-checked against TrackerTraits::numberOfLayers here: the CA consumers compare and throw.
+      if (nLayers_ == 0)
+        throw cms::Exception("Configuration") << "CAGeometryESProducer: nLayers must be greater than zero.";
       auto c = setWhatProduced(this);
       geomToken_ = c.consumes();
       topoToken_ = c.consumes();
@@ -103,14 +56,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     static void fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
       edm::ParameterSetDescription desc;
 
-      // The four geometry-only members of upstream's `geometry` PSet (same names, same shapes, so a
-      // CA producer's geometry PSet can be copied field by field).
-      edm::ParameterSetDescription geometryDesc;
-      geometryDesc.add<std::vector<unsigned int>>("pairGraph", {});
-      geometryDesc.add<std::vector<unsigned int>>("startingPairs", {});
-      geometryDesc.add<std::vector<unsigned int>>("skipsLayers", {});
-      geometryDesc.add<std::vector<double>>("fishboneCuts", {});
-      desc.add<edm::ParameterSetDescription>("geometry", geometryDesc);
+      // The only parameter is the CA layer count; the default is the topology's own layer count,
+      // which every configuration that shares this geometry must also use.
+      desc.add<unsigned int>("nLayers", TrackerTraits::numberOfLayers)
+          ->setComment(
+              "Number of CA layers of the layer table this geometry describes. Must equal the number of layers the "
+              "CA producers sharing this geometry are configured for (they throw otherwise).");
 
       descriptions.addWithDefaultLabel(desc);
     }
@@ -124,8 +75,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
         stackedGeometry = &iRecord.get(stackedToken_);
       }
 
+      // Geometry blocks only: the cut blocks are left with zero rows (the two trailing sizing
+      // arguments of buildCAGeometryHost default to 0).
       return std::make_unique<reco::CAGeometryHost>(reco::buildCAGeometryHost<TrackerTraits>(
-          trackerGeometry, trackerTopology, stackedGeometry, layerPairs_, startingPair_, skipsLayers_, fishboneCuts_));
+          trackerGeometry, trackerTopology, stackedGeometry, static_cast<int>(nLayers_)));
     }
 
   private:
@@ -133,10 +86,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     edm::ESGetToken<TrackerTopology, TrackerTopologyRcd> topoToken_;
     edm::ESGetToken<reco::StackedModuleGeometryHost, StackedModuleGeometryRecord> stackedToken_;
 
-    const std::vector<unsigned int> layerPairs_;
-    std::vector<unsigned int> startingPair_;  // per-pair flags, built from the `startingPairs` id list
-    const std::vector<unsigned int> skipsLayers_;
-    const std::vector<double> fishboneCuts_;
+    const unsigned int nLayers_;
   };
 
   // Register per topology, mirroring CAHitNtupletAlpaka. Only Phase2OTStubs and Phase2OT

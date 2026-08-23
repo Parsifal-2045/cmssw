@@ -653,6 +653,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   typename CAHitNtupletGenerator<TrackerTraits>::PendingTuples CAHitNtupletGenerator<TrackerTraits>::beginTuplesAsync(
       HitsOnDevice const& hits_d,
       CAGeometryOnDevice const& geometry_d,
+      CAGeometryOnDevice const& cuts_d,
       float bfield,
       uint32_t nDoublets,
       uint32_t nTracks,
@@ -680,12 +681,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     auto trackingHits = hits_d.view().trackingHits();
     auto hitModules = hits_d.view().hitModules();
 
+    // Geometry blocks from the geometry handle, configuration blocks from the cuts handle. The two
+    // handles are the same object for every topology that does not consume the shared EventSetup
+    // geometry; when they are not, the blocks not owned by a handle have zero rows in it, so taking
+    // a block from the wrong one would give an empty view. The kernels take the six block views
+    // separately.
     auto layers = geometry_d.view().layers();
-    auto graph = geometry_d.view().graph();
-    auto doubletCuts = geometry_d.view().doubletCuts();
-    auto tripletCuts = geometry_d.view().tripletCuts();
-    auto ntupletCuts = geometry_d.view().ntupletCuts();
     auto modules = geometry_d.view().modules();
+    auto graph = cuts_d.view().graph();
+    auto doubletCuts = cuts_d.view().doubletCuts();
+    auto tripletCuts = cuts_d.view().tripletCuts();
+    auto ntupletCuts = cuts_d.view().ntupletCuts();
 
     // Don't bother if less than 2 hits: return the empty (built=false) pending state; finish
     // hands the zeroed collection through.
@@ -745,7 +751,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           hits_d.offsetBPIX2(),
                           layers.metadata().size(),
                           pending.tracks->view(),
-                          layers,
                           graph,
                           tripletCuts,
                           ntupletCuts,
@@ -804,6 +809,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     auto tracks = pending.tracks->view().tracks();
     auto trackingHits = hits_d.view().trackingHits();
+    // `modules` is the only geometry block the fit passes read; geometry_d is the geometry handle.
     auto modules = geometry_d.view().modules();
     const uint32_t nTracks = pending.maxTuples;
     const float bfield = pending.bfield;

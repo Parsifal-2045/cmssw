@@ -105,8 +105,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       bool built = false;  // false = early-out (too few hits): tracks holds the empty collection
     };
 
+    // Two handles onto the CA geometry SoA, because the product is split by ownership:
+    //   geometry_d : the `layers` and `modules` blocks -- pure conditions. For the OT-stub topology
+    //                this is the shared EventSetup product (CAGeometryRecord), built once per IOV
+    //                for both CA iterations and the merger.
+    //   cuts_d     : the `graph`, `doubletCuts`, `tripletCuts` and `ntupletCuts` blocks -- per
+    //                iteration configuration, from the producer's own run cache.
+    // A topology that does not consume the EventSetup product passes the same object twice.
+    // finishTuplesAsync takes only the geometry handle: the fit passes read `modules` and nothing
+    // else, and no cut block is read downstream of the build.
     PendingTuples beginTuplesAsync(HitsOnDevice const& hits_d,
-                                   CAGeometryOnDevice const& params_d,
+                                   CAGeometryOnDevice const& geometry_d,
+                                   CAGeometryOnDevice const& cuts_d,
                                    float bfield,
                                    uint32_t maxDoublets,
                                    uint32_t maxTuples,
@@ -120,7 +130,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     TkSoADevice finishTuplesAsync(PendingTuples&& pending,
                                   HitsOnDevice const& hits_d,
-                                  CAGeometryOnDevice const& params_d,
+                                  CAGeometryOnDevice const& geometry_d,
                                   Queue& queue) const;
 
     // Always-on overflow reporting, independent of doStats_: the capacity guards in the build

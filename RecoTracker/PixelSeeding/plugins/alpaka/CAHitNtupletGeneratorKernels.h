@@ -257,11 +257,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // Kernel_overflowSentinel into it (doStats-independent overflow surfacing).
     uint32_t* ovfAccum_ = nullptr;
 
+    // No CALayersSoAConstView here: the fishbone threshold comes from the per-layer cut block
+    // (ntupletCuts.fishboneCut). prepareHits and buildDoublets take the layers block because they
+    // read layerStarts/isOT.
     void launchKernels(const HitsConstView& hh,
                        uint32_t offsetBPIX2,
                        uint16_t nLayers,
                        TkSoABlocksView& view,
-                       const ::reco::CALayersSoAConstView& ll,
                        const ::reco::CAGraphSoAConstView& cc,
                        const ::reco::CATripletCutsSoAConstView& tripletCuts,
                        const ::reco::CANtupletCutsSoAConstView& ntupletCuts,

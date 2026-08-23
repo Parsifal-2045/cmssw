@@ -35,6 +35,7 @@
 
 #include "RecoTracker/Record/interface/TrackerRecoGeometryRecord.h"
 #include "RecoTracker/Record/interface/StackedModuleGeometryRecord.h"
+#include "RecoTracker/Record/interface/CAGeometryRecord.h"
 #include "RecoTracker/PixelSeeding/interface/alpaka/CAGeometrySoACollection.h"
 #include "RecoTracker/PixelTrackFitting/interface/alpaka/BLMaterialMapCollection.h"
 #include "RecoTracker/Record/interface/BLMaterialMapRecord.h"
@@ -43,9 +44,11 @@
 #include "RecoTracker/PixelSeeding/interface/CAGeometryHost.h"
 #include "RecoTracker/PixelSeeding/interface/StackedModuleGeometryHost.h"
 #include "RecoTracker/PixelSeeding/interface/alpaka/StackedModuleGeometrySoACollection.h"
+#include "CAGeometryBuild.h"
 #include "CAHitNtupletGenerator.h"
 
 #include "HeterogeneousCore/AlpakaCore/interface/MoveToDeviceCache.h"
+#include "HeterogeneousCore/AlpakaInterface/interface/host.h"
 #include "Geometry/Records/interface/TrackerDigiGeometryRecord.h"
 #include "Geometry/Records/interface/TrackerTopologyRcd.h"
 #include "Geometry/TrackerGeometryBuilder/interface/TrackerGeometry.h"
@@ -241,17 +244,24 @@ namespace reco {
 
     bool startNoBPix1_;
 
+    // BeginRun handles for the per-run geometry build. Consumed only by the topologies that build
+    // their own geometry; Phase2OTStubs takes it from CAGeometryRecord instead and leaves these
+    // unset -- see the constructor and globalBeginRun.
     mutable edm::ESGetToken<TrackerGeometry, TrackerDigiGeometryRecord> tokenGeometry_;
     mutable edm::ESGetToken<TrackerTopology, TrackerTopologyRcd> tokenTopology_;
-    mutable edm::ESGetToken<::reco::StackedModuleGeometryHost, StackedModuleGeometryRecord> tokenStackedGeometry_;
   };
 
 }  // namespace reco
 
 namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
-  // Per-run device-resident CA geometry. The OT-hit extension runs once at the merger, not in the CA,
-  // so the extender layer surfaces are not built/cached here.
+  // Per-run device-resident CA geometry SoA of one CA producer. What it holds depends on the
+  // topology (see globalBeginRun):
+  //   * Phase2OTStubs -- the per-iteration configuration blocks only (graph + the three cut
+  //     blocks). The geometry blocks come from the shared EventSetup product on CAGeometryRecord,
+  //     built once per IOV for both OT-stub CA iterations and the merger.
+  //   * every other topology -- all six blocks, geometry included.
+  // It is a RunCache in both cases (MoveToDeviceCache lifetime).
   struct CARunGeometry {
     using CAGeometryCache = cms::alpakatools::MoveToDeviceCache<Device, ::reco::CAGeometryHost>;
     CARunGeometry(::reco::CAGeometryHost&& geometry) : geometry_(std::move(geometry)) {}
@@ -274,8 +284,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     using Algo = CAHitNtupletGenerator<TrackerTraits>;
 
     using CAGeometryCache = cms::alpakatools::MoveToDeviceCache<Device, ::reco::CAGeometryHost>;
-    using Rotation = SOARotation<float>;
-    using Frame = SOAFrame<float>;
 
   public:
     explicit CAHitNtupletAlpaka(const edm::ParameterSet& iConfig, const ::reco::CAGeometryParams* iCache);
@@ -309,7 +317,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // function relies on directly.
       int n_layers = iCache->caThetaCuts_.size();
       int n_pairs = iCache->layerPairs_.size() / 2;
-      int n_modules = 0;
 
 #ifdef GPU_DEBUG
       std::cout << "No. Layers to be used = " << n_layers << std::endl;
@@ -320,300 +327,70 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       assert(int(*std::max_element(iCache->layerPairs_.begin(), iCache->layerPairs_.end())) < n_layers);
       assert(iCache->startingPairs_.empty() ||
              int(*std::max_element(iCache->startingPairs_.begin(), iCache->startingPairs_.end())) < n_pairs);
+      // The CAGeometryParams constructor already requires every per-layer vector (fishboneCuts
+      // included) to have caThetaCuts.size() entries, so that is the same n_layers used below.
+      assert(n_layers == int(iCache->fishboneCuts_.size()));
 
-      auto const& trackerGeometry = iSetup.getData(iCache->tokenGeometry_);
-      auto const& trackerTopology = iSetup.getData(iCache->tokenTopology_);
-      auto const& dets = trackerGeometry.dets();
-
-      // Get stacked module geometry for Phase-2 OT with stubs
-      ::reco::StackedModuleGeometryHost const* stackedGeometry = nullptr;
-      if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
-        stackedGeometry = &iSetup.getData(iCache->tokenStackedGeometry_);
-      }
-
-#ifdef GPU_DEBUG
-      auto subSystem = 0;
-      auto subSystemName = GeomDetEnumerators::tkDetEnum[subSystem];
-      std::cout
-          << "========================================================================================================="
-          << std::endl;
-#endif
-
-      auto oldLayer = 0u;
-      auto layerCount = 0u;
-
-      std::vector<bool> layerIsBarrel(n_layers);
-      std::vector<bool> layerIsOT(n_layers);
-      std::vector<bool> layerIsSS(n_layers);
-      std::vector<int> layerStarts(n_layers + 1);
-      //^ why n_layers + 1? This is a cumulative sum of the number
-      // of modules each layer has. And we need the  extra spot
-      // at the end to hold the total number of modules.
-
-      std::vector<int> moduleToindexInDets;
-
-      auto isPinPSinOTBarrel = [&](DetId detId) {
-        // Select only P-hits from the OT barrel
-        return (trackerGeometry.getDetectorType(detId) == TrackerGeometry::ModuleType::Ph2PSP &&
-                detId.subdetId() == StripSubdetector::TOB);
-      };
-      auto isPixel = [&](DetId detId) {
-        auto subId = detId.subdetId();
-        return (subId == PixelSubdetector::PixelBarrel || subId == PixelSubdetector::PixelEndcap);
-      };
-      auto isBarrel = [&](DetId detId) {
-        auto subId = detId.subdetId();
-        auto subDetector = trackerGeometry.geomDetSubDetector(subId);
-        return GeomDetEnumerators::isBarrel(subDetector);
-      };
-
-      // loop over all detector modules and build the CA layers
-      int counter = 0;
-      for (auto& det : dets) {
-        DetId detid = det->geographicalId();
-        auto layer = trackerTopology.layer(detid);
-        // Logic:
-        // - if we are not inside pixels, we need to ignore anything **but** the OT.
-        // - for the time being, this is assuming that the CA extension will
-        //   only cover the OT barrel part, and will ignore the OT forward.
-
-#ifdef GPU_DEBUG
-        auto subId = detid.subdetId();
-        if (subSystemName != trackerGeometry.geomDetSubDetector(subId)) {
-          subSystemName = trackerGeometry.geomDetSubDetector(subId);
-          std::cout << " ===================== Subsystem: " << subSystemName << std::endl;
-        }
-#endif
-
-        // Modules of the pixel layers
-        if (isPixel(detid)) {
-          if (layer != oldLayer) {
-#ifdef GPU_DEBUG
-            std::cout << "Pixel LayerStart: CA layer " << layerCount << " at subdetector layer " << layer
-                      << " starts at module " << n_modules << " and is " << (isBarrel(detid) ? "barrel" : "not barrel")
-                      << std::endl;
-#endif
-            layerIsBarrel[layerCount] = isBarrel(detid);
-            layerIsOT[layerCount] = false;  // we are in the loop over pixel dets, so these are not OT layers
-            layerIsSS[layerCount] = false;  // we are in the loop over pixel dets, so these are not SS layers
-            layerStarts[layerCount++] = n_modules;
-            if (layerCount >= layerStarts.size())
-              break;
-            oldLayer = layer;
-          }
-          moduleToindexInDets.push_back(counter);
-          n_modules++;
-        }
-
-        // if we are using the CA extension for Phase-2,
-        // we also have to collect the modules from the considered OT layers
-        if constexpr (std::is_same_v<pixelTopology::Phase2OT, TrackerTraits>) {
-          auto const& detUnits = det->components();
-          for (auto& detUnit : detUnits) {
-            DetId unitDetId(detUnit->geographicalId());
-            // Modules of the considered OT layers
-            if (isPinPSinOTBarrel(unitDetId)) {
-              if (layer != oldLayer) {
-#ifdef GPU_DEBUG
-                std::cout << "OT LayerStart: CA layer " << layerCount << " at subdetector layer " << layer
-                          << " starts at module " << n_modules << " and is "
-                          << (isBarrel(detid) ? "barrel" : "not barrel") << std::endl;
-#endif
-                layerIsBarrel[layerCount] = isBarrel(detid);
-                layerIsOT[layerCount] = true;   // we are in the loop over PS modules, so these are all OT layers
-                layerIsSS[layerCount] = false;  // we are in the loop over PS modules, so these are not SS layers
-                layerStarts[layerCount++] = n_modules;
-                if (layerCount >= layerStarts.size())
-                  break;
-                oldLayer = layer;
-              }
-              moduleToindexInDets.push_back(counter);
-              n_modules++;
-            }
-          }
-        }
-        counter++;
-      }
-
-      // Process OT stacked modules for Phase-2 with stubs
-      // CA layers follow inside-out ordering:
-      // - CA layers 28-33: Barrel (layers 1-6)
-      // - CA layers 34-43: Backward disks (layers 1-5) split in two groups:
-      //                    34-38 with PS modules first, then SS; 39-43 with no PS/SS split
-      // - CA layers 44-53: Forward disks (layers 1-5) split in two groups:
-      //                    44-48 with PS modules first, then SS; 49-53 with no PS/SS split
+      // The product this run cache carries.
       //
-      // IMPORTANT: StackedModuleGeometry is ALREADY sorted in CA order by StackedModuleGeometryESProducer
-      // (barrel by layer -> backward by layer -> forward by layer) using stable_sort.
-      // We iterate through it in index order WITHOUT re-sorting to ensure the frame array
-      // index matches the detectorIndex assigned to hits/stubs (detectorIndex = nPixelModules + geomIndex).
-      // Number of pixel modules already processed; OT modules start at this CA module index.
-      // Used below when populating CAModulesSoA::innerSensorFrame for OT modules.
-      const int nPixelModulesInCA = n_modules;
-
-      if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
-        if (stackedGeometry != nullptr) {
-          auto stackedView = stackedGeometry->view();
-          const uint32_t nStackedModules = static_cast<uint32_t>(stackedView.metadata().size());
-
-          bool firstModule = true;
-          uint8_t prevLayer = 0;
-          bool prevBarrel = false;
-          bool prevIsPS = false;
-          int prevCategory = -1;  // 0=barrel, 1=backward, 2=forward
-
-          // Iterate through StackedModuleGeometry in index order (already sorted in CA order)
-          for (uint32_t i = 0; i < nStackedModules; ++i) {
-            bool isBarrel = stackedView.isBarrel()[i];
-            bool isFwdEndcap = stackedView.isFwdEndcap()[i];
-            bool isPS = stackedView.isPS()[i];
-            uint8_t otLayer = stackedView.layer()[i];
-            DetId stackedDetId(stackedView.stackedDetId()[i]);
-
-            // Determine category: 0=barrel, 1=backward, 2=forward
-            int category = isBarrel ? 0 : (isFwdEndcap ? 2 : 1);
-
-            // Check if we've transitioned to a new CA layer
-            // A new layer starts when category changes OR layer number changes within same category
-            if (firstModule || category != prevCategory || otLayer != prevLayer || isPS != prevIsPS) {
-              // Start new CA layer
-              if (layerCount < layerStarts.size()) {
-                layerIsBarrel[layerCount] = isBarrel;
-                layerIsOT[layerCount] =
-                    true;  // we are in the loop over StackedModuleGeometry, so these are all OT layers
-                layerIsSS[layerCount] = !isPS;
-                layerStarts[layerCount++] = n_modules;
-
-#ifdef GPU_DEBUG
-                const char* categoryName = isBarrel ? "barrel" : (isFwdEndcap ? "forward" : "backward");
-                std::cout << "OT LayerStart: CA layer " << (layerCount - 1) << " starts at module " << n_modules << " ("
-                          << categoryName << " layer " << int(otLayer) << ")" << std::endl;
-#endif
-              }
-              prevCategory = category;
-              prevLayer = otLayer;
-              prevBarrel = isBarrel;
-              prevIsPS = isPS;
-              firstModule = false;
-            }
-
-            // Find this module in TrackerGeometry dets list
-            bool found = false;
-            for (int detIdx = 0; detIdx < static_cast<int>(dets.size()); ++detIdx) {
-              if (dets[detIdx]->geographicalId() == stackedDetId) {
-                moduleToindexInDets.push_back(detIdx);
-                n_modules++;
-                found = true;
-                break;
-              }
-            }
-            if (!found) {
-              edm::LogWarning("CAHitNtuplet")
-                  << "Could not find stacked module " << stackedDetId.rawId() << " in TrackerGeometry";
-            }
-          }
+      // Phase2OTStubs: the configuration blocks only, {0, n_pairs, n_pairs, n_pairs, n_layers, 0}.
+      //   The geometry blocks (layers + modules) come from the shared EventSetup product on
+      //   CAGeometryRecord, which both OT-stub CA iterations and PixelTracksSoAMerger read: the
+      //   tracker walk runs once per IOV and the module table (a few MB) is resident once per
+      //   device instead of once per consumer. Nothing is read from the EventSetup here.
+      //
+      // Every other topology: the self-contained per-run build, all six blocks in one product,
+      //   {n_layers + 1, n_pairs, n_pairs, n_pairs, n_layers, n_modules} (walk in CAGeometryBuild.h).
+      //   No ESProducer is needed, and the two geometry handles the generator takes are the same
+      //   object.
+      ::reco::CAGeometryHost product = [&]() {
+        if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
+          return ::reco::CAGeometryHost{cms::alpakatools::host(), 0, n_pairs, n_pairs, n_pairs, n_layers, 0};
+        } else {
+          auto const& trackerGeometry = iSetup.getData(iCache->tokenGeometry_);
+          auto const& trackerTopology = iSetup.getData(iCache->tokenTopology_);
+          // stackedGeometry is a Phase2OTStubs-only input, and that topology does not build here.
+          return ::reco::buildCAGeometryHost<TrackerTraits>(
+              trackerGeometry, trackerTopology, /* stackedGeometry = */ nullptr, n_layers, n_pairs, n_layers);
         }
-      }
+      }();
 
 #ifdef GPU_DEBUG
-      std::cout << "Full CA LayerStart: " << n_layers << " layers with " << n_modules << " modules in total."
-                << std::endl;
+      std::cout << "Full CA LayerStart: " << n_layers << " layers with " << product.view().modules().metadata().size()
+                << " modules in total (0 modules => the geometry blocks come from CAGeometryRecord)." << std::endl;
 #endif
-      layerStarts[n_layers] = n_modules;
 
-      reco::CAGeometryHost product{
-          cms::alpakatools::host(), n_layers + 1, n_pairs, n_pairs, n_pairs, n_layers, n_modules};
-
-      auto layerSoA = product.view().layers();
       auto graphSoA = product.view().graph();
       auto doubletCutsSoA = product.view().doubletCuts();
       auto tripletCutsSoA = product.view().tripletCuts();
       auto ntupletCutsSoA = product.view().ntupletCuts();
-      auto modulesSoA = product.view().modules();
-
-      // For Phase2OTStubs, stackedView is needed below to pick the right per-sensor
-      // frame for each OT module's `innerSensorFrame` per the contract:
-      //   - PSP (moduleType==0): inner = lower sensor (P-side).
-      //   - PSS (moduleType==1): inner = upper sensor (P-side).
-      //   - SS:                   inner = physically-inner = lower if !isFlipped, else upper.
-      auto pickInnerFrame = [&](int iCA) -> Frame {
-        // Default fallback: identity-handling via detFrame for non-OT or missing stacked info.
-        if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
-          if (stackedGeometry != nullptr && iCA >= nPixelModulesInCA) {
-            auto stackedView = stackedGeometry->view();
-            const uint32_t nStackedModules = static_cast<uint32_t>(stackedView.metadata().size());
-            const uint32_t iGeom = static_cast<uint32_t>(iCA - nPixelModulesInCA);
-            if (iGeom < nStackedModules) {
-              uint8_t mt = stackedView.moduleType()[iGeom];
-              bool isFlipped = stackedView.isFlipped()[iGeom];
-              bool useUpper;
-              if (mt == 0)
-                useUpper = false;  // PSP: pixel is lower
-              else if (mt == 1)
-                useUpper = true;  // PSS: pixel is upper
-              else
-                useUpper = isFlipped;  // SS: inner = lower if !flipped, else upper
-              return useUpper ? Frame(stackedView[iGeom].upperSensorFrame())
-                              : Frame(stackedView[iGeom].lowerSensorFrame());
-            }
-          }
-        }
-        // Pixel modules (or non-OTStubs topology): innerSensorFrame == detFrame.
-        return modulesSoA[iCA].detFrame();
-      };
-
-      for (int i = 0; i < n_modules; ++i) {
-        auto idx = moduleToindexInDets[i];
-        auto det = dets[idx];
-        auto vv = det->surface().position();
-        auto rr = Rotation(det->surface().rotation());
-        modulesSoA[i].detFrame() = Frame(vv.x(), vv.y(), vv.z(), rr);
-        modulesSoA[i].innerSensorFrame() = pickInnerFrame(i);
-#ifdef GPU_DEBUG
-        auto const& detUnits = det->components();
-        for (auto& detUnit : detUnits) {
-          DetId unitDetId(detUnit->geographicalId());
-          if (isPinPSinOTBarrel(unitDetId)) {
-            std::cout << "Filling frame at index " << idx << " in SoA position " << i << " for det "
-                      << det->geographicalId() << " and detUnit->index: " << detUnit->index() << std::endl;
-          }
-        }
-        std::cout << "Filling frame at index " << idx << " in SoA position " << i << " for det "
-                  << det->geographicalId() << std::endl;
-        std::cout << "Position: " << vv << " with Rotation: " << det->surface().rotation() << std::endl;
-        std::cout << "Rotation in z-r plane: "
-                  << atan2(det->surface().normalVector().perp(), det->surface().normalVector().z()) * 180. / M_PI
-                  << std::endl;
-#endif
-      }
 
       for (int i = 0; i < n_layers; ++i) {
-        layerSoA.fishboneCut()[i] = iCache->fishboneCuts_[i];
-        layerSoA.layerStarts()[i] = layerStarts[i];
-        layerSoA.isBarrel()[i] = layerIsBarrel[i];
-        layerSoA.isOT()[i] = layerIsOT[i];
-        layerSoA.isSS()[i] = layerIsSS[i];
         ntupletCutsSoA.startMaxInnerR()[i] = iCache->startMaxInnerR_[i];
         ntupletCutsSoA.maxDCurv()[i] = iCache->maxDCurv_[i];
         ntupletCutsSoA.floorDCurv()[i] = iCache->floorDCurv_[i];
+        // fishboneCut lives with the per-layer cuts, not with the per-layer geometry: the prompt and
+        // displaced OT-stub iterations share one layer table but use different thresholds. Its only
+        // reader is CAFishbone.
+        ntupletCutsSoA.fishboneCut()[i] = iCache->fishboneCuts_[i];
       }
-
-      layerSoA.layerStarts()[n_layers] = layerStarts[n_layers];
 
       // Per-layer-pair fill. The two triplet cuts the configuration expresses PER LAYER are broadcast
       // onto the pairs here, each pair taking the value of its OWN INNER layer. That is exactly the
       // indexing the kernels read back:
       //   * TripletCuts::accept reads maxDCA/floorDCA at the INNER cell's pair (L1,L2), whose inner
-      //     layer is the triplet's innermost layer L1  ->  caDCACuts[L1], upstream's anchor;
+      //     layer is the triplet's innermost layer L1  ->  caDCACuts[L1];
       //   * it reads maxRZTolerance at the OUTER cell's pair (L2,L3), whose inner layer is the
-      //     triplet's middle layer L2                  ->  caThetaCuts[L2], upstream's anchor.
+      //     triplet's middle layer L2                  ->  caThetaCuts[L2].
       // The scalar cellZ0Cut is broadcast unchanged onto every pair. The "...PerPair" vectors of the
       // OT-stub extension replace the corresponding broadcast when they are configured.
       for (int i = 0; i < n_pairs; ++i) {
         const uint32_t innerLayer = iCache->layerPairs_[2 * i];
+        // The layer-pair graph is per-iteration configuration too (the prompt and displaced
+        // iterations use different graphs), so it is filled here for every topology.
         graphSoA.layerPair()[i] = {{uint32_t(iCache->layerPairs_[2 * i]), uint32_t(iCache->layerPairs_[2 * i + 1])}};
         graphSoA.skipsLayers()[i] = uint16_t(bool(iCache->skipsLayers_[i]));
-        graphSoA.startingPair()[i] = false;  // set from the id list below
+        graphSoA.startingPair()[i] = false;
         doubletCutsSoA.maxDPhi()[i] = iCache->phiCuts_[i];
         doubletCutsSoA.minInner()[i] = iCache->minInner_[i];
         doubletCutsSoA.maxInner()[i] = iCache->maxInner_[i];
@@ -647,7 +424,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                                                            : -1.0f;
       }
 
-      // upstream's starting-pair id list
+      // `startingPairs` is a list of pair ids, stored as one flag per pair in the SoA.
       for (const unsigned int& i : iCache->startingPairs_)
         graphSoA.startingPair()[i] = true;
 
@@ -664,6 +441,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       tripletCutsSoA.sameDPhiSign() = iCache->sameDPhiSign_;
 
 #ifdef GPU_DEBUG
+      // The `layers` block is EMPTY for the topology whose geometry comes from CAGeometryRecord
+      // (Phase2OTStubs): print a dash instead of indexing it.
+      auto layersSoA = product.view().layers();
+      const bool hasLayerBlock = layersSoA.metadata().size() > 0;
       // Debug output: Print geometry values from Python config
       std::cout << "\n========== CA GEOMETRY FROM PYTHON CONFIG ==========" << std::endl;
       std::cout << "Number of layers: " << n_layers << std::endl;
@@ -693,10 +474,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // caThetaCuts/caDCACuts are the PER-LAYER configuration vectors (size n_layers), the form the
       // geometry PSet declares; the SoA columns they are broadcast onto are per layer PAIR.
       for (int i = 0; i < n_layers; ++i) {
-        std::cout << std::setw(5) << i << " | " << std::setw(8) << (layerIsBarrel[i] ? "Y" : "N") << " | "
-                  << std::setw(10) << iCache->caThetaCuts_[i] << " | " << std::setw(8) << iCache->caDCACuts_[i] << " | "
-                  << std::setw(14) << iCache->startMaxInnerR_[i] << " | " << std::setw(11) << iCache->fishboneCuts_[i]
-                  << std::endl;
+        std::cout << std::setw(5) << i << " | " << std::setw(8)
+                  << (hasLayerBlock ? (layersSoA.isBarrel()[i] ? "Y" : "N") : "-") << " | " << std::setw(10)
+                  << iCache->caThetaCuts_[i] << " | " << std::setw(8) << iCache->caDCACuts_[i] << " | " << std::setw(14)
+                  << iCache->startMaxInnerR_[i] << " | " << std::setw(11) << iCache->fishboneCuts_[i] << std::endl;
       }
       std::cout << "====================================================\n" << std::endl;
 #endif
@@ -709,6 +490,37 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     }
 
   private:
+    // Resolve the geometry handle (the `layers` and `modules` blocks) for this event.
+    // Phase2OTStubs takes it from the EventSetup: one build per IOV, shared with the other OT-stub
+    // CA iteration and with the merger. Every other topology returns the run-cache product itself,
+    // which carries all six blocks, so the generator gets the same object on both handles.
+    // The layer-count check: the ESProducer's `nLayers` and this producer's `geometry` PSet are
+    // configured independently, and a mismatch would silently index the wrong layerStarts.
+    // Comparing per event costs one integer compare.
+    typename Algo::CAGeometryOnDevice const& geometryHandle(device::EventSetup const& es,
+                                                            typename Algo::CAGeometryOnDevice const& runCacheProduct) {
+      if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
+        auto const& esGeometry = es.getData(tokenCAGeom_);
+        const int nLayersES = int(esGeometry.view().layers().metadata().size()) - 1;
+        const int nLayersCfg = int(globalCache()->caThetaCuts_.size());
+        if (nLayersES != nLayersCfg)
+          throw cms::Exception("CAGeometryMismatch")
+              << "CAHitNtupletAlpaka: the shared CA geometry (CAGeometryRecord) describes " << nLayersES
+              << " CA layers but this producer is configured for " << nLayersCfg
+              << ". The ESProducer's `nLayers` and the `geometry` PSet of every CA producer that shares it must "
+                 "describe the same layer table.";
+        return esGeometry;
+      } else {
+        return runCacheProduct;
+      }
+    }
+
+    // The geometry handle for the topology that shares it: the CAGeometryRecord product built once
+    // per IOV by CAGeometryESProducer<Phase2OTStubs> and read by both OT-stub CA iterations and by
+    // PixelTracksSoAMerger. Left unset (never consumed) for every other topology, which builds its
+    // own geometry per run and therefore needs no ESProducer.
+    device::ESGetToken<reco::CAGeometrySoACollection, CAGeometryRecord> tokenCAGeom_;
+
     const edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> tokenField_;
     // The BL-fit material map and the (Bz,Br) r-z field map (the same EventSetup conditions
     // PixelTracksSoAMerger reads for its GBL refit). The fit reads them only under useFitCorrections, so
@@ -767,10 +579,14 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     if (hasHitMask_) {
       tokenHitMask_ = device::EDGetToken<MapToHit>(consumes(iConfig.getParameter<edm::InputTag>("hitMask")));
     }
-    iCache->tokenGeometry_ = esConsumes<edm::Transition::BeginRun>();
-    iCache->tokenTopology_ = esConsumes<edm::Transition::BeginRun>();
     if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
-      iCache->tokenStackedGeometry_ = esConsumes<edm::Transition::BeginRun>();
+      // Shared geometry: consume the CAGeometryRecord product (built once per IOV by
+      // CAGeometryESProducer from TrackerGeometry, TrackerTopology and StackedModuleGeometry)
+      // instead of walking the tracker geometry per run.
+      tokenCAGeom_ = esConsumes();
+    } else {
+      iCache->tokenGeometry_ = esConsumes<edm::Transition::BeginRun>();
+      iCache->tokenTopology_ = esConsumes<edm::Transition::BeginRun>();
     }
   }
 
@@ -806,7 +622,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const float* rhoMapDevice = useFitCorrections_ ? es.getData(tokenBLMaterialMap_).data() : nullptr;
     const float* bMapDevice = useFitCorrections_ ? es.getData(tokenBLBFieldMap_).data() : nullptr;
 
-    auto const& geometry = runCache()->geometry_.get(iEvent.queue());
+    // Two handles onto the CA geometry SoA: the per-iteration CONFIGURATION (graph + cuts) from the
+    // run cache, and the GEOMETRY (layers + modules) from wherever this topology takes it. For
+    // every topology but Phase2OTStubs they are the same object.
+    auto const& caCuts = runCache()->geometry_.get(iEvent.queue());
+    auto const& caGeometry = geometryHandle(es, caCuts);
     auto const& hits = iEvent.get(tokenHit_);
 
     /// Don't bother if no hits on BPix1 and no good graph for that
@@ -852,7 +672,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // tuple-multiplicity offsets. No blocking wait anywhere: the framework's seam runs
     // produce only after this queue has drained.
     pending_ = deviceAlgo_.beginTuplesAsync(
-        hits, geometry, bf, maxDoublets, maxTuples, maskView, iEvent.queue(), rhoMapDevice, bMapDevice);
+        hits, caGeometry, caCuts, bf, maxDoublets, maxTuples, maskView, iEvent.queue(), rhoMapDevice, bMapDevice);
   }
 
   template <typename TrackerTraits>
@@ -873,10 +693,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     }
 
     // Fit passes + classification, consuming the offsets that landed across the seam;
-    // zero readbacks, zero waits.
-    auto const& geometry = runCache()->geometry_.get(iEvent.queue());
+    // zero readbacks, zero waits. The fit passes read the `modules` block only, i.e. the
+    // geometry handle; the cut blocks are not touched downstream of the build.
+    auto const& caCuts = runCache()->geometry_.get(iEvent.queue());
+    auto const& caGeometry = geometryHandle(es, caCuts);
     auto const& hits = iEvent.get(tokenHit_);
-    iEvent.emplace(tokenTrack_, deviceAlgo_.finishTuplesAsync(std::move(*pending_), hits, geometry, iEvent.queue()));
+    iEvent.emplace(tokenTrack_, deviceAlgo_.finishTuplesAsync(std::move(*pending_), hits, caGeometry, iEvent.queue()));
     pending_.reset();
 
 #ifdef CA_TRIPLET_DUMP

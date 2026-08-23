@@ -9,50 +9,22 @@
 
 namespace reco {
 
-  // struct RZMap
-  // {
-  //   // in cm
-  //   static constexpr float rmin = 0.f;
-  //   static constexpr float rmax = 120.f;
-  //   static constexpr float zlim = 300.f;
-  //   static constexpr float zran = 600.f;
-
-  //   static constexpr uint16_t binr = uint16_t(rmax) * 5;
-  //   static constexpr uint16_t binz = uint16_t(zlim) * 5;
-
-  //   static constexpr uint16_t binz = uint16_t(zlim) * 5;
-
-  //   // bin = 1 + int (fNbins*(x-fXmin)/(fXmax-fXmin) );
-  // }
-
   using GraphNode = std::array<uint32_t, 2>;
   using DetFrame = SOAFrame<float>;
 
   // CAModulesLayout: one row per CA module (pixel + OT stack).
-  //   detFrame:           the module's existing surface frame
-  //                       (pixel sensor for pixel modules; the stack det's
-  //                       surface -- typically the lower-sensor frame -- for
-  //                       OT modules).
-  //   innerSensorFrame:   the SOAFrame of the sensor whose local position
-  //                       and errors are written into a stub from this stack,
-  //                       per the "one fit point per stub" contract:
-  //                         - Pixel modules: identical to `detFrame`.
-  //                         - PS modules with moduleType=0 (PSP): lower
-  //                           sensor's frame (P-side).
-  //                         - PS modules with moduleType=1 (PSS): upper
-  //                           sensor's frame (P-side is upper here).
-  //                         - SS modules: physically-inner sensor's frame
-  //                           (= lower if !isFlipped, upper if isFlipped).
-  //                       Consumers (BrokenLine/Riemann fits, stub-formation
-  //                       bend-error formula, validation) use this column
-  //                       directly to propagate xerrLocal/yerrLocal to the
-  //                       global covariance via `SOAFrame::toGlobal`, instead
-  //                       of reading pre-computed columns from OTRecHitsSoA.
+  //   detFrame: the module's surface frame (pixel sensor, or the OT stack's lower-sensor frame).
+  //   innerSensorFrame: the sensor whose local position/errors are written into a stub ("one fit
+  //     point per stub" contract): =detFrame for pixel; PSP -> lower P-side; PSS -> upper P-side;
+  //     SS -> physically-inner sensor (lower if !isFlipped, upper if isFlipped).
+  //     Consumers (BL/Riemann fits, stub-formation bend-error, validation) propagate local errors to
+  //     the global covariance via SOAFrame::toGlobal instead of reading pre-computed OTRecHitsSoA columns.
   GENERATE_SOA_LAYOUT(CAModulesLayout, SOA_COLUMN(DetFrame, detFrame), SOA_COLUMN(DetFrame, innerSensorFrame))
 
+  // CALayersLayout: per-CA-layer geometry only (a function of the tracker geometry/topology),
+  // built once per IOV and shared by every CA iteration and the merger. Per-iteration per-layer
+  // configuration lives in CANtupletCutsLayout (which is why fishboneCut sits there, not here).
   GENERATE_SOA_LAYOUT(CALayersLayout,
-                      // doublet duplication removal
-                      SOA_COLUMN(float, fishboneCut),
                       // layer properties
                       SOA_COLUMN(uint32_t, layerStarts),
                       SOA_COLUMN(bool, isBarrel),
@@ -101,12 +73,17 @@ namespace reco {
                       SOA_SCALAR(float, maxPhiResid),
                       SOA_SCALAR(bool, sameDPhiSign))
 
+  // CANtupletCutsLayout: per-CA-LAYER configuration (one row per layer, not per layer pair).
   GENERATE_SOA_LAYOUT(CANtupletCutsLayout,
                       // N-tuplet cuts
                       SOA_COLUMN(float, startMaxInnerR),
                       // quadruplet cuts
                       SOA_COLUMN(float, maxDCurv),
-                      SOA_COLUMN(float, floorDCurv))
+                      SOA_COLUMN(float, floorDCurv),
+                      // Fishbone: squared-cosine threshold between two doublets sharing an outer
+                      // hit, indexed by that hit's CA layer. Per-iteration configuration (the prompt
+                      // and displaced iterations use different values), so it lives with the cuts.
+                      SOA_COLUMN(float, fishboneCut))
 
   GENERATE_SOA_BLOCKS(CALayoutTemplate,
                       SOA_BLOCK(layers, CALayersLayout),

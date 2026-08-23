@@ -22,39 +22,38 @@
 
 namespace reco {
 
-  // Build the GEOMETRY-ONLY blocks of the CA geometry SoA once at conditions time. This is a
-  // faithful lift of the module/layer/graph fill in CAHitNtuplet.cc globalBeginRun (the geometry,
-  // per-CA-layer classification, and layer-pair graph). It intentionally does NOT fill the
-  // doublet/triplet/ntuplet cut blocks: those are per-producer configuration, not conditions, and
-  // are left default in the returned product (only `layers.fishboneCut` and the `graph` block --
-  // which are pure per-run geometry/topology inputs -- are written here alongside the module and
-  // layer geometry).
-  //
-  //   trackerGeometry / trackerTopology : the per-run tracker geometry + topology records.
-  //   stackedGeometry                   : the CA-ordered OT stacked-module geometry (non-null only
-  //                                       for the Phase2OTStubs topology); provides the OT module
-  //                                       ordering and per-sensor frames.
-  //   layerPairs / startingPair / skipsLayers : the layer-pair graph configuration (per producer;
-  //                                       identical across producers sharing a geometry).
-  //   fishboneCuts                      : per-CA-layer fishbone merge threshold (sizes n_layers).
+  // Build the geometry-only blocks of the CA geometry SoA (the module/layer walk), a pure function of
+  // (TrackerGeometry, TrackerTopology, StackedModuleGeometry, nLayers):
+  //   layers  : layerStarts, isBarrel, isOT, isSS   (nLayers + 1 rows; the extra layerStarts slot
+  //             holds the total module count)
+  //   modules : detFrame, innerSensorFrame          (one row per CA module)
+  // Nothing per-iteration is written: the layer-pair graph, the doublet/triplet/ntuplet cuts and the
+  // per-layer fishbone threshold are producer configuration and differ between CA iterations over the
+  // same geometry. This is what lets CAGeometryESProducer publish one copy on CAGeometryRecord for the
+  // OT-stub CA producers and the merger.
+  //   stackedGeometry        : the CA-ordered OT stacked-module geometry (non-null only for the
+  //                            Phase2OTStubs topology); provides the OT module ordering and sensor frames.
+  //   nLayers                : the CA layer count (sizes the layers block).
+  //   nCutPairs / nCutLayers : row counts of the cut blocks, which are allocated here but never written.
+  //                            Both default to 0 (geometry-only EventSetup product). A CA producer that
+  //                            keeps its cuts in the same product passes (n_pairs, n_layers) and fills
+  //                            them in place on the returned object.
   template <typename TrackerTraits>
   reco::CAGeometryHost buildCAGeometryHost(TrackerGeometry const& trackerGeometry,
                                            TrackerTopology const& trackerTopology,
                                            reco::StackedModuleGeometryHost const* stackedGeometry,
-                                           std::vector<unsigned int> const& layerPairs,
-                                           std::vector<unsigned int> const& startingPair,
-                                           std::vector<unsigned int> const& skipsLayers,
-                                           std::vector<double> const& fishboneCuts) {
+                                           int nLayers,
+                                           int nCutPairs = 0,
+                                           int nCutLayers = 0) {
     using Rotation = SOARotation<float>;
     using Frame = SOAFrame<float>;
 
-    int n_layers = fishboneCuts.size();
-    int n_pairs = layerPairs.size() / 2;
+    int n_layers = nLayers;
     int n_modules = 0;
 
-    assert(n_pairs == int(startingPair.size()));
-    assert(n_pairs == int(skipsLayers.size()));
-    assert(int(*std::max_element(layerPairs.begin(), layerPairs.end())) < n_layers);
+    assert(n_layers > 0);
+    assert(nCutPairs >= 0);
+    assert(nCutLayers == 0 || nCutLayers == n_layers);
 
     auto const& dets = trackerGeometry.dets();
 
@@ -210,11 +209,13 @@ namespace reco {
 
     layerStarts[n_layers] = n_modules;
 
+    // Block sizes, in CALayoutTemplate order: layers, graph, doubletCuts, tripletCuts, ntupletCuts,
+    // modules. With the default nCutPairs/nCutLayers = 0 the four configuration blocks are
+    // allocated with ZERO rows -- the EventSetup product carries geometry and nothing else.
     reco::CAGeometryHost product{
-        cms::alpakatools::host(), n_layers + 1, n_pairs, n_pairs, n_pairs, n_layers, n_modules};
+        cms::alpakatools::host(), n_layers + 1, nCutPairs, nCutPairs, nCutPairs, nCutLayers, n_modules};
 
     auto layerSoA = product.view().layers();
-    auto graphSoA = product.view().graph();
     auto modulesSoA = product.view().modules();
 
     // For Phase2OTStubs, stackedView is needed below to pick the right per-sensor
@@ -258,7 +259,6 @@ namespace reco {
     }
 
     for (int i = 0; i < n_layers; ++i) {
-      layerSoA.fishboneCut()[i] = fishboneCuts[i];
       layerSoA.layerStarts()[i] = layerStarts[i];
       layerSoA.isBarrel()[i] = layerIsBarrel[i];
       layerSoA.isOT()[i] = layerIsOT[i];
@@ -266,12 +266,6 @@ namespace reco {
     }
 
     layerSoA.layerStarts()[n_layers] = layerStarts[n_layers];
-
-    for (int i = 0; i < n_pairs; ++i) {
-      graphSoA.layerPair()[i] = {{uint32_t(layerPairs[2 * i]), uint32_t(layerPairs[2 * i + 1])}};
-      graphSoA.skipsLayers()[i] = uint16_t(bool(skipsLayers[i]));
-      graphSoA.startingPair()[i] = startingPair[i];
-    }
 
     return product;
   }

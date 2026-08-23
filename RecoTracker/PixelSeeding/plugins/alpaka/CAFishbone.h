@@ -28,9 +28,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
   template <typename TrackerTraits>
   class CAFishbone {
   public:
+    // ntupletCuts: the per-CA-LAYER cut block. Only `fishboneCut` is read here, indexed by the CA
+    // layer of the shared OUTER hit. It is per-iteration configuration, which is why it sits in the
+    // cut block rather than in the geometry block shared across CA iterations.
     ALPAKA_FN_ACC void operator()(Acc2D const& acc,
                                   HitsConstView hh,
-                                  ::reco::CALayersSoAConstView const& ll,
+                                  ::reco::CANtupletCutsSoAConstView const& ntupletCuts,
                                   ::reco::CAGraphSoAConstView const& cc,
                                   CACell<TrackerTraits>* cells,
                                   uint32_t const* __restrict__ nCells,
@@ -58,7 +61,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
         auto yo = c0.outer_y(hh);
         auto zo = c0.outer_z(hh);
         auto const lo = c0.outerLayer(cc);
-        auto const threshold = ll[lo].fishboneCut();
+        auto const threshold = ntupletCuts[lo].fishboneCut();
         //printf("first cell %d xo %.2f yo %.2f zo %.2f - ",bin[0],c0.outer_x(hh),c0.outer_y(hh),c0.outer_z(hh));ve
 
 #ifdef GPU_DEBUG
