@@ -28,9 +28,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
   template <typename TrackerTraits>
   class CAFishbone {
   public:
+    // ntupletCuts: per-CA-layer cut block; only `fishboneCut` is read here, indexed by the CA layer
+    // of the shared outer hit.
     ALPAKA_FN_ACC void operator()(Acc2D const& acc,
                                   HitsConstView hh,
-                                  ::reco::CALayersSoAConstView const& ll,
+                                  ::reco::CANtupletCutsSoAConstView const& ntupletCuts,
                                   ::reco::CAGraphSoAConstView const& cc,
                                   CACell<TrackerTraits>* cells,
                                   uint32_t const* __restrict__ nCells,
@@ -58,7 +60,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
         auto yo = c0.outer_y(hh);
         auto zo = c0.outer_z(hh);
         auto const lo = c0.outerLayer(cc);
-        auto const threshold = ll[lo].fishboneCut();
+        auto const threshold = ntupletCuts[lo].fishboneCut();
         //printf("first cell %d xo %.2f yo %.2f zo %.2f - ",bin[0],c0.outer_x(hh),c0.outer_y(hh),c0.outer_z(hh));ve
 
 #ifdef GPU_DEBUG
@@ -97,27 +99,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
                    cj.inner_z(hh));
 #endif
 
-            // Same detector module check with special handling for stubs
             if (ci.inner_detIndex(hh) == cj.inner_detIndex(hh)) {
-              // For Phase2OTStubs: handle the case where multiple stubs share the same P-hit
-              // If two stubs have the same lowerHitIdx, they come from the same P-hit
-              // and one should be killed (duplicate). If different lowerHitIdx, they are
-              // from different P-hits on the same module - skip (not duplicates).
+              // Two stubs on the same module are duplicates only if they share the same P-hit,
+              // i.e. the same lowerHitIdx.
               if constexpr (std::is_same_v<pixelTopology::Phase2OTStubs, TrackerTraits>) {
                 auto innerHitI = ci.inner_hit_id();
                 auto innerHitJ = cj.inner_hit_id();
-                // Check if both inner hits are stubs
                 if (isStub(hh, innerHitI) && isStub(hh, innerHitJ)) {
                   auto lowerHitI = hh[innerHitI].lowerHitIdx();
                   auto lowerHitJ = hh[innerHitJ].lowerHitIdx();
-                  // If different lower hits (different P-hits on same module), skip
-                  // These are not duplicates - they represent different physical P-hits
                   if (lowerHitI != lowerHitJ) {
                     continue;
                   }
 
-                  // Same lower hit: these are duplicate stubs from the same P-hit
-                  // Check which stub dPhiDr is more compatible with the doublet
+                  // Duplicate stubs: keep the one whose dPhiDr agrees better with the doublet.
                   auto iphio = ci.outer_iphi(hh);
                   auto iphii = ci.inner_iphi(hh);
                   auto ro = ci.outer_r(hh);
@@ -127,21 +122,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
                   auto dPhiDiffI = std::abs(dphi - dr * ci.inner_dPhiDr(hh));
                   auto dPhiDiffJ = std::abs(dphi - dr * cj.inner_dPhiDr(hh));
 
-                  // keep the one that agrees better (smaller abs dPhiDiff)
-                  // and kill the other cell
-                  // Note: we also don't remember the other cell as a fishbone in the CACell because
-                  //       the killed cell probably had a fake stub (worse alignment)
+                  // The killed cell is not remembered as a fishbone: it probably carried a fake stub.
                   if (dPhiDiffI < dPhiDiffJ)
                     cj.kill();
                   else
                     ci.kill();
                 }
-                // continue since stubs are fully dealt with above
-                // and if one is no stub we don't want to remove any
+                // If either inner hit is not a stub, remove neither.
                 continue;
 
               } else {
-                // Other topologies: cells whose inner hits sit on the same module are never compared
+                // Other topologies: cells sharing the inner module are never compared.
                 continue;
               }
             }
