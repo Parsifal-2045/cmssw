@@ -7,6 +7,7 @@ import FWCore.ParameterSet.Config as cms
 from RecoTracker.Configuration.customiseEarlyDeleteForSeeding import customiseEarlyDeleteForSeeding
 from RecoTracker.Configuration.customiseEarlyDeleteForMkFit import customiseEarlyDeleteForMkFit
 from RecoTracker.Configuration.customiseEarlyDeleteForCKF import customiseEarlyDeleteForCKF
+from RecoTracker.Configuration.customiseEarlyDeleteForPixelStubsCA import customiseEarlyDeleteForPixelStubsCA
 from CommonTools.ParticleFlow.Isolation.customiseEarlyDeleteForCandIsoDeposits import customiseEarlyDeleteForCandIsoDeposits
 
 def customiseEarlyDelete(process):
@@ -18,6 +19,8 @@ def customiseEarlyDelete(process):
     (products, newReferences) = customiseEarlyDeleteForMkFit(process, products)
     references.update(newReferences)
     (products, newReferences) = customiseEarlyDeleteForCKF(process, products)
+    references.update(newReferences)
+    (products, newReferences) = customiseEarlyDeleteForPixelStubsCA(process, products)
     references.update(newReferences)
 
     products = customiseEarlyDeleteForCandIsoDeposits(process, products)
