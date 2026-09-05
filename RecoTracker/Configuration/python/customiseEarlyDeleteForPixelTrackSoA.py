@@ -3,12 +3,13 @@ import collections
 import FWCore.ParameterSet.Config as cms
 
 # Early deletion of the device products of the stub-seeded pixel-track chain (phase2CAStubs) that
-# nothing reads after the next step of the chain: about 27 MiB per event and stream on QCD PU200.
+# nothing reads after the next step of the chain: about 45 MiB per event and stream on QCD PU200.
 #
 # Releasing a device product early is safe only if no reader can still be reading it when the caching
 # allocator hands its block to a later allocation on the producer's queue. The readers named below were
-# checked for that: they enqueue every read in acquire(), which has drained before their produce() runs,
-# and the delete follows produce().
+# checked for that, in one of two ways: they enqueue every read in acquire(), which has drained before
+# their produce() runs and the delete follows produce(); or the get() of the product is their first
+# access to the event, so they run on the product's queue.
 #
 # A product is listed only when every alpaka module the schedule runs that reads it is one of the
 # readers named for it; any other reader keeps it alive. Readers that are not alpaka modules read the
@@ -23,11 +24,13 @@ _tracks = ("128falserecoTrackBlocksLayoutvoidPortableDeviceCollectionedmDevicePr
            "128falserecoTrackBlocksLayoutPortableHostCollection")
 _mask = ("128falserecoTrackingRecHitsMaskingLayoutvoidPortableDeviceCollectionedmDeviceProduct",
          "128falserecoTrackingRecHitsMaskingLayoutPortableHostCollection")
+_hits = ("recoTrackingRecHitDeviceedmDeviceProduct", "recoTrackingRecHitHost")
 
 _stubCA = "CAHitNtupletAlpakaPhase2OTStubs@alpaka"
 _selector = "PixelTrackForestHighPuritySelector@alpaka"
 _masking = "PixelTracksMaskingSoA@alpaka"
 _trackMerger = "PixelTracksSoAMerger@alpaka"
+_hitMerger = "SiPixelRecHitsStubsMerger@alpaka"
 
 # Producer type -> (the products released, the reader types checked for them). The checks, per row:
 _released = {
@@ -41,6 +44,12 @@ _released = {
     # iterations the prompt and displaced selections are read by the masking step and the merger in
     # produce() and stay
     _selector: ((_tracks,), ()),
+    # the pixel-only rechits: the pixel-stub merger's get() of them is its first event access
+    "SiPixelRecHitAlpakaPhase2OTStubs@alpaka": ((_hits,), (_hitMerger,)),
+    # the pixel-stub merger's seed-mask layout: the masking step's get() of it is its first event access;
+    # the merged rechits it also makes are read in produce() by the CA iterations and the track merger
+    # and stay
+    _hitMerger: ((_mask,), (_stubCA, _masking, _trackMerger, _selector)),
 }
 
 

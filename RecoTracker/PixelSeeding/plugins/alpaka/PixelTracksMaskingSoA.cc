@@ -92,7 +92,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   void PixelTracksMaskingSoA::produce(edm::StreamID streamID,
                                       device::Event& iEvent,
                                       const device::EventSetup& es) const {
-    auto queue = iEvent.queue();
+    // Reading the mask layout first puts the module on the queue that produced it, which orders its
+    // reads before the early release of that product. Keep this get() first.
     const auto& inpMaskColl = iEvent.get(inputRecHitsMaskToken_);
     const auto& inpTkColl = iEvent.get(inputTrackSoAToken_);
 

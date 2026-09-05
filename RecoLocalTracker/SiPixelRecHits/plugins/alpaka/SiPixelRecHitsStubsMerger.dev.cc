@@ -227,10 +227,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   void SiPixelRecHitsStubsMerger::produce(edm::StreamID streamID,
                                           device::Event& iEvent,
                                           const device::EventSetup& es) const {
-    auto queue = iEvent.queue();
+    // The pixel rechits are read first, before any other access to the event: the module then runs on
+    // the queue that produced them, which orders its reads before the early release of that product
+    // (customiseEarlyDeleteForPixelTrackSoA). Keep this get() first.
     const auto& pixRecHitsColl = iEvent.get(pixelRecHitToken_);
     const auto& stubsColl = iEvent.get(stubsToken_);
     const auto& otRecHitsColl = iEvent.get(otRecHitToken_);
+    auto queue = iEvent.queue();
 
     const uint32_t nPixHits = pixRecHitsColl.nHits();
     const uint32_t nStubs = stubsColl.nStubs();
