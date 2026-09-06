@@ -746,7 +746,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           ntupletCuts,
                           cc,
                           this->device_simpleCells_->data(),
-                          this->device_nCells_->data(),
                           this->device_hitToCell_->data(),
                           this->device_cellToTracks_->data(),
                           nhits - offsetBPIX2,
@@ -997,7 +996,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
                           ntupletCuts,
                           cc,
                           this->device_simpleCells_->data(),
-                          this->device_nCells_->data(),
                           this->device_hitToCell_->data(),
                           this->device_cellToTracks_->data(),
                           nhits - offsetBPIX2,
@@ -2297,7 +2295,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // them and adjust drop[] (keep-both leaves drop[i] == 0) before the compaction consumes drop[].
     // Runs only when the confirm is on.
     if (fbConfirmOn) {
-      HelixFit<pixelTopology::Phase2OTStubs> fitter(confirm->bfield, /*fitNas4=*/false);
+      HelixFit<pixelTopology::Phase2OTStubs> fitter(confirm->bfield);
       fitter.setMaterialMap(confirm->rhoMap);
       fitter.setBFieldMap(confirm->bFieldMap);  // (Bz,Br) r-z map; null => the scalar bfield
       fitter.setBField(confirm->bfield);

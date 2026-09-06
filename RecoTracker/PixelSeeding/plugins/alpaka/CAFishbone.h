@@ -35,13 +35,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
                                   ::reco::CANtupletCutsSoAConstView const& ntupletCuts,
                                   ::reco::CAGraphSoAConstView const& cc,
                                   CACell<TrackerTraits>* cells,
-                                  uint32_t const* __restrict__ nCells,
                                   HitToCell const* __restrict__ outerHitHisto,
                                   CellToTracks const* __restrict__ cellTracksHisto,
                                   uint32_t outerHits,
                                   bool checkTrack,
-                                  uint32_t* __restrict__ pipelineCounters = nullptr,
-                                  bool checkSameLayerOnly = false) const {
+                                  uint32_t* __restrict__ pipelineCounters,
+                                  bool checkSameLayerOnly) const {
       // outermost parallel loop, using all grid elements along the slower dimension (Y or 0 in a 2D grid)
       for (uint32_t idy : cms::alpakatools::uniform_elements_y(acc, outerHits)) {
         uint32_t size = outerHitHisto->size(idy);
@@ -61,7 +60,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::caPixelDoublets {
         auto zo = c0.outer_z(hh);
         auto const lo = c0.outerLayer(cc);
         auto const threshold = ntupletCuts[lo].fishboneCut();
-        //printf("first cell %d xo %.2f yo %.2f zo %.2f - ",bin[0],c0.outer_x(hh),c0.outer_y(hh),c0.outer_z(hh));ve
 
 #ifdef GPU_DEBUG
         for (auto idx = 0u; idx < size; idx++) {

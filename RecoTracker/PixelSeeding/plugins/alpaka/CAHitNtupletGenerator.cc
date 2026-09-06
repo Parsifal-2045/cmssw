@@ -296,7 +296,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       desc.add<unsigned int>("minHitsForSharingCut", kStubs ? 1 : 10)
           ->setComment("Maximum number of hits in a tuple to clean also if the shared hit is on bpx1");
 
-      desc.add<bool>("fitNas4", false)->setComment("fit only 4 hits out of N");
+      desc.add<bool>("fitNas4", false)
+          ->setComment(
+              "obsolete: the serial per-bin fit ladder it selected has been removed, only the fused ladder "
+              "remains. Kept so the deployed menus still validate; setting it true is a configuration error.");
       desc.add<bool>("verboseBLFit", false)
           ->setComment("one-shot device dump of the first fitted tracks at the end of each BL-fit launch (debug)");
       desc.add<bool>("useRiemannFit", false)->setComment("true for Riemann, false for BrokenLine");
@@ -390,6 +393,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       // Designated initializers: the field set of AlgoParams is shared with upstream and grows there,
       // so a positional aggregate initialization would silently shift every value the next time a
       // member is inserted. Keep this list keyed by name.
+      if (cfg.getParameter<bool>("fitNas4"))
+        throw cms::Exception("Configuration")
+            << "fitNas4 is no longer supported: the serial per-bin BrokenLine fit ladder has been removed.";
       return AlgoParams{
           // Container sizes
           .avgHitsPerTrack_ = (float)cfg.getParameter<double>("avgHitsPerTrack"),
@@ -793,7 +799,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     const uint32_t nTracks = pending.maxTuples;
     const float bfield = pending.bfield;
 
-    HelixFit fitter(bfield, m_params.algoParams_.fitNas4_);
+    HelixFit fitter(bfield);
     fitter.setVerboseDump(m_verboseBLDump);
     fitter.setMaterialMap(pending.rhoMapDevice);  // device BLMaterialMap (EventSetup condition)
     // Device BLBFieldMap: the same (Bz,Br) r-z condition the merger's GBL refit reads. Consumed by the
@@ -1059,7 +1065,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       otSrcPtr = &otSrc;
     }
 
-    Fitter fitter(bfield, /*fitNas4=*/false);
+    Fitter fitter(bfield);
     fitter.setMaterialMap(rhoMapDevice);   // device BLMaterialMap (same EventSetup condition the CA uses)
     fitter.setBFieldMap(bFieldMapDevice);  // device BLBFieldMap (Bz,Br) r-z map; null => the scalar field
     fitter.setDropOutlierFromHitList(dropOutlierFromHitList);  // merger final-refit only, default off
