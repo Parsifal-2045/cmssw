@@ -1658,6 +1658,64 @@ upgradeWFs['PatatrackPixelOnlyCAStubsAlpakaProfiling'] = PatatrackWorkflow(
     offset = 0.408,
 )
 
+# Pixel-only workflow running the two-iteration Phase-2 pixel CA extended to outer-tracker stubs on GPU (optional)
+#  - Pixel-only reconstruction with Alpaka, with standard and CPUvsGPU DQM and validation
+#  - harvesting for CPUvsGPU validation
+
+upgradeWFs['PatatrackPixelOnlyCAStubsTwoIterAlpaka'] = PatatrackWorkflow(
+    digi = {
+        '--procModifiers': 'alpaka,phase2CAStubs,pixelTrackMask',
+        '--customise' : 'HeterogeneousCore/AlpakaServices/customiseAlpakaServiceMemoryFilling.customiseAlpakaServiceMemoryFilling',
+    },
+    reco = {
+        '-s': 'RAW2DIGI:RawToDigi_pixelOnly,RECO:reconstruction_pixelTrackingOnly,VALIDATION:@pixelTrackingOnlyValidation,DQM:@pixelTrackingOnlyDQM+@hltGPUvsCPU',
+        '--procModifiers': 'alpaka,phase2CAStubs,pixelTrackMask',
+        '--customise' : 'HeterogeneousCore/AlpakaServices/customiseAlpakaServiceMemoryFilling.customiseAlpakaServiceMemoryFilling'
+    },
+    harvest = {
+        '-s': 'HARVESTING:@trackingOnlyValidation+@pixelTrackingOnlyDQM+@hltGPUvsCPU',
+        '--procModifiers': 'phase2CAStubs,pixelTrackMask',
+    },
+    suffix = 'Patatrack_PixelOnlyCAStubsTwoIterAlpaka',
+    offset = 0.4061,
+)
+
+# Pixel-only two-iteration CA-with-stubs workflow running on GPU (optional), alpakaValidation variant
+#  - Pixel-only reconstruction with Alpaka, with standard and CPUvsGPU DQM and validation
+#  - harvesting for CPUvsGPU validation
+
+upgradeWFs['PatatrackPixelOnlyCAStubsTwoIterAlpakaValidation'] = PatatrackWorkflow(
+    digi = { 
+        '--procModifiers': 'alpaka,phase2CAStubs,pixelTrackMask',
+        '--customise' : 'HeterogeneousCore/AlpakaServices/customiseAlpakaServiceMemoryFilling.customiseAlpakaServiceMemoryFilling',
+    },
+    reco = {
+        '-s': 'RAW2DIGI:RawToDigi_pixelOnly,RECO:reconstruction_pixelTrackingOnly,VALIDATION:@pixelTrackingOnlyValidation,DQM:@pixelTrackingOnlyDQM+@hltGPUvsCPU',
+        '--procModifiers': 'alpakaValidation,phase2CAStubs,pixelTrackMask',
+        '--customise' : 'HeterogeneousCore/AlpakaServices/customiseAlpakaServiceMemoryFilling.customiseAlpakaServiceMemoryFilling'
+    },
+    harvest = {
+        '-s': 'HARVESTING:@trackingOnlyValidation+@pixelTrackingOnlyDQM+@hltGPUvsCPU',
+        '--procModifiers': 'phase2CAStubs,pixelTrackMask',
+    },
+    suffix = 'Patatrack_PixelOnlyCAStubsTwoIterAlpaka_Validation',
+    offset = 0.4071,
+)
+
+upgradeWFs['PatatrackPixelOnlyCAStubsTwoIterAlpakaProfiling'] = PatatrackWorkflow(
+    digi = { 
+        '--procModifiers': 'alpaka,phase2CAStubs,pixelTrackMask',
+    },
+    reco = {
+        '-s': 'RAW2DIGI:RawToDigi_pixelOnly,RECO:reconstruction_pixelTrackingOnly',
+        '--procModifiers': 'alpaka,phase2CAStubs,pixelTrackMask',
+        '--customise' : 'RecoTracker/Configuration/customizePixelOnlyForProfiling.customizePixelOnlyForProfilingGPUOnly'
+    },
+    harvest = None,
+    suffix = 'Patatrack_PixelOnlyCAStubsTwoIterAlpaka_Profiling',
+    offset = 0.4081,
+)
+
 # end of Patatrack workflows
 ###############################################################################################################
 
@@ -2058,6 +2116,13 @@ upgradeWFs['HLTTiming75e33CATrueStubs'].step2['--accelerators'] = 'cpu'
 upgradeWFs['HLTTiming75e33CATrueStubs'].step3['--procModifiers'] = 'phase2CAStubs,phase2CATrueStubs'
 upgradeWFs['HLTTiming75e33CATrueStubs'].step3['--accelerators'] = 'cpu'
 
+# Two-iteration stub chain (hit masking, displaced iteration, merger)
+upgradeWFs['HLTTiming75e33CAStubsTwoIter'] = deepcopy(upgradeWFs['HLTTiming75e33'])
+upgradeWFs['HLTTiming75e33CAStubsTwoIter'].suffix = '_HLT75e33TimingCAStubsTwoIter'
+upgradeWFs['HLTTiming75e33CAStubsTwoIter'].offset = 0.7514
+upgradeWFs['HLTTiming75e33CAStubsTwoIter'].step2['--procModifiers'] = 'phase2CAStubs,pixelTrackMask'
+upgradeWFs['HLTTiming75e33CAStubsTwoIter'].step3['--procModifiers'] = 'phase2CAStubs,pixelTrackMask'
+
 class UpgradeWorkflow_HLTPhase2_WithNano(UpgradeWorkflow):
     def setup_(self, step, stepName, stepDict, k, properties):
         # skip RECO, ALCA and HLT
@@ -2316,6 +2381,13 @@ upgradeWFs['NGTScoutingCAExtensionMergeT5'].step2['-s'] = upgradeWFs['NGTScoutin
 )
 upgradeWFs['NGTScoutingCAExtensionMergeT5'].step2['--procModifiers'] += ',trackingLST'
 del upgradeWFs['NGTScoutingCAExtensionMergeT5'].step3['--procModifiers']
+
+# Single-iteration stub-seeded pixel tracking as general tracks (ngtScouting runs both iterations)
+upgradeWFs['NGTScoutingSingleIter'] = deepcopy(upgradeWFs['NGTScouting'])
+upgradeWFs['NGTScoutingSingleIter'].suffix = '_NGTScoutingSingleIter'
+upgradeWFs['NGTScoutingSingleIter'].offset = 0.776
+upgradeWFs['NGTScoutingSingleIter'].step2['--procModifiers'] = 'alpaka,ngtScoutingSingleIter'
+upgradeWFs['NGTScoutingSingleIter'].step3['--procModifiers'] = 'alpaka,ngtScoutingSingleIter'
 
 class UpgradeWorkflow_L1Complete(UpgradeWorkflow):
     def setup_(self, step, stepName, stepDict, k, properties):
