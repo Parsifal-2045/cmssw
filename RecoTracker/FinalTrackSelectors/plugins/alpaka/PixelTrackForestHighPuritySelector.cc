@@ -17,6 +17,7 @@
 #include "HeterogeneousCore/AlpakaCore/interface/alpaka/stream/SynchronizingEDProducer.h"
 #include "FWCore/Utilities/interface/EDPutToken.h"
 
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <optional>
@@ -163,6 +164,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // memory by then -- no wait), emplaces the collection and publishes the counts as host products.
     void acquire(device::Event const&, device::EventSetup const&) override;
     void produce(device::Event&, device::EventSetup const&) override;
+    void endStream() override;
 
     const device::EDGetToken<TkSoADevice> pixelTrackToken_;
     const int maxNumberOfTracks_;
@@ -195,6 +197,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // is issued at the end of acquire. produce() releases both.
     std::optional<TkSoADevice> pendingTracks_;
     std::optional<cms::alpakatools::host_buffer<uint32_t[]>> countsHost_;
+    // Cap accounting: preselHost_ mirrors nPreselected of the event being processed; produce()
+    // folds it into capCounts_ (layout: kCapCountWords), reported at the end of the stream.
+    std::optional<cms::alpakatools::host_buffer<int>> preselHost_;
+    std::array<uint32_t, kCapCountWords> capCounts_ = {};
   };
 
   PixelTrackForestHighPuritySelector::PixelTrackForestHighPuritySelector(const edm::ParameterSet& iConfig,
@@ -242,6 +248,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // Start from an empty carried state.
     pendingTracks_.reset();
     countsHost_.reset();
+    preselHost_.reset();
 
     auto& queue = iEvent.queue();
     const auto& tracks = iEvent.get(pixelTrackToken_).view();
@@ -359,11 +366,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
     // Async 8-byte D2H into a pinned buffer; the framework's between-phase drain delivers it.
     countsHost_.emplace(cms::alpakatools::make_host_buffer<uint32_t[]>(queue, 2u));
     alpaka::memcpy(queue, *countsHost_, d_selectedCounts);
+    // Same seam for the preselection count, so produce() can tell whether the cap truncated.
+    preselHost_.emplace(cms::alpakatools::make_host_buffer<int>(queue));
+    alpaka::memcpy(queue, *preselHost_, d_nPreselectedTracks);
     pendingTracks_.emplace(std::move(tracks_out));
   }
 
   void PixelTrackForestHighPuritySelector::produce(device::Event& iEvent, device::EventSetup const&) {
     // The counts landed while the framework waited on this event's queue: plain host memory here.
+    if (preselHost_) {
+      const int nPresel = *preselHost_->data();
+      capCounts_[3] += 1u;
+      if (uint32_t(nPresel) > capCounts_[0])
+        capCounts_[0] = uint32_t(nPresel);
+      if (nPresel > maxPreselectedTracks_) {
+        capCounts_[1] += 1u;
+        capCounts_[2] += uint32_t(nPresel - maxPreselectedTracks_);
+      }
+    }
     uint32_t nTracksSel = 0;
     uint32_t nKeptHitsSel = 0;
     if (countsHost_) {
@@ -386,6 +406,11 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
 
     pendingTracks_.reset();
     countsHost_.reset();
+    preselHost_.reset();
+  }
+
+  void PixelTrackForestHighPuritySelector::endStream() {
+    reportPreselectionCap(moduleDescription().moduleLabel(), maxPreselectedTracks_, capCounts_.data());
   }
 
   void PixelTrackForestHighPuritySelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
