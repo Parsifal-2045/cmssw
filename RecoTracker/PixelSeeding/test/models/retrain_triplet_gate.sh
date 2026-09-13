@@ -153,7 +153,7 @@ export TRIPLET_DNN_OUTDIR="$OUTDIR"   # plots and per-run artifacts stay out of 
 
 echo "=== [1/2] train: recipe=$VARIANT, events [0,$TRAIN_EV), bank=$BANK ==="
 rt_run python3 "$RT_MODELS/train_triplet_dnn.py" train "${SPECS[@]}" \
-  --bank "$BANK" --variant "$VARIANT" --max-events "$TRAIN_EV" --chunk-events 10 \
+  --bank "$BANK" --device "$RT_DEVICE" --variant "$VARIANT" --max-events "$TRAIN_EV" --chunk-events 10 \
   --max-epochs "$EPOCHS" --patience 10 --val-frac 0.15 \
   --weight-floor 1.0 --weight-cap 30 --weight-normalize bulk \
   --survival-floor "$SURVIVAL_FLOOR" --mem-guard-gb 260 --mem-log "$LOGDIR/retrain_ram.log" \
@@ -162,7 +162,7 @@ rt_run python3 "$RT_MODELS/train_triplet_dnn.py" train "${SPECS[@]}" \
 
 echo "=== [2/2] score on events [$TEST_SKIP,+$TEST_EV), pick a threshold, bake the header ==="
 rt_run python3 "$RT_MODELS/train_triplet_dnn.py" finalize "${SPECS[@]}" \
-  --bank "$BANK" --force-variant "$VARIANT" \
+  --bank "$BANK" --device "$RT_DEVICE" --force-variant "$VARIANT" \
   --skip-events "$TEST_SKIP" --max-events "$TEST_EV" --chunk-events 10 \
   --threshold-rule "$THRESHOLD_RULE" --survival-floor "$SURVIVAL_FLOOR" $RS $BT \
   --mem-guard-gb 260 --mem-log "$LOGDIR/retrain_ram.log" \
