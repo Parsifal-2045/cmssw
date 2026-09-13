@@ -315,6 +315,10 @@ namespace {
       const double rHit0 = std::hypot(hits(0, 0), hits(1, 0));
       gblTestMaterial::segmentXX0Moments(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
     }
+    // The ionization columns come from the host walk (the dump carries X/X0 only); they agree with the
+    // device's whenever the material rows above do.
+    const generalBrokenLine::ElossColumn innerColUse =
+        (rec.innerXX0 > 0.) ? md.innerCol : generalBrokenLine::ElossColumn{};
     std::vector<GblNodeData> nodes(N + 2);
     Matrix5d jacBack;
     bool usedInner = false;
@@ -338,7 +342,9 @@ namespace {
                       /*bFieldOrigin=*/rec.bField,
                       kTrajectoryCorrections,
                       kScatteringLogAtTotal,
-                      kElossCumulative);
+                      kElossCumulative,
+                      md.matCol,
+                      innerColUse);
 
     // node set actually fitted: full system [PCA, scatterer, hits...] (inner-node layout, extraction at PCA)
     // or the fallback hits-only set with the upstream scattering re-added as angle process noise afterwards.
@@ -554,6 +560,10 @@ namespace {
       const double rHit0 = std::hypot(hits(0, 0), hits(1, 0));
       gblTestMaterial::segmentXX0Moments(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
     }
+    // the ionization columns of the same chords (the dump carries X/X0 only)
+    gblTestMaterial::MatData<N> mdCol;
+    gblTestMaterial::fillMatData<N>(hits, data.sTotal, mdCol);
+    const ElossColumn innerColUse = (innerXX0Use > 0.) ? mdCol.innerCol : ElossColumn{};
     std::vector<GblNodeData> nodes(N + 2);
     Matrix5d jacBack;
     bool usedInner = false;
@@ -577,7 +587,9 @@ namespace {
                       /*bFieldOrigin=*/rec.bField,
                       kTrajectoryCorrections,
                       kScatteringLogAtTotal,
-                      kElossCumulative);
+                      kElossCumulative,
+                      mdCol.matCol,
+                      innerColUse);
 
     double th2Inner = 0.;
     std::vector<GblNodeData> sub;

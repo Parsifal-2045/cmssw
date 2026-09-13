@@ -15,16 +15,29 @@
 
 namespace gblTestMaterial {
 
+  using ElossColumn = blMaterialMap::ElossColumn;
+
   // Exact cell walk of the material map along the straight (r,z) chord (r0,z0)->(r1,z1): chord length L
   // and the moments about the ARRIVAL end, W = int rho dl, S1 = int rho d dl, S2 = int rho d^2 dl, with
   // `path3D` > 0 rescaling them to the 3-D path (k, k^2, k^3 with k = path3D/L).
   // cf. ALPAKA_ACCELERATOR_NAMESPACE::brokenline::segmentWalk.
-  inline void segmentWalk(
-      double r0, double z0, double r1, double z1, double path3D, double& L, double& W, double& S1, double& S2) {
+  inline void segmentWalk(double r0,
+                          double z0,
+                          double r1,
+                          double z1,
+                          double path3D,
+                          double& L,
+                          double& W,
+                          double& S1,
+                          double& S2,
+                          ElossColumn* col = nullptr) {
     const float* rho = blMaterialMap::blMaterialMapData();
+    const float* dedx = blMaterialMap::dedxOf(rho);
     const double dr = r1 - r0, dz = z1 - z0;
     L = std::sqrt(dr * dr + dz * dz);
     W = S1 = S2 = 0.;
+    if (col != nullptr)
+      *col = ElossColumn{};
     if (!(L > 0.))
       return;
     double tR = 2., dtR = 1.;
@@ -47,12 +60,21 @@ namespace gblTestMaterial {
         tn = 1.;
       if (tn > t) {
         const double tm = 0.5 * (t + tn);
-        const double q = blMaterialMap::rhoAt(rho, float(r0 + tm * dr), float(z0 + tm * dz));
+        const float rm = float(r0 + tm * dr), zm = float(z0 + tm * dz);
+        const double q = blMaterialMap::rhoAt(rho, rm, zm);
         if (q > 0.f) {
           const double a = 1. - t, c = 1. - tn;
           W += q * (a - c) * L;
           S1 += q * (a * a - c * c) * 0.5 * L * L;
           S2 += q * (a * a * a - c * c * c) * (1. / 3.) * L * L * L;
+          if (col != nullptr) {
+            float rhoE, lnI, lnRhoE;
+            blMaterialMap::dedxAt(dedx, rm, zm, rhoE, lnI, lnRhoE);
+            const double we = double(rhoE) * (a - c) * L;
+            col->e += we;
+            col->eLnI += we * double(lnI);
+            col->eLnRho += we * double(lnRhoE);
+          }
         }
       }
       t = tn;
@@ -66,6 +88,8 @@ namespace gblTestMaterial {
       W *= k;
       S1 *= k * k;
       S2 *= k * k * k;
+      if (col != nullptr)
+        *col = *col * k;
       L = path3D;
     }
   }
@@ -73,10 +97,16 @@ namespace gblTestMaterial {
   // Two-equivalent-thin-scatterer split of a segment: W, the interior scatterer's path distance from the
   // arrival end d1 = S2/S1 and its share of the variance w1 = S1^2/(S2 W).
   // cf. ALPAKA_ACCELERATOR_NAMESPACE::brokenline::segmentXX0Moments.
-  inline double segmentXX0Moments(
-      double r0, double z0, double r1, double z1, double& d1, double& w1, double path3D = 0.) {
+  inline double segmentXX0Moments(double r0,
+                                  double z0,
+                                  double r1,
+                                  double z1,
+                                  double& d1,
+                                  double& w1,
+                                  double path3D = 0.,
+                                  ElossColumn* col = nullptr) {
     double L, W, S1, S2;
-    segmentWalk(r0, z0, r1, z1, path3D, L, W, S1, S2);
+    segmentWalk(r0, z0, r1, z1, path3D, L, W, S1, S2, col);
     d1 = 0.;
     w1 = 0.;
     if (W > 0. && S1 > 0. && S2 > 0.) {
@@ -95,6 +125,8 @@ namespace gblTestMaterial {
     double innerXX0 = 0.;   // beamline (z = 0) -> first hit, beam pipe + upstream material
     double innerD1 = 0.;    // the same two-thin split for the upstream segment
     double innerW1 = 0.;
+    ElossColumn matCol[N] = {};  // the ionization column of the same lumps, from the same walk
+    ElossColumn innerCol;
   };
 
   // The material section of brokenline::prepareGblFitData (alpaka/BrokenLine.h), on the host.
@@ -110,12 +142,14 @@ namespace gblTestMaterial {
       md.matXX0[i] = 0.;
       md.gapD1[i] = 0.;
       md.gapW1[i] = 0.;
+      md.matCol[i] = ElossColumn{};
     }
     for (int g = 0; g + 1 < N; ++g) {
       const double path = std::abs(sTotal(g + 1) - sTotal(g));
-      md.matXX0[g] = segmentXX0Moments(rOf(g), hits(2, g), rOf(g + 1), hits(2, g + 1), md.gapD1[g], md.gapW1[g], path);
+      md.matXX0[g] = segmentXX0Moments(
+          rOf(g), hits(2, g), rOf(g + 1), hits(2, g + 1), md.gapD1[g], md.gapW1[g], path, &md.matCol[g]);
     }
-    md.innerXX0 = segmentXX0Moments(0., 0., rOf(0), hits(2, 0), md.innerD1, md.innerW1);
+    md.innerXX0 = segmentXX0Moments(0., 0., rOf(0), hits(2, 0), md.innerD1, md.innerW1, 0., &md.innerCol);
   }
 
 }  // namespace gblTestMaterial

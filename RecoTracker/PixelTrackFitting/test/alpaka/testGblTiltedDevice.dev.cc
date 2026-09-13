@@ -212,14 +212,14 @@ TEST_CASE("GBL tilted-module measurement model for the " EDM_STRINGIZE(ALPAKA_AC
   Eigen::Vector4d ff;
   blh::fastFit(hits, ff);
 
-  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kSize);
-  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kSize, rho_h.data());
+  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kBufferFloats);
+  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kBufferFloats, rho_h.data());
 
   for (auto const& device : devices) {
     auto queue = Queue(device);
     const std::string devName = alpaka::getName(device);
 
-    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kSize);
+    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kBufferFloats);
     alpaka::memcpy(queue, rho_d, rho_h);
 
     auto hits_h = cms::alpakatools::make_host_buffer<double[], Platform>(3 * kN);

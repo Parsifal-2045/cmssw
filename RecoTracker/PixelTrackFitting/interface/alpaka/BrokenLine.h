@@ -410,7 +410,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
                                                           double& w1,
                                                           double path3D = 0.) {
     double L, W, S1, S2;
-    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2);
+    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2, col);
     d1 = 0.;
     w1 = 0.;
     if (W > 0. && S1 > 0. && S2 > 0.) {
@@ -426,10 +426,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
   // in [0,1], reproduces the segment's total and its first moment about either end exactly (a single kink
   // at the arrival node would model the first moment as zero). Returns W.
   template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Endpoint(
-      const TAcc& acc, const float* rho, double r0, double z0, double r1, double z1, double& fDep, double path3D = 0.) {
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Endpoint(const TAcc& acc,
+                                                           const float* rho,
+                                                           double r0,
+                                                           double z0,
+                                                           double r1,
+                                                           double z1,
+                                                           double& fDep,
+                                                           double path3D = 0.,
+                                                           ElossColumn* col = nullptr) {
     double L, W, S1, S2;
-    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2);
+    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2, col);
     fDep = (W > 0.) ? S1 / (W * L) : 0.;
     return W;
   }
@@ -848,6 +855,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     moments of the material distribution (angle variance, angle-offset covariance, far-end offset variance).
     \param gapD1 / \param gapW1 per-gap outputs (n slots; slot n-1 is zero). Optional as a PAIR: both must
     be non-null to be filled, either being null skips them.
+    \param matCol optional per-gap ionization column (n slots; slot n-1 is zero), the dE/dx companion of
+    matXX0 from the same walk; results.innerCol is the upstream segment's. matCached does not carry them (the
+    caller caches them next to gapD1/gapW1), so a cached call leaves matCol untouched.
   */
   template <alpaka::concepts::Acc TAcc, typename M3xN, typename V4, int n>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE void __attribute__((always_inline)) prepareGblFitData(const TAcc& acc,

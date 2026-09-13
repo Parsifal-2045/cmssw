@@ -559,12 +559,12 @@ TEST_CASE("GBL device chain vs the DESY oracle for the " EDM_STRINGIZE(ALPAKA_AC
 
   // The Geant4 material map: no EventSetup needed, the table is compiled into the
   // RecoTracker/PixelTrackFitting library and uploaded here exactly as the ES product would.
-  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kSize);
-  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kSize, rho_h.data());
+  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kBufferFloats);
+  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kBufferFloats, rho_h.data());
 
   for (auto const& device : devices) {
     auto queue = Queue(device);
-    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kSize);
+    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kBufferFloats);
     alpaka::memcpy(queue, rho_d, rho_h);
     alpaka::wait(queue);
     const std::string dn = alpaka::getName(device);

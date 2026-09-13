@@ -326,8 +326,8 @@ TEST_CASE("blBFieldMap on the device for the " EDM_STRINGIZE(ALPAKA_ACCELERATOR_
   Eigen::Vector4d pff;
   blh::fastFit(phits, pff);
 
-  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kSize);
-  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kSize, rho_h.data());
+  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kBufferFloats);
+  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kBufferFloats, rho_h.data());
 
   for (auto const& device : devices) {
     auto queue = Queue(device);
@@ -408,7 +408,7 @@ TEST_CASE("blBFieldMap on the device for the " EDM_STRINGIZE(ALPAKA_ACCELERATOR_
     REQUIRE(worstClamp < 1e-15);
 
     // 6. wiring: the node builder must see the map
-    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kSize);
+    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kBufferFloats);
     auto fh_h = cms::alpakatools::make_host_buffer<double[], Platform>(3 * kNf);
     auto fg_h = cms::alpakatools::make_host_buffer<float[], Platform>(6 * kNf);
     auto fq_h = cms::alpakatools::make_host_buffer<double[], Platform>(4);

@@ -505,13 +505,13 @@ TEST_CASE("GBL measurement-frame identity for the " EDM_STRINGIZE(ALPAKA_ACCELER
   if (devices.empty())
     FAIL("No devices available for the " EDM_STRINGIZE(ALPAKA_ACCELERATOR_NAMESPACE) " backend, test skipped.");
 
-  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kSize);
-  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kSize, rho_h.data());
+  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kBufferFloats);
+  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kBufferFloats, rho_h.data());
 
   using namespace gblTestFixtures;
   for (auto const& device : devices) {
     auto queue = Queue(device);
-    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kSize);
+    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kBufferFloats);
     alpaka::memcpy(queue, rho_d, rho_h);
     alpaka::wait(queue);
     const std::string dn = alpaka::getName(device);

@@ -56,7 +56,8 @@ namespace {
 
         bld::PreparedGblData<N> data;
         double gapD1[N], gapW1[N];
-        bld::prepareGblFitData(acc, hits, ff, bField, rho, data, /*matCached=*/nullptr, gapD1, gapW1);
+        blMaterialMap::ElossColumn matCol[N];
+        bld::prepareGblFitData(acc, hits, ff, bField, rho, data, /*matCached=*/nullptr, gapD1, gapW1, matCol);
         // the upstream (PCA -> hit0) segment's own two-thin split, from the walk prepareGblFitData ran
         const double innerD1 = data.innerD1, innerW1 = data.innerW1;
 
@@ -64,10 +65,16 @@ namespace {
           out[i] = data.matXX0(i);
           out[N + i] = gapD1[i];
           out[2 * N + i] = gapW1[i];
+          out[3 * N + 3 * i] = matCol[i].e;
+          out[3 * N + 3 * i + 1] = matCol[i].eLnI;
+          out[3 * N + 3 * i + 2] = matCol[i].eLnRho;
         }
-        out[3 * N] = data.innerXX0;
-        out[3 * N + 1] = innerD1;
-        out[3 * N + 2] = innerW1;
+        out[6 * N] = data.innerXX0;
+        out[6 * N + 1] = innerD1;
+        out[6 * N + 2] = innerW1;
+        out[6 * N + 3] = data.innerCol.e;
+        out[6 * N + 4] = data.innerCol.eLnI;
+        out[6 * N + 5] = data.innerCol.eLnRho;
       }
     }
   };
@@ -85,7 +92,7 @@ namespace {
 
   template <int N>
   void runFixture(Queue& queue, const char* devName, const char* label, const double D[N][9], const float* rhoDev) {
-    constexpr int kOut = 3 * N + 3;
+    constexpr int kOut = 6 * N + 6;
     Eigen::Matrix<double, 3, N> hits;
     for (int k = 0; k < N; ++k) {
       hits(0, k) = D[k][0];
@@ -127,23 +134,30 @@ namespace {
     gblTestMaterial::MatData<N> md;
     gblTestMaterial::fillMatData<N>(hits, hdata.sTotal, md);
 
-    MaxRel mat, gd1, gw1, inner;
+    MaxRel mat, gd1, gw1, inner, col;
     for (int i = 0; i < N; ++i) {
       mat.add(md.matXX0[i], out_h[i]);
       gd1.add(md.gapD1[i], out_h[N + i]);
       gw1.add(md.gapW1[i], out_h[2 * N + i]);
+      col.add(md.matCol[i].e, out_h[3 * N + 3 * i]);
+      col.add(md.matCol[i].eLnI, out_h[3 * N + 3 * i + 1]);
+      col.add(md.matCol[i].eLnRho, out_h[3 * N + 3 * i + 2]);
     }
-    inner.add(md.innerXX0, out_h[3 * N]);
-    inner.add(md.innerD1, out_h[3 * N + 1]);
-    inner.add(md.innerW1, out_h[3 * N + 2]);
+    inner.add(md.innerXX0, out_h[6 * N]);
+    inner.add(md.innerD1, out_h[6 * N + 1]);
+    inner.add(md.innerW1, out_h[6 * N + 2]);
+    col.add(md.innerCol.e, out_h[6 * N + 3]);
+    col.add(md.innerCol.eLnI, out_h[6 * N + 4]);
+    col.add(md.innerCol.eLnRho, out_h[6 * N + 5]);
 
-    std::printf("  %-28s N=%2d | matXX0=%.2e gapD1=%.2e gapW1=%.2e inner=%.2e   (host innerXX0=%.6g)  [%s]\n",
+    std::printf("  %-28s N=%2d | matXX0=%.2e gapD1=%.2e gapW1=%.2e inner=%.2e dedx=%.2e   (host innerXX0=%.6g)  [%s]\n",
                 label,
                 N,
                 mat.v,
                 gd1.v,
                 gw1.v,
                 inner.v,
+                col.v,
                 md.innerXX0,
                 devName);
 
@@ -152,12 +166,14 @@ namespace {
     REQUIRE(gd1.any);
     REQUIRE(gw1.any);
     REQUIRE(inner.any);
+    REQUIRE(col.any);
     REQUIRE(md.innerXX0 > 0.);
 
     REQUIRE(mat.v < kTolMarch);
     REQUIRE(gd1.v < kTolMarch);
     REQUIRE(gw1.v < kTolMarch);
     REQUIRE(inner.v < kTolMarch);
+    REQUIRE(col.v < kTolMarch);
   }
 
   // Brute-force integral of the same table along the same chord, midpoint rule at `step` cm: an
@@ -214,13 +230,13 @@ TEST_CASE("gblReplay host material march vs the device for the " EDM_STRINGIZE(A
   if (devices.empty())
     FAIL("No devices available for the " EDM_STRINGIZE(ALPAKA_ACCELERATOR_NAMESPACE) " backend, test skipped.");
 
-  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kSize);
-  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kSize, rho_h.data());
+  auto rho_h = cms::alpakatools::make_host_buffer<float[], Platform>(blMaterialMap::kBufferFloats);
+  std::copy_n(blMaterialMap::blMaterialMapData(), blMaterialMap::kBufferFloats, rho_h.data());
 
   using namespace gblTestFixtures;
   for (auto const& device : devices) {
     auto queue = Queue(device);
-    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kSize);
+    auto rho_d = cms::alpakatools::make_device_buffer<float[]>(queue, blMaterialMap::kBufferFloats);
     alpaka::memcpy(queue, rho_d, rho_h);
     alpaka::wait(queue);
     const std::string dn = alpaka::getName(device);
