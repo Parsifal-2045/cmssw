@@ -86,6 +86,10 @@ hltPhase2PixelTracksSoADisplacedWithStubs = cms.EDProducer('CAHitNtupletAlpakaPh
     # No OT rechit or OT stub input: the OT-hit extension and the final refit run once, in the merger.
     trackQualityCuts = cms.PSet(
         minPt = cms.double(displacedItMinPtCut + 0.05),
+        # highPurity promotion: the default 0.3 cm is the prompt arm's transverse acceptance and would
+        # leave every displaced track beyond 3 mm tight-only. This arm accepts |tip| up to its caDCA /
+        # maxStubTip, so the promotion uses the same value.
+        maxTip = cms.double(15.0),
         # Ntuplet-wide stub-curvature consistency: max reduced-chi2 of the stub curvatures on a
         # track around their weighted mean; demotes combinatorial chains below tight (-1 = disabled).
         maxNtupletStubChi2 = cms.double(10.0),
