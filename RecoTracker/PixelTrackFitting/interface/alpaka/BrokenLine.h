@@ -26,8 +26,9 @@
 //     charged with its own density over its exact length, and each gap is rescaled to the 3-D path the
 //     density is defined per) with the ENDPOINT PARTITION in prepareBrokenLineData (each gap's material split
 //     between its two END nodes so that the gap's total AND its first moment are both reproduced), the
-//     rigid-node guard that removes the kink term of a node with no assigned material, and a beamline->first-hit
-//     material integral for the innermost scattering term;
+//     rigid-node guard that removes the kink term of a node with no assigned material, and the material
+//     from the track's own closest approach to the beam line up to hit 0, walked along its 3-D path, as the
+//     innermost scattering term (together with the share of gap 0 the partition assigns to node 0);
 //   - Highland's theta0 with geometry factor 1.0, the pion 1/beta factor and no pt cap in multScatt;
 //   - the circle reference frame built on the first hit at least kBaseMin away (mref) instead of hit 1;
 //   - the covariance blend in circleFit (measurement covariance from the full-circle Fisher inverse in the
@@ -123,8 +124,16 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     LegacyMapVecNd<n, S> varBeta;
     LegacyMapVecNd<n, S> matXX0;
     double innerXX0;
-    //!< plain material column [X/X0] from the beam line to the outermost node; filled only under elossGaps.
+    //!< Plain material column [X/X0] from the beam line to the outermost node, filled under fitCorrections:
+    //!< the thickness Highland's logarithm belongs to, and the extender's linearization scale.
     double xx0Total;
+    double node0XX0;  //!< gap 0's departure share [X/X0]: charged as an angle at hit 0 with the upstream term
+    //!< Two-thin split of the upstream segment (segmentXX0Moments): a scatterer at path distance innerD1 before
+    //!< hit 0 carries the fraction innerW1 of innerXX0's variance, the rest sits at hit 0. w1*d1 and w1*d1^2 are
+    //!< the segment's first and second material moments about hit 0, which set the upstream scatterer's lever
+    //!< to the closest approach. Both 0 with fitCorrections off.
+    double innerD1;
+    double innerW1;
     ALPAKA_FN_ACC explicit PreparedBrokenLineDataMap(double* p)
         : radii(p),
           sTransverse(p + std::size_t(2 * n) * S),
@@ -359,6 +368,18 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     return W;
   }
 
+  // Geometry of the beamline->hit-0 segment, one definition for both fits. The track's closest approach to
+  // the beam line is at (r,z) = (0, zPca), not at z = 0: with a vertex 5-10 cm away the chord from the origin
+  // crosses the beam pipe and the first layer at the wrong angle and over-counts that material by 1.6x
+  // (z_vtx = 0) to 4x (|z_vtx| = 10 cm) for barrel tracks. slope = dz/ds_transverse of the pre-fit line,
+  // sT0 = sTransverse(0), the transverse arc from the PCA to hit 0; the 3-D path follows from the same line.
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE void beamlineSegment(
+      const TAcc& acc, double zHit0, double slope, double sT0, double& zPca, double& path3D) {
+    zPca = zHit0 - slope * sT0;
+    path3D = alpaka::math::abs(acc, sT0) * alpaka::math::sqrt(acc, 1. + slope * slope);
+  }
+
   // Coulomb MS planar-angle variance from a segment's X/X0 (radLen), fed in directly from the
   // material map (no length*inv_X0). Angle handling unchanged: the 1/(1+slope^2) here and the
   // (1+slope^2) projection applied later in circleFit; radLen already carries the path angle.
@@ -367,13 +388,19 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
   // beta == 1 (so theta0 does not depend on the mass, see the \warning at the declaration above) and pt
   // capped at 20 GeV by min(20., bField*radius). true: Highland's theta0 = 13.6 MeV/(beta c p) with geometry
   // factor 1.0, the pion 1/beta and no cap. p^2 beta^2 = p^4/(p^2 + m_pi^2).
+  //
+  // `xLogTotal`, when positive, is the thickness the Highland logarithm is evaluated at. The logarithm is a
+  // property of the whole path the particle crosses, not of the lump one node is charged, so a track broken
+  // into many thin scatterers must keep the total in it or every kink comes out under-charged; only the
+  // leading radLen stays the node's own share. Zero keeps the node's own thickness in the logarithm.
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE double multScatt(const TAcc& acc,
                                                   const double radLen,
                                                   const double bField,
                                                   const double radius,
                                                   double slope,
-                                                  bool pionBeta = false) {
+                                                  bool pionBeta = false,
+                                                  double xLogTotal = 0.) {
     if (radLen <= 0.)
       return 0.;
     if (pionBeta) {
@@ -382,7 +409,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
       constexpr double kPionMass = 0.13957;  // GeV (PDG)
       const double p2 = riemannFit::sqr(bField * radius) * (1. + riemannFit::sqr(slope));
       const double p2b2 = p2 * p2 / (p2 + riemannFit::sqr(kPionMass));
-      return fact / p2b2 * radLen * riemannFit::sqr(1. + 0.038 * log(radLen));
+      const double xLog = (xLogTotal > 0.) ? xLogTotal : radLen;
+      return fact / p2b2 * radLen * riemannFit::sqr(1. + 0.038 * log(xLog));
     }
     // Corrections off: upstream's multScatt exactly (geometry factor 0.7, pt capped at 20 GeV). Any deviation
     // here shifts the emitted covariances and moves the fixed high-purity selector working point.
@@ -477,9 +505,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
            carries no kink; off, upstream's flat |Delta s|*0.06/16 per gap charged in full at its arrival node.
     \param elossGaps additionally records into fitWs.gapEloss(g) the ionization loss [GeV] charged over gap g
            -- the Landau law of the walked column from the beam line to that gap's own material centroid --
-           with the cumulative loss at the outermost node in slot n-1 and results.xx0Total (the plain column
-           from the beam line to that node, the extender's linearization scale). circleFit's dE/dx offset
-           reads them.
+           with the cumulative loss at the outermost node in slot n-1. circleFit's dE/dx offset reads them.
            Costs the walk's dE/dx accumulators and one Landau evaluation per gap, only under fitCorrections.
            Default false: a caller that wants only the extrapolation covariance does not pay for it.
   */
@@ -559,10 +585,20 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     // generalBrokenLine::prepareGblData reads matXX0(i-1) at hit i).
     //   fitCorrections off: slot g = all of gap g, charged at its arrival node (total reproduced, first
     //        moment modelled as zero).
-    //   fitCorrections on: slot g = the endpoint-partitioned share of node g+1 = (1-fDep) of gap g plus fDep of
-    //        gap g+1 (segmentXX0Endpoint), so every gap's total and first moment are reproduced. Node 0 has
-    //        no kink (varBeta(0) = 0), so gap 0's departure share is dropped; the last gap's departure share
-    //        lands on node n-2.
+    //   fitCorrections on: slot g = the endpoint-partitioned share of node g+1 = (1-fDep) of gap g plus
+    //        fDep of gap g+1 (segmentXX0Endpoint), so every gap's total and first moment are
+    //        reproduced. Node 0 has no kink (varBeta(0) = 0): gap 0's departure share goes to node0XX0 and
+    //        is charged with the upstream term as an angle at hit 0 (circleFit, lineFit) -- a kink right
+    //        after hit 0 rotates the direction at hit 0 against the outer track and reaches the PCA with the
+    //        full lever, unlike one after the last hit. The last gap's departure share lands on node n-2.
+    results.node0XX0 = 0.;
+    results.innerD1 = 0.;
+    results.innerW1 = 0.;
+    double xx0Run = 0.;  // the gaps' material, summed as the walk produces it
+    // Geometry of the beamline->hit-0 segment, shared by the scattering term and the ionization column.
+    double zPca = 0., path0 = 0.;
+    if (fitCorrections)
+      beamlineSegment(acc, hits(2, 0), slope, results.sTransverse(0), zPca, path0);
     if (fitCorrections) {
       for (u_int i = 0; i < n; i++)
         results.matXX0(i) = 0.;
@@ -571,10 +607,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
       ElossColumn colRun;
       double pTot = 0.;
       if (elossGaps) {
-        results.innerXX0 = segmentXX0(acc, rho, 0., 0., rOf(0), hits(2, 0), 0., &colRun);
+        results.innerXX0 =
+            segmentXX0Moments(acc, rho, 0., zPca, rOf(0), hits(2, 0), results.innerD1, results.innerW1, path0, &colRun);
         pTot = alpaka::math::sqrt(acc, riemannFit::sqr(bField * fast_fit(2)) * (1. + riemannFit::sqr(slope)));
       }
-      double xx0Run = 0.;
       for (u_int g = 0; g < n - 1; g++) {
         double fDep = 0.5;  // overwritten by segmentXX0Endpoint (uniform density => lever L/2)
         // the gap's 3-D path, the length the map's density is defined per (the chord is shorter)
@@ -582,9 +618,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
         ElossColumn colGap;
         const double xx0 = segmentXX0Endpoint(
             acc, rho, rOf(g), hits(2, g), rOf(g + 1), hits(2, g + 1), fDep, path, elossGaps ? &colGap : nullptr);
+        xx0Run += xx0;
         results.matXX0(g) += (1. - fDep) * xx0;  // arrival share   -> node g+1 -> slot g
         if (g > 0)
           results.matXX0(g - 1) += fDep * xx0;  // departure share -> node g   -> slot g-1
+        else
+          results.node0XX0 = fDep * xx0;  // ... -> node 0, which has no kink: angle at hit 0
         if (elossGaps) {
           // The loss charged over gap g: the path-average of the cumulative column across the gap, which is
           // the column to node g plus the share fDep = <d>/L of the gap's own column (d measured from the
@@ -593,16 +632,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
           // instead assumes the gap's material is uniform, and the pixel gaps carry theirs at the modules.
           // The law runs once, on the stable-law sum of everything walked to there, not on the sum of the
           // lumps' most-probable values.
-          xx0Run += xx0;
           fitWs.gapEloss(g) = generalBrokenLine::elossTypicalColumn(acc, pTot, colRun + colGap * fDep);
           colRun += colGap;
         }
       }
-      if (elossGaps) {
-        // No gap n-1: the slot carries the cumulative loss at the outermost node, the extender's anchor.
+      // No gap n-1: the slot carries the cumulative loss at the outermost node, the extender's anchor.
+      if (elossGaps)
         fitWs.gapEloss(n - 1) = generalBrokenLine::elossTypicalColumn(acc, pTot, colRun);
-        results.xx0Total = results.innerXX0 + xx0Run;
-      }
     } else {
       // Corrections OFF: upstream's material model exactly -- each gap charged as |Delta sTotal| times the
       // flat inverse radiation length 0.06/16 (no material-map lookup). Reproduces upstream's
@@ -613,22 +649,29 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
       }
       results.matXX0(n - 1) = 0.;
     }
-    // beamline -> first hit material (beam pipe + everything upstream of the innermost fitted hit). The map is
-    // always integrated from the beamline, also for tracks whose first hit is not beam-pipe-connected (OT-only
-    // stub tracks, first hit at r ~ 23 cm): that is the CKF's prompt-origin material assumption, so pulls are
-    // directly comparable, and without it the extrapolated PCA covariance of the (dominant) tracks that did
-    // traverse the pixel volume would carry no upstream scattering or dE/dx. Genuinely displaced tracks are
-    // over-covered, as in the CKF; prepareGblFitData applies the same rule.
-    const bool useInner = true;
+    // Beamline -> first hit material (beam pipe and everything upstream of the innermost fitted hit),
+    // from the track's own closest approach along its 3-D path (beamlineSegment). The map is always
+    // integrated from the beamline, also for tracks whose first hit is not beam-pipe-connected (OT-only
+    // stub tracks, first hit at r ~ 23 cm): that is the CKF's prompt-origin material assumption, and
+    // without it the extrapolated PCA covariance of the tracks that did traverse the pixel volume would
+    // carry no upstream scattering or dE/dx. Genuinely displaced tracks are over-covered, as in the CKF;
+    // prepareGblFitData applies the same rule. The segment's moments (innerD1, innerW1) place the
+    // scatterer where the material is: for an OT-only track the pixel column sits at r = 2-16 cm and its
+    // lever to the closest approach is a third of hit 0's, which the single angle at hit 0 would charge.
     if (fitCorrections) {
       if (!elossGaps)  // with elossGaps the same walk already ran, one lump earlier
-        results.innerXX0 = useInner ? segmentXX0(acc, rho, 0., 0., rOf(0), hits(2, 0)) : 0.;
+        results.innerXX0 =
+            segmentXX0Moments(acc, rho, 0., zPca, rOf(0), hits(2, 0), results.innerD1, results.innerW1, path0);
     } else {
       // Corrections OFF: upstream adds the innermost multiple-scattering term from the FIRST GAP's
       // length -- multScatt(sTotal(1) - sTotal(0), ...) -- not from a beamline material integral.
       constexpr double kInvX0 = 0.06 / 16.;
       results.innerXX0 = alpaka::math::abs(acc, results.sTotal(1) - results.sTotal(0)) * kInvX0;
     }
+    // Everything the track crosses, the upstream segment plus every gap. Highland's logarithm belongs to
+    // that total and not to the lump a single node is charged, so both fits evaluate it there: an
+    // outer-tracker track broken into six thin scatterers otherwise loses a tenth of its kink angles.
+    results.xx0Total = fitCorrections ? results.innerXX0 + xx0Run : 0.;
     //calculate varBeta
     results.varBeta(0) = results.varBeta(n - 1) = 0;
     for (u_int i = 1; i < n - 1; i++) {
@@ -636,7 +679,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
         // Slot i-1 holds the material assigned to node i (endpoint partition above): one thin scatterer per
         // node, Highland applied once to that node's total assigned thickness. Charging every gap at both of
         // its end nodes with its full variance (the branch below) would count each gap twice.
-        results.varBeta(i) = multScatt(acc, results.matXX0(i - 1), bField, fast_fit(2), slope, true);
+        results.varBeta(i) = multScatt(acc, results.matXX0(i - 1), bField, fast_fit(2), slope, true, results.xx0Total);
         if (!(results.varBeta(i) > 0.)) {
           // A node with no assigned material carries no kink information: its kink degree of freedom is absent,
           // not infinitely precise. A very large finite varBeta makes every 1/varBeta consumer (the band, the
@@ -1063,10 +1106,24 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     //...Translate in the system in which the first corrected hit is the origin, adding the m.s. correction...
 
     translateKarimaki(acc, circle_results, 0.5 * eMinusd(0), 0.5 * eMinusd(1), jacobian);
-    // innermost MS: add ONLY the upstream (beam pipe -> first hit) material here. The matXX0(0) (first hit -> hit
-    // segment) scattering is already folded into the fit covariance via varBeta(1), so it must not be added again.
+    // innermost MS: the upstream (beam pipe -> first hit) material and gap 0's departure share (node0XX0, the
+    // material right after hit 0 that the endpoint partition assigns to node 0) are angles at hit 0: node 0
+    // has no kink degree of freedom, so neither is in the band, and both rotate the direction at hit 0
+    // against the outer track. Gap 0's arrival share is already in the fit via varBeta(1). The upstream
+    // scatterer sits a path distance d before hit 0 (innerD1, weight innerW1), so the inner track also
+    // carries the correlated offset -theta*d at hit 0 (Karimaki's d is x sin(phi) - y cos(phi)): after the
+    // translation to the closest approach the offset variance is theta^2 (sT0 - d)^2, not theta^2 sT0^2.
+    const double msUp = (1 + riemannFit::sqr(slope)) *
+                        multScatt(acc, data.innerXX0, bField, fast_fit(2), slope, fitCorrections, data.xx0Total);
     circle_results.cov(0, 0) +=
-        (1 + riemannFit::sqr(slope)) * multScatt(acc, data.innerXX0, bField, fast_fit(2), slope, fitCorrections);
+        msUp + (1 + riemannFit::sqr(slope)) *
+                   multScatt(acc, data.node0XX0, bField, fast_fit(2), slope, fitCorrections, data.xx0Total);
+    if (data.innerW1 > 0.) {
+      const double dT = data.innerD1 / alpaka::math::sqrt(acc, 1 + riemannFit::sqr(slope));  // transverse lever
+      circle_results.cov(0, 1) -= msUp * data.innerW1 * dT;
+      circle_results.cov(1, 0) = circle_results.cov(0, 1);
+      circle_results.cov(1, 1) += msUp * data.innerW1 * dT * dT;
+    }
 
     //...And translate back to the original system
 
@@ -1274,9 +1331,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     // line parameters in the system in which the first hit is the origin and with axis along SZ
     line_results.par << (uVec(1) - uVec(0)) / (sTotal(1) - sTotal(0)), uVec(0);
     auto idiff = 1. / (sTotal(1) - sTotal(0));
-    // innermost MS: add ONLY innerXX0 (upstream). matXX0(0) is already in the fit via varBeta(1), so it must not
-    // be added again here. This is the only MS correction for the line fit. The line cov reads only M^-1(0,0),
-    // M^-1(0,1), M^-1(1,1), from two unit-column band solves (e_0, e_1).
+    // Innermost MS: the upstream term and gap 0's departure share, both angles at hit 0 (see circleFit).
+    // Gap 0's arrival share is already in the fit via varBeta(1). This is the only MS correction for the
+    // line fit. The line cov reads only M^-1(0,0), M^-1(0,1), M^-1(1,1), from two unit-column band solves
+    // (e_0, e_1).
     {
       const int ls = fitWs.laneStride;
       double* const Mb = fitWs.bandMb;
@@ -1291,9 +1349,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
       col[1 * ls] = 1.;
       generalBrokenLine::bandSolveInPlace<2>(Mb, col, n, ls);  // col = M^-1 e_1
       const double i01 = col[0], i11 = col[1 * ls];
-      line_results.cov << (i00 - 2 * i01 + i11) * riemannFit::sqr(idiff) +
-                              multScatt(acc, data.innerXX0, bField, fast_fit(2), slope, fitCorrections),
+      const double msUp = multScatt(acc, data.innerXX0, bField, fast_fit(2), slope, fitCorrections, data.xx0Total);
+      line_results.cov << (i00 - 2 * i01 + i11) * riemannFit::sqr(idiff) + msUp +
+                              multScatt(acc, data.node0XX0, bField, fast_fit(2), slope, fitCorrections, data.xx0Total),
           (i01 - i00) * idiff, (i01 - i00) * idiff, i00;
+      if (data.innerW1 > 0.) {
+        // the upstream scatterer's correlated offset at hit 0 (see circleFit): the intercept at s = 0 (hit 0)
+        // of the inner line is theta * d, so its variance at the closest approach is theta^2 (sTotal(0) - d)^2
+        line_results.cov(0, 1) += msUp * data.innerW1 * data.innerD1;
+        line_results.cov(1, 0) = line_results.cov(0, 1);
+        line_results.cov(1, 1) += msUp * data.innerW1 * riemannFit::sqr(data.innerD1);
+      }
     }
 
     // translate to the original SZ system
