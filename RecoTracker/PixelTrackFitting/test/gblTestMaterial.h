@@ -116,13 +116,20 @@ namespace gblTestMaterial {
     return W;
   }
 
+  // Geometry of the beamline->hit-0 segment: the PCA z it starts from and its 3-D path.
+  // cf. ALPAKA_ACCELERATOR_NAMESPACE::brokenline::beamlineSegment.
+  inline void beamlineSegment(double zHit0, double slope, double sT0, double& zPca, double& path3D) {
+    zPca = zHit0 - slope * sT0;
+    path3D = std::abs(sT0) * std::sqrt(1. + slope * slope);
+  }
+
   // The material rows of PreparedGblData<n>.
   template <int N>
   struct MatData {
     double matXX0[N] = {};  // slot g = the WHOLE of gap g->g+1 (slot N-1 is zero)
     double gapD1[N] = {};   // gap g's interior equivalent-scatterer path distance from its arrival hit [cm]
     double gapW1[N] = {};   // gap g's interior equivalent-scatterer share of the variance, in (0,1]
-    double innerXX0 = 0.;   // beamline (z = 0) -> first hit, beam pipe + upstream material
+    double innerXX0 = 0.;   // track's PCA -> first hit, beam pipe + upstream material
     double innerD1 = 0.;    // the same two-thin split for the upstream segment
     double innerW1 = 0.;
     ElossColumn matCol[N] = {};  // the ionization column of the same lumps, from the same walk
@@ -130,11 +137,12 @@ namespace gblTestMaterial {
   };
 
   // The material section of brokenline::prepareGblFitData (alpaka/BrokenLine.h), on the host.
-  // hits is any 3xN Eigen-like object indexable as hits(row, col): rows 0,1,2 = x,y,z [cm]; sTotal is
-  // that track's 3-D arc length, which sets the path each gap's material is scaled to. The upstream term
-  // is always integrated, as in the device walk, so OT-only stub tracks carry the upstream material too.
+  // hits is any 3xN Eigen-like object indexable as hits(row, col): rows 0,1,2 = x,y,z [cm]; sTransverse
+  // and sTotal are that track's arc lengths and `slope` its pre-fit dz/ds_transverse, which set the 3-D
+  // path of every segment and the PCA the upstream one starts from. The upstream term is always
+  // integrated, as in the device walk, so OT-only stub tracks carry the upstream material too.
   template <int N, typename M3xN, typename VN>
-  inline void fillMatData(const M3xN& hits, const VN& sTotal, MatData<N>& md) {
+  inline void fillMatData(const M3xN& hits, const VN& sTransverse, const VN& sTotal, double slope, MatData<N>& md) {
     auto rOf = [&](int j) {
       return std::sqrt(double(hits(0, j)) * double(hits(0, j)) + double(hits(1, j)) * double(hits(1, j)));
     };
@@ -149,7 +157,9 @@ namespace gblTestMaterial {
       md.matXX0[g] = segmentXX0Moments(
           rOf(g), hits(2, g), rOf(g + 1), hits(2, g + 1), md.gapD1[g], md.gapW1[g], path, &md.matCol[g]);
     }
-    md.innerXX0 = segmentXX0Moments(0., 0., rOf(0), hits(2, 0), md.innerD1, md.innerW1, 0., &md.innerCol);
+    double zPca, path0;
+    beamlineSegment(hits(2, 0), slope, sTransverse(0), zPca, path0);
+    md.innerXX0 = segmentXX0Moments(0., zPca, rOf(0), hits(2, 0), md.innerD1, md.innerW1, path0, &md.innerCol);
   }
 
 }  // namespace gblTestMaterial

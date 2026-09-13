@@ -292,7 +292,7 @@ namespace {
     brokenline::prepareBrokenLineData(hits, ff, bFit, data);
     // the material rows, from the test-local march
     gblTestMaterial::MatData<N> md;
-    gblTestMaterial::fillMatData<N>(hits, data.sTotal, md);
+    gblTestMaterial::fillMatData<N>(hits, data.sTransverse, data.sTotal, -data.qCharge / ff(3), md);
     if (data.qCharge != rec.q)
       printf("REPLAY_WARN tk %u qCharge host %d != device %d\n", rec.tk, data.qCharge, rec.q);
     // material-map audit: host baked-in map vs the device ES product (dumped values)
@@ -308,12 +308,14 @@ namespace {
 
     double bUse = bFit, bConv = bFit;
 
-    // Two-thin-scatterer split of the upstream (beamline->hit0) material from the host map, the same walk
-    // and the same start point the kernel takes.
+    // Two-thin-scatterer split of the upstream (PCA->hit0) material from the host map, the same walk and
+    // the same start point and 3-D path the kernel takes.
     double innerD1 = 0., innerW1 = 0.;
     if (rec.innerXX0 > 0.) {
       const double rHit0 = std::hypot(hits(0, 0), hits(1, 0));
-      gblTestMaterial::segmentXX0Moments(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
+      double zPca, path0;
+      gblTestMaterial::beamlineSegment(hits(2, 0), -data.qCharge / ff(3), data.sTransverse(0), zPca, path0);
+      gblTestMaterial::segmentXX0Moments(0., zPca, rHit0, hits(2, 0), innerD1, innerW1, path0);
     }
     // The ionization columns come from the host walk (the dump carries X/X0 only); they agree with the
     // device's whenever the material rows above do.
@@ -558,11 +560,13 @@ namespace {
     double innerD1 = 0., innerW1 = 0.;
     if (innerXX0Use > 0.) {
       const double rHit0 = std::hypot(hits(0, 0), hits(1, 0));
-      gblTestMaterial::segmentXX0Moments(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
+      double zPca, path0;
+      gblTestMaterial::beamlineSegment(hits(2, 0), -data.qCharge / ff(3), data.sTransverse(0), zPca, path0);
+      gblTestMaterial::segmentXX0Moments(0., zPca, rHit0, hits(2, 0), innerD1, innerW1, path0);
     }
     // the ionization columns of the same chords (the dump carries X/X0 only)
     gblTestMaterial::MatData<N> mdCol;
-    gblTestMaterial::fillMatData<N>(hits, data.sTotal, mdCol);
+    gblTestMaterial::fillMatData<N>(hits, data.sTransverse, data.sTotal, -data.qCharge / ff(3), mdCol);
     const ElossColumn innerColUse = (innerXX0Use > 0.) ? mdCol.innerCol : ElossColumn{};
     std::vector<GblNodeData> nodes(N + 2);
     Matrix5d jacBack;
@@ -764,7 +768,7 @@ namespace {
     brokenline::PreparedBrokenLineData<NE> data;
     brokenline::prepareBrokenLineData(hits, ff, bFit, data);
     gblTestMaterial::MatData<NE> md;
-    gblTestMaterial::fillMatData<NE>(hits, data.sTotal, md);
+    gblTestMaterial::fillMatData<NE>(hits, data.sTransverse, data.sTotal, -data.qCharge / ff(3), md);
     riemannFit::VectorNd<NE> matD;
     for (int i = 0; i < NE; ++i)
       matD(i) = (i + 1 < NE) ? md.matXX0[i] : 0.;

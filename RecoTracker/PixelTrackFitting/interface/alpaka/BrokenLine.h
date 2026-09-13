@@ -21,41 +21,30 @@
 // elimination of the curvature border (Blobel eq. 8); covariance elements come from unit-column band solves, so
 // the dense (N+1)^2 inverse is never formed. The O(N) state lives in a caller-provided per-lane workspace.
 //
-// `fitCorrections` (a runtime bool threaded from the producer parameter useFitCorrections through HelixFit and
-// Kernel_BLFit into prepareBrokenLineData / lineFit / circleFit) selects the fast-BL scattering/covariance
-// model. With it on, the corrections apply as one package (not independently selectable):
-//   - material from the Geant4 tracker map (segmentXX0, an exact walk of the map's cells: every cell is
-//     charged with its own density over its exact length, and each gap is rescaled to the 3-D path the
-//     density is defined per) with the ENDPOINT PARTITION in prepareBrokenLineData (each gap's material split
-//     between its two END nodes so that the gap's total AND its first moment are both reproduced), the
-//     rigid-node guard that removes the kink term of a node with no assigned material, and the material
-//     from the track's own closest approach to the beam line up to hit 0, walked along its 3-D path, as the
-//     innermost scattering term (together with the share of gap 0 the partition assigns to node 0);
-//   - Highland's theta0 with geometry factor 1.0, the pion 1/beta factor and no pt cap in multScatt;
-//   - the circle reference frame built on the first hit at least kBaseMin away (mref) instead of hit 1;
-//   - the covariance blend in circleFit (measurement covariance from the full-circle Fisher inverse in the
-//     Karimaki-consistent basis, grafted with the broken line's full multiple-scattering part), written as a
-//     full 3x3 so the emitted matrix is one model throughout;
-//   - the IONIZATION ENERGY LOSS of the material the map just measured, as a deterministic offset of the
-//     circle's residuals (the elossGaps argument of circleFit, reading the per-gap losses the material walk
-//     charged with the map's own electron density through generalBrokenLine::elossTypicalColumn).
-//     The fit models ONE constant curvature; the real one grows along the path as the track loses momentum,
-//     so the fitted curvature comes out as a path average and the published pT is systematically LOW. The
-//     offset is the double integral of that known curvature growth, u_eloss(s) = -int int dkappa, subtracted
-//     from the measured radial residuals so the fitted Delta-kappa is the curvature AT THE REFERENCE POINT,
-//     i.e. the production pT. It is a VALUE correction only: the covariance is untouched, exactly as in the
-//     GBL's Deloss accumulator. It is charge-even in every ingredient (unsigned curvature, unsigned column,
-//     the charge-normalised sTransverse), so the two charges stay exact mirrors with no mirroring code.
+// `fitCorrections` (producer parameter useFitCorrections) selects the scattering/covariance model as
+// one package:
+//   - material per gap from the Geant4 map rho(r,z) (BLMaterialMap.h) by an exact walk of the map's cells,
+//     split between the gap's two end nodes so that its total and first moment are reproduced
+//     (segmentXX0Endpoint); a node with no material carries no kink; the innermost term walks the map from
+//     the track's own closest approach to the beam line up to hit 0 along its 3-D path and enters as a pure
+//     angle at hit 0, together with the share of gap 0 the partition assigns to node 0 (which has no kink
+//     degree of freedom of its own);
+//   - Highland theta0 with geometry factor 1.0, the pion 1/beta factor and no pt cap (multScatt);
+//   - the circle reference frame built on the first hit at least kBaseMin from hit 0 (mref) instead of hit 1;
+//   - the (phi,d0,k) covariance blend in circleFit: full-circle Fisher measurement covariance plus the broken
+//     line's multiple-scattering part;
+//   - the deterministic ionization-loss offset of the circle residuals, charged per node from the map's own
+//     dE/dx columns (see circleFit);
 //   - the full field of the solenoid map (BLBFieldMap.h), as two deterministic offsets: the B_r term of the
 //     equation of motion turns the dip angle along the path and is removed from the measured z coordinates
 //     (prepareBrokenLineData), and the Bz(r,z) profile's departure from the track's effective bending field
-//     is removed from the circle residuals (circleFit);
+//     is removed from the circle residuals (circleFit). Both are the rows the GBL refit carries
+//     (GeneralBrokenLine.h), in the same sign convention;
 //   - the state reported at the trajectory's own closest approach instead of the reference circle's: the
 //     arc the fit itself moved the perigee along, plus the transport of phi, d and the arc from hit 0
-//     inwards through the map over the empty lever the fit has no measurement on (transportToFittedPca);
-// With it off every one of these is bypassed and the fit is upstream's exactly: flat material |Delta s|*0.06/16
-// per gap charged at its arrival node (the first gap for the innermost term), theta0 with geometry factor 0.7,
-// beta = 1 and the 20 GeV pt cap, hit 1 as the reference, and the broken-line covariance emitted unblended.
+//     inwards through the map over the empty lever the fit has no measurement on (transportToFittedPca).
+// With it off: flat material |Delta s|*0.06/16 per gap charged at the arrival node, theta0 with
+// geometry factor 0.7, beta = 1 and the 20 GeV pt cap, hit 1 as the reference, no blend.
 //
 // The GBL refit (GeneralBrokenLine.h) takes its material from prepareGblFitData: every gap is
 // represented by two equivalent thin scatterers (segmentXX0Moments), reproducing the angle variance,
@@ -99,10 +88,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
   //!<                      border column) | corner 1 | w n (Schur vector) | ms n (solve scratch)
   //!<   helpers (10n+2):   pointsSZ 2n | zVec n | lineWeights n | lineRu n | lineU n | circleWeights n |
   //!<                      circleRu n+1 | circleU n+1 | varBetaOff n
-  //!< The zVec slot carries TWO disjoint lifetimes and is mapped twice (zVec / gapEloss, same storage, no extra
-  //!< doubles): zVec is written and read inside prepareBrokenLineData only (hit z -> pointsSZ, dead by the
-  //!< time sTotal/zInSZplane are extracted); gapEloss is written at the END of prepareBrokenLineData and read
-  //!< in circleFit. lineFit touches neither, so the second lifetime spans prepare -> line -> circle intact.
+  //!< The zVec slot is mapped twice (zVec / gapEloss, same storage, no extra doubles) for two disjoint
+  //!< lifetimes: zVec is written and read inside prepareBrokenLineData only, gapEloss is written at the
+  //!< end of prepareBrokenLineData and read in circleFit. lineFit touches neither.
   template <int n>
   constexpr int kLegacyBandBlockDoubles = 6 * n + 1;
   template <int n>
@@ -217,8 +205,10 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     riemannFit::VectorNd<n> sTransverse;  //!< arc length in the transverse plane from the pre-fitted PCA
     riemannFit::VectorNd<n> sTotal;       //!< total distance traveled (three-dimensional)
     riemannFit::VectorNd<n> matXX0;       //!< X/X0 of segment i->i+1 from the Geant4 material map
-    double innerXX0;                      //!< X/X0 from the beamline (IP) to the first hit (beam pipe + upstream)
+    double innerXX0;                      //!< X/X0 from the track's PCA to the first hit (beam pipe + upstream)
     ElossColumn innerCol;                 //!< that segment's ionization column
+    double innerD1;                       //!< that segment's equivalent scatterer: path distance from hit 0 [cm]
+    double innerW1;                       //!< and its share of the scattering variance, in (0,1]
   };
 
   // Exact cell walk of the material map along the straight (r,z) chord (r0,z0)->(r1,z1), r,z in cm. The
@@ -392,55 +382,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     path3D = alpaka::math::abs(acc, sT0) * alpaka::math::sqrt(acc, 1. + slope * slope);
   }
 
-  // Two-equivalent-thin-scatterer split of a segment's material (Kleinwort's GBL thick-scatterer model),
-  // used for every gap of the GBL and for the beamline->first-hit segment. With W, S1, S2 the walk's
-  // moments about the (r1,z1) end, a pair of thin scatterers -- one at path distance d1 = S2/S1 upstream
-  // of that end carrying the fraction w1 = S1^2/(S2 W) of the scattering variance, one AT the end with
-  // 1-w1 -- reproduces all three (angle variance, angle-offset covariance, offset variance at the end).
-  // w1 is in (0,1] by Cauchy-Schwarz (equality for a single-atom measure) and d1 in (0,L]; the caller
-  // handles those limits. Returns W.
-  template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Moments(const TAcc& acc,
-                                                          const float* rho,
-                                                          double r0,
-                                                          double z0,
-                                                          double r1,
-                                                          double z1,
-                                                          double& d1,
-                                                          double& w1,
-                                                          double path3D = 0.) {
-    double L, W, S1, S2;
-    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2, col);
-    d1 = 0.;
-    w1 = 0.;
-    if (W > 0. && S1 > 0. && S2 > 0.) {
-      d1 = S2 / S1;
-      w1 = S1 * S1 / (S2 * W);
-    }
-    return W;
-  }
-
-  // Endpoint partition of a segment's material between its two existing end nodes, for the fast BL, which
-  // has no node to spare between the hits. With W and S1 the walk's moments about the arrival end (r1,z1),
-  // charging fDep*W at the departure end and (1-fDep)*W at the arrival end, with fDep = S1/(W L) = <d>/L
-  // in [0,1], reproduces the segment's total and its first moment about either end exactly (a single kink
-  // at the arrival node would model the first moment as zero). Returns W.
-  template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Endpoint(const TAcc& acc,
-                                                           const float* rho,
-                                                           double r0,
-                                                           double z0,
-                                                           double r1,
-                                                           double z1,
-                                                           double& fDep,
-                                                           double path3D = 0.,
-                                                           ElossColumn* col = nullptr) {
-    double L, W, S1, S2;
-    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2, col);
-    fDep = (W > 0.) ? S1 / (W * L) : 0.;
-    return W;
-  }
-
   /*!
     \brief Computes the Coulomb multiple scattering variance of the planar angle.
 
@@ -453,12 +394,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     \param pionBeta false: upstream's multScatt exactly -- geometry factor 0.7, beta == 1 (see \warning) and pt
                     capped at 20 GeV by min(20., bField*radius). true: Highland's theta0 = 13.6 MeV/(beta c p)
                     with geometry factor 1.0, the pion 1/beta and no cap, p^2 beta^2 = p^4/(p^2 + m_pi^2).
-
     \param xLogTotal when positive, the thickness Highland's logarithm is evaluated at. The logarithm is a
                     property of the whole path the particle crosses, not of the lump one node is charged, so a
                     track broken into many thin scatterers must keep the total in it or every kink comes out
                     under-charged; only the leading radLen stays the node's own share. Zero keeps the node's
                     own thickness in the logarithm. The refit does the same (GeneralBrokenLine.h, th2Of).
+
     \todo add another Layer variable to identify also the start point of the track,
    *      so if there are missing hits or multiple hits, the part of the detector that
    *      the particle has traversed can be exactly identified.
@@ -921,6 +862,8 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
       for (u_int i = 0; i < n; i++)
         results.matXX0(i) = matCached[i];
       results.innerXX0 = matCached[n];
+      results.innerD1 = 0.;
+      results.innerW1 = 0.;
       results.innerCol = ElossColumn{};  // restored by the caller from its own cache, as gapD1/gapW1 are
       if (gapD1 != nullptr && gapW1 != nullptr)
         for (u_int g = 0; g < n; g++) {
@@ -933,9 +876,9 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
       results.matXX0(i) = 0.;
     for (u_int g = 0; g < n - 1; g++) {
       double d1 = 0., w1 = 0.;
-      // the walk's own two-thin wrapper: it is the one that can also accumulate the gap's ionization column
+      const double path = alpaka::math::abs(acc, results.sTotal(g + 1) - results.sTotal(g));
       const double xx0 = segmentXX0Moments(
-          acc, rho, rOf(g), hits(2, g), rOf(g + 1), hits(2, g + 1), d1, w1, 0., matCol ? matCol + g : nullptr);
+          acc, rho, rOf(g), hits(2, g), rOf(g + 1), hits(2, g + 1), d1, w1, path, matCol ? matCol + g : nullptr);
       results.matXX0(g) = xx0;  // slot g = the WHOLE of gap g; prepareGblDataSplit places it
       if (gapD1 != nullptr && gapW1 != nullptr) {
         gapD1[g] = d1;
@@ -949,13 +892,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     }
     if (matCol != nullptr)
       matCol[n - 1] = ElossColumn{};
-    // Same beamline->hit0 material rule as prepareBrokenLineData (keep the two in sync): the map is always
-    // integrated from the beamline, the CKF prompt-origin assumption, so OT-only stub tracks carry the upstream
-    // material too. Same quadrature as for the gaps, so one rule integrates the whole trajectory (the rectangle
-    // rule would give both endpoint samples full weight, over-integrating this segment and double-counting the
-    // hit-0 layer bin it shares with gap 0).
-    const bool useInner = true;
-    results.innerXX0 = useInner ? segmentXX0(acc, rho, 0., 0., rOf(0), hits(2, 0), 0., &results.innerCol) : 0.;
+    // Same beamline->hit0 material rule as prepareBrokenLineData: the map is always integrated from the
+    // beamline, so OT-only stub tracks carry the upstream material too, from the track's own PCA along
+    // its 3-D path.
+    double zPca, path0;
+    beamlineSegment(acc, hits(2, 0), slope, results.sTransverse(0), zPca, path0);
+    results.innerXX0 = segmentXX0Moments(
+        acc, rho, 0., zPca, rOf(0), hits(2, 0), results.innerD1, results.innerW1, path0, &results.innerCol);
   }
 
   // Symmetric pentadiagonal band (b = 2) of the Broken Line cost function minimized w.r.t. u -- the

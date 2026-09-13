@@ -128,11 +128,11 @@ namespace {
     alpaka::memcpy(queue, out_h, out_d);
     alpaka::wait(queue);
 
-    // the arc lengths the walk needs (the 3-D path of every gap), host twin
+    // the arc lengths the walk needs (3-D path per gap, PCA of the upstream segment), host twin
     blh::PreparedBrokenLineData<N> hdata;
     blh::prepareBrokenLineData(hits, ff, gblTestFixtures::kB, hdata);
     gblTestMaterial::MatData<N> md;
-    gblTestMaterial::fillMatData<N>(hits, hdata.sTotal, md);
+    gblTestMaterial::fillMatData<N>(hits, hdata.sTransverse, hdata.sTotal, -hdata.qCharge / ff(3), md);
 
     MaxRel mat, gd1, gw1, inner, col;
     for (int i = 0; i < N; ++i) {
