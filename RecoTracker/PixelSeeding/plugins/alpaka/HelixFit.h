@@ -7,6 +7,8 @@
 
 #include "DataFormats/TrackSoA/interface/alpaka/TrackUtilities.h"
 #include "DataFormats/TrackingRecHitSoA/interface/TrackingRecHitsSoA.h"
+#include "DataFormats/TrackingRecHitSoA/interface/StubsSoA.h"
+#include "DataFormats/TrackingRecHitSoA/interface/OTRecHitsSoA.h"
 #include "RecoTracker/PixelTrackFitting/interface/FitResult.h"
 #include "Geometry/CommonTopologies/interface/SimplePixelTopology.h"
 #include "HeterogeneousCore/AlpakaInterface/interface/config.h"
@@ -70,31 +72,17 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
   // CAHitMaskingAndMergerKernels::finalDedup so the union GBL refit reuses the merger's fit inputs.
   // A null pointer, or enable == false, makes the confirm path inert and the contested loser is
   // dropped outright.
+  // Inputs the merger's final duplicate removal needs beyond the track SoA: the hit view (the length
+  // count reads ::reco::isStub through it), the stub view (a stub's two published rechits, which is
+  // what the shared count matches on) and the |eta| range the drop authority covers, which is the
+  // extension walk's own reach. Neither the shared-cluster fraction nor the compatibility threshold is
+  // configurable: the first is the validation's 75 % matching definition, the second the 5-sigma
+  // rejection of ExtDerivedTables.h.
   struct MergerDedupConfirmInputs {
     ::reco::TrackingRecHitConstView hv;
-    ::reco::CAModulesConstView cm;
-    const caExtension::OTHitsSource *otSource;  // raw OT rechit positions/errors (null => merged-only)
-    const float *rhoMap;                        // BL material-map device grid (EventSetup condition)
-    const float *bFieldMap;                     // normalized (Bz,Br) r-z field map (null => scalar bfield)
-    float bfield;
-    bool enable;  // run the union refit before a contested loser may be dropped
-    int delta;    // union-hit-loss budget for the verdict
-    // Dedup ranking/guard set, resolved at the finalDedup launch site. hv above is the hit view the
-    // weighted cluster count reads through ::reco::isStub.
-    bool finderOnly;        // the fallback scans and counts candidates but never drops one
-    bool rankClusters;      // length key = weighted cluster count (a stub counts 2)
-    bool rankNHits;         // length key = nHits alone, skipping the nLayers primary key
-    bool guardCrossArm;     // cross-arm keep-longest corner guard
-    float guardVertPosMin;  // guard engage threshold on |dxy| proxy (cm)
-    float guardChi2Margin;  // chi2/ndof margin the longer track must also win by (guard)
-    // 0-shared fallback tuning.
-    float fbNSigma2;       // fallback cov-gate width; <= 0 makes it track the shared-hit gate width
-    float fbDropBound;     // |eta| bound beyond which the fallback may not drop
-    bool fbEnable;         // master switch for the fallback drop
-    bool fbSameCharge;     // require both members to have the same charge before confirming
-    float fbAbsFloorDPhi;  // confirm box cut on |dphi|; 1e30 leaves it open
-    float fbAbsFloorDQoP;  // confirm box cut on |d(q/p)|; 1e30 leaves it open
-    float fbAbsFloorDCot;  // confirm box cut on |d(cot theta)|; 1e30 leaves it open
+    ::reco::StubsConstView sv;
+    ::reco::OTRecHitsConstView ov;
+    float dropAbsEtaMax;
   };
 
   template <typename TrackerTraits>
