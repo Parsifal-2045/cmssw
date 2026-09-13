@@ -65,7 +65,7 @@ namespace {
   //!< relative gate: only compare entries above this fraction of the matrix's largest entry.
   constexpr double kEntryGate = 1e-8;
 
-  constexpr double kELossPerX0 = 0.0;
+  constexpr bool kApplyELoss = false;  // ionization-loss correction off
   constexpr double kBFieldOrigin = 0.0;
   constexpr bool kTrajectoryCorrections = false;
   constexpr bool kScatteringLogAtTotal = false;
@@ -97,10 +97,8 @@ namespace {
         bld::PreparedGblData<kN> data;
         double gapD1[kN], gapW1[kN];
         bld::prepareGblFitData(acc, hits, ff, bField, rho, data, /*matCached=*/nullptr, gapD1, gapW1);
-        const double rHit0 = alpaka::math::sqrt(acc, hits(0, 0) * hits(0, 0) + hits(1, 0) * hits(1, 0));
-        double innerD1 = 0., innerW1 = 0.;
-        if (data.innerXX0 > 0.)
-          bld::segmentXX0GapSplit(acc, rho, 0., 0., rHit0, hits(2, 0), innerD1, innerW1);
+        // the upstream (PCA -> hit0) segment's own two-thin split, from the walk prepareGblFitData ran
+        const double innerD1 = data.innerD1, innerW1 = data.innerW1;
 
         const bool usedSplit = gbld::prepareGblDataSplit<Acc1D, kN>(acc,
                                                                     hits,
@@ -117,8 +115,7 @@ namespace {
                                                                     innerD1,
                                                                     innerW1,
                                                                     nodes,
-                                                                    /*msScale=*/1.0,
-                                                                    kELossPerX0,
+                                                                    kApplyELoss,
                                                                     /*bMap=*/nullptr,
                                                                     kBFieldOrigin,
                                                                     kTrajectoryCorrections,
@@ -206,7 +203,8 @@ namespace {
 
 namespace {
 
-  void runFixture(Queue& queue, const char* devName, const char* label, const double D[kN][9], const blMaterialMap::Map* rhoDev) {
+  void runFixture(
+      Queue& queue, const char* devName, const char* label, const double D[kN][9], const blMaterialMap::Map* rhoDev) {
     constexpr double kB = gblTestFixtures::kB;
 
     Eigen::Matrix<double, 3, kN> hits;
