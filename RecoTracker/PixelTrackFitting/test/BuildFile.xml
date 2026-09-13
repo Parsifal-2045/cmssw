@@ -59,12 +59,29 @@
 </bin>
 
 
+<!-- The Landau energy-loss law of a composite ionization column (GeneralBrokenLine.h). -->
+<bin file="testBLElossColumn.cc" name="testBLElossColumn">
+  <use name="eigen"/>
+  <use name="RecoTracker/PixelTrackFitting"/>
+</bin>
+
 <!-- Regeneration of the compiled-in material table (blMaterialMap/blMaterialMapRun.sh): needs step trees as
      arguments; NO_TESTRUN skips the argument-less runtests. -->
 <bin file="blMaterialMap/blMaterialMapBuild.cc" name="blMaterialMapBuild">
   <use name="root"/>
   <flags NO_TESTRUN="1"/>
 </bin>
+
+<!-- SimWatcher that writes the run's Geant4 material table (density, X0, electron density, I, Sternheimer
+     parameters) next to the step trees; blMaterialMapBuild reads the dE/dx weights from it. -->
+<library file="blMaterialMap/BLMaterialTableDump.cc" name="RecoTrackerPixelTrackFittingBLMaterialTableDump">
+  <use name="geant4core"/>
+  <use name="clhep"/>
+  <use name="FWCore/ParameterSet"/>
+  <use name="SimG4Core/Notification"/>
+  <use name="SimG4Core/Watcher"/>
+  <flags EDM_PLUGIN="1"/>
+</library>
 
 <!-- Checks the two EventSetup maps the fits read against their sources (blMapsCheck_cfg.py). -->
 <library file="BLMapsCheck.cc" name="RecoTrackerPixelTrackFittingTestBLMapsCheck">
