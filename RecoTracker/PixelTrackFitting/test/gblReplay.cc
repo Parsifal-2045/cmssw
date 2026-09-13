@@ -292,7 +292,7 @@ namespace {
     brokenline::prepareBrokenLineData(hits, ff, bFit, data);
     // the material rows, from the test-local march
     gblTestMaterial::MatData<N> md;
-    gblTestMaterial::fillMatData<N>(hits, md);
+    gblTestMaterial::fillMatData<N>(hits, data.sTotal, md);
     if (data.qCharge != rec.q)
       printf("REPLAY_WARN tk %u qCharge host %d != device %d\n", rec.tk, data.qCharge, rec.q);
     // material-map audit: host baked-in map vs the device ES product (dumped values)
@@ -308,13 +308,12 @@ namespace {
 
     double bUse = bFit, bConv = bFit;
 
-    // Two-thin-scatterer split of the upstream (beamline->hit0) material from the host map, with
-    // segmentXX0GapSplit (trapezoid rule) as the kernel takes it, not the rectangle-weighted
-    // segmentXX0Moments, which would shift innerD1/innerW1.
+    // Two-thin-scatterer split of the upstream (beamline->hit0) material from the host map, the same walk
+    // and the same start point the kernel takes.
     double innerD1 = 0., innerW1 = 0.;
     if (rec.innerXX0 > 0.) {
       const double rHit0 = std::hypot(hits(0, 0), hits(1, 0));
-      gblTestMaterial::segmentXX0GapSplit(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
+      gblTestMaterial::segmentXX0Moments(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
     }
     std::vector<GblNodeData> nodes(N + 2);
     Matrix5d jacBack;
@@ -329,8 +328,7 @@ namespace {
                       matD,
                       rec.innerXX0,
                       nodes.data(),
-                      /*msScale=*/1.0,
-                      gELossPerX0,
+                      gELossPerX0 > 0.,
                       &jacBack,
                       innerD1,
                       innerW1,
@@ -554,7 +552,7 @@ namespace {
     double innerD1 = 0., innerW1 = 0.;
     if (innerXX0Use > 0.) {
       const double rHit0 = std::hypot(hits(0, 0), hits(1, 0));
-      gblTestMaterial::segmentXX0GapSplit(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
+      gblTestMaterial::segmentXX0Moments(0., 0., rHit0, hits(2, 0), innerD1, innerW1);
     }
     std::vector<GblNodeData> nodes(N + 2);
     Matrix5d jacBack;
@@ -569,8 +567,7 @@ namespace {
                       matD,
                       innerXX0Use,
                       nodes.data(),
-                      /*msScale=*/1.0,
-                      gELossPerX0,
+                      gELossPerX0 > 0.,
                       &jacBack,
                       innerD1,
                       innerW1,
@@ -755,7 +752,7 @@ namespace {
     brokenline::PreparedBrokenLineData<NE> data;
     brokenline::prepareBrokenLineData(hits, ff, bFit, data);
     gblTestMaterial::MatData<NE> md;
-    gblTestMaterial::fillMatData<NE>(hits, md);
+    gblTestMaterial::fillMatData<NE>(hits, data.sTotal, md);
     riemannFit::VectorNd<NE> matD;
     for (int i = 0; i < NE; ++i)
       matD(i) = (i + 1 < NE) ? md.matXX0[i] : 0.;

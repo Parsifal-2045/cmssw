@@ -58,7 +58,7 @@
 // beta = 1 and the 20 GeV pt cap, hit 1 as the reference, and the broken-line covariance emitted unblended.
 //
 // The GBL refit (GeneralBrokenLine.h) takes its material from prepareGblFitData: every gap is
-// represented by two equivalent thin scatterers (segmentXX0GapSplit), reproducing the angle variance,
+// represented by two equivalent thin scatterers (segmentXX0Moments), reproducing the angle variance,
 // the angle-offset covariance and the far-end offset variance of the gap's material; the Highland
 // logarithm is taken once at the gap's total thickness and then apportioned (Lynch & Dahl,
 // NIM B58 (1991) 6; Blobel, NIM A566 (2006) 14).
@@ -392,37 +392,46 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     path3D = alpaka::math::abs(acc, sT0) * alpaka::math::sqrt(acc, 1. + slope * slope);
   }
 
-  // Two-equivalent-thin-scatterer moments of one gap with the trapezoid weights: segmentXX0Moments
-  // generalised to every gap, with one quadrature rule throughout. With q(l) the X/X0 density along
-  // (r0,z0)->(r1,z1) and d(l) the distance to the arrival end (r1,z1), W = int q dl, S1 = int q d dl,
-  // S2 = int q d^2 dl; the interior scatterer sits at d1 = S2/S1 upstream of the arrival end with the
-  // fraction w1 = S1^2/(S2 W) of the variance, the arrival end carries 1-w1. w1 is in (0, 1] by
-  // Cauchy-Schwarz (equality for a single-atom measure) and d1 in (0, L]; the caller handles those
-  // limits. Returns W, the same value as segmentXX0(..., trapezoid=true).
+  // Two-equivalent-thin-scatterer split of a segment's material (Kleinwort's GBL thick-scatterer model),
+  // used for every gap of the GBL and for the beamline->first-hit segment. With W, S1, S2 the walk's
+  // moments about the (r1,z1) end, a pair of thin scatterers -- one at path distance d1 = S2/S1 upstream
+  // of that end carrying the fraction w1 = S1^2/(S2 W) of the scattering variance, one AT the end with
+  // 1-w1 -- reproduces all three (angle variance, angle-offset covariance, offset variance at the end).
+  // w1 is in (0,1] by Cauchy-Schwarz (equality for a single-atom measure) and d1 in (0,L]; the caller
+  // handles those limits. Returns W.
   template <alpaka::concepts::Acc TAcc>
-  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0GapSplit(
-      const TAcc& acc, const float* rho, double r0, double z0, double r1, double z1, double& d1, double& w1) {
-    const double L = alpaka::math::sqrt(acc, (r1 - r0) * (r1 - r0) + (z1 - z0) * (z1 - z0));
-    int nseg = int(2. * L);
-    if (nseg < 2)
-      nseg = 2;
-    const double dl = L / (nseg - 1);
-    double W = 0., S1overL = 0., S2overL2 = 0.;
-    for (int k = 0; k < nseg; ++k) {
-      const double f = double(k) / (nseg - 1);
-      const double w = (k == 0 || k == nseg - 1) ? 0.5 * dl : dl;
-      const double q = blMaterialMap::rhoAt(rho, float(r0 + f * (r1 - r0)), float(z0 + f * (z1 - z0))) * w;
-      W += q;
-      S1overL += q * (1. - f);              // (1-f) == d/L, so this accumulates S1/L directly
-      S2overL2 += q * (1. - f) * (1. - f);  // and this S2/L^2
-    }
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Moments(const TAcc& acc,
+                                                          const float* rho,
+                                                          double r0,
+                                                          double z0,
+                                                          double r1,
+                                                          double z1,
+                                                          double& d1,
+                                                          double& w1,
+                                                          double path3D = 0.) {
+    double L, W, S1, S2;
+    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2);
     d1 = 0.;
     w1 = 0.;
-    if (W > 0. && S1overL > 0. && S2overL2 > 0.) {
-      d1 = L * S2overL2 / S1overL;                // = S2/S1
-      w1 = (S1overL * S1overL) / (S2overL2 * W);  // = S1^2/(S2 W)
+    if (W > 0. && S1 > 0. && S2 > 0.) {
+      d1 = S2 / S1;
+      w1 = S1 * S1 / (S2 * W);
     }
-    return W;  // total X/X0, the same value as segmentXX0(..., /*trapezoid=*/true)
+    return W;
+  }
+
+  // Endpoint partition of a segment's material between its two existing end nodes, for the fast BL, which
+  // has no node to spare between the hits. With W and S1 the walk's moments about the arrival end (r1,z1),
+  // charging fDep*W at the departure end and (1-fDep)*W at the arrival end, with fDep = S1/(W L) = <d>/L
+  // in [0,1], reproduces the segment's total and its first moment about either end exactly (a single kink
+  // at the arrival node would model the first moment as zero). Returns W.
+  template <alpaka::concepts::Acc TAcc>
+  ALPAKA_FN_ACC ALPAKA_FN_INLINE double segmentXX0Endpoint(
+      const TAcc& acc, const float* rho, double r0, double z0, double r1, double z1, double& fDep, double path3D = 0.) {
+    double L, W, S1, S2;
+    segmentWalk(acc, rho, r0, z0, r1, z1, path3D, L, W, S1, S2);
+    fDep = (W > 0.) ? S1 / (W * L) : 0.;
+    return W;
   }
 
   /*!
@@ -450,7 +459,7 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     \warning with pionBeta == false the formula assumes beta=1, and so neglects the dependence
    *         of theta_0 on the mass of the particle at fixed momentum.
 
-    \return the variance of the planar angle ((theta_0)^2 /3).
+    \return the variance of the planar scattering angle, theta_0^2.
   */
   template <alpaka::concepts::Acc TAcc>
   ALPAKA_FN_ACC ALPAKA_FN_INLINE double multScatt(const TAcc& acc,
@@ -827,13 +836,13 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
 
   /*!
     \brief Lean counterpart of prepareBrokenLineData for the pure-GBL path: fills only {qCharge, sTransverse,
-           sTotal, matXX0, innerXX0}.
+           sTotal, matXX0, innerXX0, innerD1, innerW1}.
 
     radii is computed inline per hit and zInSZplane / varBeta are not computed at all, since the GBL solver
     never reads them; every retained output uses the same expression as prepareBrokenLineData, so it carries
     the same value with a smaller kernel stack frame.
 
-    Material model: matXX0(i) is the whole of gap i->i+1 with the trapezoid rule, and \param gapD1 / \param gapW1
+    Material model: matXX0(i) is the whole of gap i->i+1 from the exact cell walk, and \param gapD1 / \param gapW1
     carry that gap's two-equivalent-scatterer partition (position and variance share of the interior scatterer)
     for prepareGblDataSplit, which places one measurement-less node per gap. The split reproduces all three
     moments of the material distribution (angle variance, angle-offset covariance, far-end offset variance).
@@ -892,10 +901,12 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE::brokenline {
     auto rOf = [&](u_int j) { return alpaka::math::sqrt(acc, hits(0, j) * hits(0, j) + hits(1, j) * hits(1, j)); };
     // matXX0 slot g holds the whole of gap g (prepareGblDataSplit places it over the gap's two
     // scatterers; prepareGblData, the fallback node builder, charges it at hit node g+1). Every
-    // integral, gaps and beamline->hit0 alike, uses the trapezoid rule: exact segment length, each
-    // layer's bin counted once. The material rows are a pure function of the hit positions, so the two
-    // GBL linearizations of one fit produce exactly the same doubles twice; `matCached`, when supplied,
-    // replaces this march with a load of those already-rounded doubles, and a null pointer runs it.
+    // integral, gaps and beamline->hit0 alike, is the exact cell walk of the map; each gap is rescaled to
+    // the 3-D path the density is defined per. The rows depend on the hit positions and, weakly, on the
+    // reference (through those arc lengths); `matCached`, when supplied, replaces the walk with a load
+    // of the doubles a previous linearization stored, i.e. it freezes the material at that reference, and
+    // a null pointer runs the walk (the caller then restores innerD1/innerW1 from its own cache, as it
+    // does for gapD1/gapW1).
     if (matCached != nullptr) {
       for (u_int i = 0; i < n; i++)
         results.matXX0(i) = matCached[i];

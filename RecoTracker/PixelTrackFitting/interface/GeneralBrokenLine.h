@@ -342,11 +342,9 @@ namespace generalBrokenLine {
                              const VN& matXX0,
                              double innerXX0,
                              GblNodeData* nodes,
-                             double msScale = 1.0,  // multiple-scattering scale factor (1.0 in production)
-                             // Enables the ionization-loss correction when > 0; only that test is read, the
-                             // loss charged at a node coming from elossMostProbable / elossTypicalColumn at
-                             // that node's thickness.
-                             double eLossPerX0 = 0.0,
+                             // Enables the ionization-loss correction: the loss charged at a node comes from
+                             // elossMostProbable / elossTypicalColumn at that node's thickness.
+                             bool applyELoss = false,
                              Matrix5d* jacHit0ToPca = nullptr,  // optional output: the hit0 -> PCA backward
                                                                 // curvilinear Jacobian (single-scatterer layout)
                              double innerD1 = 0.,  // upstream equivalent-scatterer path distance from hit0 [cm]
@@ -363,10 +361,12 @@ namespace generalBrokenLine {
                              // a measurement-less node, and the B_r lambda row of the field-profile offset.
                              bool trajectoryCorrections = false,
                              // Evaluates Highland's log at the track's TOTAL declared material rather than at
-                             // each gap's own thickness (producer parameter useScatteringLogAtTotal).
+                             // each gap's own thickness.
                              bool scatteringLogAtTotal = false,
                              // Charges each gap the cumulative-column typical loss from the vertex to that node
-                             // rather than each lump its own most-probable loss (useCumulativeEloss).
+                             // rather than each lump its own most-probable loss.
+                             // These model switches are not configurable: the merger's refit call sets
+                             // them (PixelTracksSoAMerger.cc), the CA path leaves them at these defaults.
                              bool elossCumulative = false) {
     constexpr int nNodes = N + 2;
     const double cx = fast_fit(0), cy = fast_fit(1), R = fast_fit(2);
@@ -440,15 +440,17 @@ namespace generalBrokenLine {
       sTotN[1] = double(sTotal(0)) - innerPath;  // path length along the track, to the (possibly clamped) node
     for (int i = 0; i < N; ++i)
       sTotN[i + hOff] = double(sTotal(i));
-    // Total declared material: upstream lump plus every inter-hit gap that carries a kink. Read only
-    // when scatteringLogAtTotal moves the Highland logarithm's argument from the gap to this total.
+    // Total declared material of the WHOLE track: the upstream lump plus every inter-hit gap. Highland's
+    // logarithm is a property of the thickness the particle actually crosses, so it must not depend on which
+    // gaps a layout gives a kink to; both node builders use the same, full, gap set. Read only when
+    // scatteringLogAtTotal moves the Highland logarithm's argument from the gap to this total.
     double xx0TotDecl = 0.;
     if (scatteringLogAtTotal) {
       if (innerXX0 > 0.)
         xx0TotDecl += innerXX0;
-      for (int i = 1; i <= N - 2; ++i)
-        if (double(matXX0(i - 1)) > 0.)
-          xx0TotDecl += double(matXX0(i - 1));
+      for (int g = 0; g <= N - 2; ++g)
+        if (double(matXX0(g)) > 0.)
+          xx0TotDecl += double(matXX0(g));
     }
     // Highland scattering variance: theta0 = 0.0136/(beta p) * sqrt(x/X0) * (1 + 0.038 ln(x/X0)). theta0^2 is
     // not additive over a chain (one logarithm); scatteringLogAtTotal moves that log from this gap's thickness
@@ -461,7 +463,7 @@ namespace generalBrokenLine {
       const double tt = 0.0136 / betaP;
       const double xLog = (scatteringLogAtTotal && xx0TotDecl > 0.) ? xx0TotDecl : xx0;
       const double f = 1. + 0.038 * std::log(xLog);
-      return tt * tt * xx0 * f * f * msScale;
+      return tt * tt * xx0 * f * f;
     };
     // total upstream scattering variance from the FULL innerXX0, split linearly between the equivalent
     // scatterer node (innerW1) and hit0 (1-innerW1) in the inner-node layout.
@@ -475,7 +477,7 @@ namespace generalBrokenLine {
     //     leaks into d0 and phi0 if left in the residuals, and vanishes where B_bend == bField.
     // Only the offset part (x_T,y_T) of the accumulated shift is removed from the measurement residuals.
     const bool useField = (bMap != nullptr);
-    const bool detOffset = (eLossPerX0 > 0.) || useField;
+    const bool detOffset = applyELoss || useField;
     // The lambda row of the field-profile offset (see the increment below): its only ingredient beyond the
     // azimuth row is B_r, which the bending law already reads at the same lattice cell.
     const bool useLambdaRow = useField && trajectoryCorrections;
@@ -545,11 +547,11 @@ namespace generalBrokenLine {
       if (scatOnly) {
         nd.scatPrec << 1. / (innerW1 * th2InnerTot), 0., 0., cos2lam / (innerW1 * th2InnerTot);
         nd.hasScat = true;
-        if (eLossPerX0 > 0. && elossCumulative) {
+        if (applyELoss && elossCumulative) {
           const double tPrev = elossTypicalColumn(pTot, xx0ElossCum);
           xx0ElossCum += innerXX0 * innerW1;
           Deloss(0) += qbp * (elossTypicalColumn(pTot, xx0ElossCum) - tPrev) / pTot;
-        } else if (eLossPerX0 > 0.)
+        } else if (applyELoss)
           Deloss(0) += qbp * elossMostProbable(pTot, innerXX0 * innerW1) / pTot;
         nodes[k] = nd;
         continue;
@@ -602,11 +604,11 @@ namespace generalBrokenLine {
       }
       // this node's q/p increment for the downstream offsets: its material's ionization loss dE enters as
       // d(q/p) = (q/p) dE/p, so |q/p| grows as p drops outward.
-      if (eLossPerX0 > 0. && xx0Eloss > 0. && elossCumulative) {
+      if (applyELoss && xx0Eloss > 0. && elossCumulative) {
         const double tPrev = elossTypicalColumn(pTot, xx0ElossCum);
         xx0ElossCum += xx0Eloss;
         Deloss(0) += qbp * (elossTypicalColumn(pTot, xx0ElossCum) - tPrev) / pTot;
-      } else if (eLossPerX0 > 0. && xx0Eloss > 0.)
+      } else if (applyELoss && xx0Eloss > 0.)
         Deloss(0) += qbp * elossMostProbable(pTot, xx0Eloss) / pTot;
       nodes[k] = nd;
     }
