@@ -132,7 +132,6 @@ namespace ALPAKA_ACCELERATOR_NAMESPACE {
       }
     }
 
-    // ----------------------------------
     // RZ alignment cut aka CAThetaCut
     // This cut checks the alignment of the three hits in the RZ plane by applying a cut on the angle between the middle
     // and outer hit with respect to the inner hit.
