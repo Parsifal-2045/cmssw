@@ -1,7 +1,7 @@
 import FWCore.ParameterSet.Config as cms
 
 hltPhase2MuonPixelSeedsFromPixelTracks = cms.EDProducer("SeedGeneratorFromProtoTracksEDProducer",
-    InputCollection = cms.InputTag("hltPhase2MuonPixelTracksHighPurity"),
+    InputCollection = cms.InputTag("hltPhase2MuonPixelTracksHighPurityForest"),
     InputVertexCollection = cms.InputTag(""),
     SeedCreatorPSet = cms.PSet(
         refToPSet_ = cms.string('hltPhase2SeedFromProtoTracks')

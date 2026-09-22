@@ -1,76 +1,26 @@
-/** \class MuonIOTracksDNNSelector.cc
+/** \class MuonIOTracksForestSelector
  *
- *  \brief DNN-based muon (pixel) tracks selection
+ *  \brief XGBoost forest (compact binary) muon track HighPurity selector.
  *
- *  This module implements a DNN-based selector for muon tracks, designed to replace
- *  traditional cut-based selections with a more powerful multivariate approach.
- *  The DNN model is expected to be trained on a comprehensive set of track features,
- *  including kinematic variables, track quality metrics, and optionally L1Tk Muon
- *  matching information and stub features.
+ *  Identical 33-feature extraction as MuonIOTracksDNNSelector, but replaces
+ *  ONNX Runtime DNN inference with a serial tree traversal of the compact
+ *  gradient-boosted-tree binary (.bin). This is 2.5x smaller than the ONNX
+ *  model and ~2x faster at the typical 3-12 muon tracks per event.
  *
- *  \author Luca Ferragina (INFN BO), 2026
+ *  Handles both the pixel-track and the IO-track (seeds) selector: both feed
+ *  reco::Track + L1TkMu matching features through the same 33-feature
+ *  extraction; only the .bin model and threshold differ (set per cfi).
  *
- * Feature order (44 total):
+ *  The compact .bin format (identical to PixelTrackForestHighPuritySelector):
+ *    int32 nNodes, int32 nTrees, float baseLogit,
+ *    int8  feat[nNodes]   (-1 = leaf),
+ *    float val[nNodes]    (threshold / leaf value),
+ *    int32 left[nNodes], right[nNodes],
+ *    int32 roots[nTrees]
  *
- * Log features (log10(|x| + 1e-6)):
- *   0: track_p
- *   1: track_pt
- *   2: track_ptErr
- *   3: track_chi2
- *   4: track_normalizedChi2
- *   5: track_etaErr
- *   6: track_phiErr
- *   7: track_dszErr
- *   8: track_dxyErr
- *   9: track_dzErr
- *  10: track_qoverpErr
- *  11: track_lambdaErr
- *
- * Plain features (no transform):
- *  12: track_eta
- *  13: track_nPixelHits
- *  14: track_nTrkLays
- *  15: track_nFoundHits
- *  16: track_nLostHits
- *
- * Derived features (original):
- *  17: track_impact3D              (log10(dxy^2 + dz^2 + eps))
- *  18: track_impactSignificance    (log10(sqrt((dxy/dxyErr)^2 + (dz/dzErr)^2) + eps))
- *  19: track_chi2PerHit            (log10(chi2 / max(nFoundHits, 1) + eps))
- *  20: track_hitEfficiency         (nFoundHits / max(nFoundHits + nLostHits, 1))
- *  21: track_sigmaPtOverPt         (log10(ptErr / pt + eps))
- *  22: track_relUncertaintyProduct (log10((ptErr/pt) * (qoverpErr/|qoverp|) + eps))
- *
- * NEW derived features:
- *  23: track_sip2D                 (log10(|dxy| / dxyErr + eps))
- *  24: track_sipZ                  (log10(|dz| / dzErr + eps))
- *  25: track_dxyOverPt             (log10(|dxy| / pt + eps))
- *  26: track_ptErrOverP            (log10(ptErr / p + eps))
- *  27: track_dzOverDxy             (log10(|dz| / (|dxy| + eps) + eps))
- *  28: track_absEta                (|eta|)
- *
- * L1TkMuon stub features (if useStubFeatures=true):
- *  29: nStubs
- *  30: nStubs_Endcap
- *  31: nStubs_Barrel
- *  32: stubQual_max
- *  33: stubMax_etaRegion
- *  34: stubMax_phiRegion
- *  35: stubMax_depthRegion
- *
- * L1TkMuon matching features (if useL1TkMuFeatures=true):
- *  36: L1TkMu_hasMatch             (1.0 if matched, 0.0 otherwise)
- *  37: L1TkMu_dR2min               (log, imputed with 0.1)
- *  38: L1TkMu_dPtNorm              (log, imputed with 1.0)
- *  39: L1TkMu_chi2Pt               (log, imputed with 10.0)
- *  40: L1TkMu_matchingScore        (log, imputed with 0.2)
- *
- * NEW L1TkMuon matching features:
- *  41: L1TkMu_nCompatible          (count of L1 candidates within loose window)
- *  42: L1TkMu_secondBest_dR2       (log, imputed with 1.0)
- *
- * Low pT indicator:
- *  43: is_low_pt                   (1 / (1 + exp(clip((pt - 5.0) * 2.0, -20, 20))))
+ *  Traversal: for each tree, walk from root; at internal nodes go left if
+ *  x[feat[node]] < val[node], else right. At leaf, add val[node] to margin.
+ *  Score = sigmoid(margin). Selection: score >= threshold.
  */
 
 #include "FWCore/Framework/interface/stream/EDProducer.h"
@@ -90,24 +40,78 @@
 #include "DataFormats/Math/interface/deltaR.h"
 #include "DataFormats/Math/interface/deltaPhi.h"
 
-#include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
-
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <vector>
 
-class MuonIOTracksDNNSelector : public edm::stream::EDProducer<edm::GlobalCache<cms::Ort::ONNXRuntime>> {
+// ---------------------------------------------------------------------------
+// GlobalCache: compact forest loaded ONCE per process from the .bin file.
+// Binary format: int32 nNodes, int32 nTrees, float baseLogit, then
+//   int8 feat[nNodes] (-1=leaf), float val[nNodes],
+//   int32 left[nNodes], right[nNodes], int32 roots[nTrees].
+// ---------------------------------------------------------------------------
+struct ForestCache {
+  int nNodes = 0;
+  int nTrees = 0;
+  float baseLogit = 0.0f;
+  std::vector<int8_t> feat;
+  std::vector<float> val;
+  std::vector<int32_t> left;
+  std::vector<int32_t> right;
+  std::vector<int32_t> roots;
+
+  static std::unique_ptr<ForestCache> load(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+      throw cms::Exception("MuonIOTracksForestSelector") << "cannot open compact tree binary: " << path;
+
+    int32_t nNodes = 0, nTrees = 0;
+    float baseLogit = 0.0f;
+    in.read(reinterpret_cast<char*>(&nNodes), 4);
+    in.read(reinterpret_cast<char*>(&nTrees), 4);
+    in.read(reinterpret_cast<char*>(&baseLogit), 4);
+    if (!in)
+      throw cms::Exception("MuonIOTracksForestSelector") << "compact tree binary header truncated: " << path;
+
+    auto cache = std::make_unique<ForestCache>();
+    cache->nNodes = nNodes;
+    cache->nTrees = nTrees;
+    cache->baseLogit = baseLogit;
+    cache->feat.resize(nNodes);
+    cache->val.resize(nNodes);
+    cache->left.resize(nNodes);
+    cache->right.resize(nNodes);
+    cache->roots.resize(nTrees);
+
+    in.read(reinterpret_cast<char*>(cache->feat.data()), nNodes);
+    in.read(reinterpret_cast<char*>(cache->val.data()), nNodes * 4);
+    in.read(reinterpret_cast<char*>(cache->left.data()), nNodes * 4);
+    in.read(reinterpret_cast<char*>(cache->right.data()), nNodes * 4);
+    in.read(reinterpret_cast<char*>(cache->roots.data()), nTrees * 4);
+    if (!in)
+      throw cms::Exception("MuonIOTracksForestSelector") << "compact tree binary truncated/corrupt: " << path;
+
+    edm::LogInfo("MuonIOTracksForestSelector") << "Loaded compact forest: nNodes=" << nNodes << " nTrees=" << nTrees
+                                               << " baseLogit=" << baseLogit << " from " << path;
+    return cache;
+  }
+};
+
+class MuonIOTracksForestSelector : public edm::stream::EDProducer<edm::GlobalCache<ForestCache>> {
 public:
-  explicit MuonIOTracksDNNSelector(const edm::ParameterSet&, const cms::Ort::ONNXRuntime*);
-  ~MuonIOTracksDNNSelector() override = default;
+  explicit MuonIOTracksForestSelector(const edm::ParameterSet&, const ForestCache*);
+  ~MuonIOTracksForestSelector() override = default;
 
   static void fillDescriptions(edm::ConfigurationDescriptions&);
-  static std::unique_ptr<cms::Ort::ONNXRuntime> initializeGlobalCache(const edm::ParameterSet&);
-  static void globalEndJob(const cms::Ort::ONNXRuntime*);
+  static std::unique_ptr<ForestCache> initializeGlobalCache(const edm::ParameterSet&);
+  static void globalEndJob(const ForestCache*) {}
 
 private:
   void produce(edm::Event&, const edm::EventSetup&) override;
-
   std::vector<float> extractFeatures(const reco::Track& track, const l1t::TrackerMuonCollection& l1TkMuons) const;
 
   // Input tokens
@@ -134,7 +138,7 @@ private:
   static constexpr float kSentinel = 999.0f;
 
   // Regularization constants - chosen to exactly mirror modelV6.py
-  static constexpr float kEpsilon = 1e-6f;     // generic log/division floor (matches Python 1e-6)
+  static constexpr float kEpsilon = 1e-6f;     // generic log/division floor
   static constexpr float kChi2PtEps = 1e-12f;  // matches Python (t_ptErr**2 + 1e-12)
   static constexpr float kDPtNormEps = 1e-9f;  // matches Python (l1_pt + 1e-9)
 
@@ -146,7 +150,11 @@ private:
   static constexpr float kImputeSecondDR2 = 1.0f;
 };
 
-MuonIOTracksDNNSelector::MuonIOTracksDNNSelector(const edm::ParameterSet& iConfig, const cms::Ort::ONNXRuntime* cache)
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
+MuonIOTracksForestSelector::MuonIOTracksForestSelector(const edm::ParameterSet& iConfig, const ForestCache* cache)
     : tracksToken_(consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("tracks"))),
       l1TkMuonsToken_(consumes<l1t::TrackerMuonCollection>(iConfig.getParameter<edm::InputTag>("l1TkMuons"))),
       decisionThreshold_(iConfig.getParameter<double>("decisionThreshold")),
@@ -159,15 +167,25 @@ MuonIOTracksDNNSelector::MuonIOTracksDNNSelector(const edm::ParameterSet& iConfi
   produces<std::vector<float>>("scores");
 }
 
-std::unique_ptr<cms::Ort::ONNXRuntime> MuonIOTracksDNNSelector::initializeGlobalCache(const edm::ParameterSet& iConfig) {
+std::unique_ptr<ForestCache> MuonIOTracksForestSelector::initializeGlobalCache(const edm::ParameterSet& iConfig) {
   edm::FileInPath modelPath(iConfig.getParameter<std::string>("modelPath"));
-  return std::make_unique<cms::Ort::ONNXRuntime>(modelPath.fullPath());
+  return ForestCache::load(modelPath.fullPath());
 }
 
-void MuonIOTracksDNNSelector::globalEndJob(const cms::Ort::ONNXRuntime* cache) {}
+std::vector<float> MuonIOTracksForestSelector::extractFeatures(const reco::Track& track,
+                                                               const l1t::TrackerMuonCollection& l1TkMuons) const {
+  // -----------------------------------------------------------------------
+  // Pruned 33-feature model (v7).
+  // Identical feature extraction to MuonIOTracksDNNSelector -- the only
+  // change vs the DNN selector is the inference backend (forest .bin vs ONNX).
+  //
+  // Drops 11 redundant features from the original 44-feature set:
+  //   chi2, normalizedChi2, dszErr, dxyErr, nLostHits,
+  //   impactSignificance, chi2PerHit, hitEfficiency,
+  //   eta (redundant with absEta), ptErr (derivable),
+  //   relUncertaintyProduct (corr 0.99999 with sigmaPtOverPt)
+  // -----------------------------------------------------------------------
 
-std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& track,
-                                                            const l1t::TrackerMuonCollection& l1TkMuons) const {
   std::vector<float> features;
   features.reserve(nFeatures_);
 
@@ -179,45 +197,31 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
   const float etaErr = track.etaError();
   const float phi = track.phi();
   const float phiErr = track.phiError();
-  const float chi2 = track.chi2();
-  const float normalizedChi2 = track.normalizedChi2();
 
-  const float dszErr = track.dszError();
   const float dxy = track.dxy();
   const float dxyErr = track.dxyError();
   const float dz = track.dz();
   const float dzErr = track.dzError();
-  const float qoverp = track.qoverp();
   const float qoverpErr = track.qoverpError();
   const float lambdaErr = track.lambdaError();
 
   const int nPixelHits = track.hitPattern().numberOfValidPixelHits();
   const int nTrkLays = track.hitPattern().trackerLayersWithMeasurement();
   const int nFoundHits = track.numberOfValidHits();
-  const int nLostHits = track.numberOfLostHits();
 
-  // -----------------------------------------------------------------------
-  // Pruned 33-feature model (v7).
-  // Drops 11 redundant features from the original 44-feature set:
-  //   chi2, normalizedChi2, dszErr, dxyErr, nLostHits,
-  //   impactSignificance, chi2PerHit, hitEfficiency,
-  //   eta (redundant with absEta), ptErr (derivable),
-  //   relUncertaintyProduct (corr 0.99999 with sigmaPtOverPt)
-  // -----------------------------------------------------------------------
-
-  // Features 0-5: Log features (dropped: ptErr, chi2, normalizedChi2, dszErr, dxyErr)
-  features.push_back(std::log10(std::abs(p) + kEpsilon));               // 0: p (log)
-  features.push_back(std::log10(std::abs(pt) + kEpsilon));              // 1: pt (log)
-  features.push_back(std::log10(std::abs(etaErr) + kEpsilon));         // 2: etaErr (log)
-  features.push_back(std::log10(std::abs(phiErr) + kEpsilon));         // 3: phiErr (log)
-  features.push_back(std::log10(std::abs(dzErr) + kEpsilon));          // 4: dzErr (log)
-  features.push_back(std::log10(std::abs(qoverpErr) + kEpsilon));     // 5: qoverpErr (log)
-  features.push_back(std::log10(std::abs(lambdaErr) + kEpsilon));     // 6: lambdaErr (log)
+  // Features 0-6: Log features (dropped: ptErr, chi2, normalizedChi2, dszErr, dxyErr)
+  features.push_back(std::log10(std::abs(p) + kEpsilon));          // 0: p (log)
+  features.push_back(std::log10(std::abs(pt) + kEpsilon));         // 1: pt (log)
+  features.push_back(std::log10(std::abs(etaErr) + kEpsilon));     // 2: etaErr (log)
+  features.push_back(std::log10(std::abs(phiErr) + kEpsilon));     // 3: phiErr (log)
+  features.push_back(std::log10(std::abs(dzErr) + kEpsilon));      // 4: dzErr (log)
+  features.push_back(std::log10(std::abs(qoverpErr) + kEpsilon));  // 5: qoverpErr (log)
+  features.push_back(std::log10(std::abs(lambdaErr) + kEpsilon));  // 6: lambdaErr (log)
 
   // Features 7-9: Plain features (dropped: eta, nLostHits)
   features.push_back(static_cast<float>(nPixelHits));  // 7: nPixelHits
   features.push_back(static_cast<float>(nTrkLays));    // 8: nTrkLays
-  features.push_back(static_cast<float>(nFoundHits));    // 9: nFoundHits
+  features.push_back(static_cast<float>(nFoundHits));  // 9: nFoundHits
 
   // Features 10-16: Derived features (dropped: impactSignificance, chi2PerHit,
   //   hitEfficiency, relUncertaintyProduct)
@@ -261,7 +265,7 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
     float matchedL1Pt = -1.0f;
     int bestIndex = -1;
 
-    // Loose-window count for feature 41
+    // Loose-window count for feature 31
     int nCompatible = 0;
 
     // PASS 1: Find best match (and count loose-compatible candidates)
@@ -277,10 +281,7 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
       const float chi2Pt = (ptDiff * ptDiff) / (ptErr * ptErr + kChi2PtEps);
       const float dR2 = reco::deltaR2(eta, phi, l1Eta, l1Phi);
 
-      // Count loosely compatible L1 candidates (feature 41).
-      // In the Python training is_loose_compatible is computed on ALL L1 candidates
-      // without any pre-filtering. The strict chi2Pt < 9 cut only applies to the
-      // best-match search and the second-best dR2 below.
+      // Count loosely compatible L1 candidates (feature 31).
       if (dR2 < kLooseDR2Cut && chi2Pt < kLooseChi2PtCut) {
         nCompatible++;
       }
@@ -316,8 +317,6 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
           continue;
 
         const float dR2 = reco::deltaR2(eta, phi, l1Eta, l1Phi);
-        // Strict ">" on minDR2: any L1 sharing the exact best dR2 is excluded
-        // from being second-best, matching Python's is_best_match treatment of ties.
         if (dR2 > minDR2 && dR2 < secondBestDR2) {
           secondBestDR2 = dR2;
         }
@@ -337,6 +336,7 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
     }
 
     const bool hasL1Match = (minDR2 < kMatchDR2Cut) && (bestIndex >= 0);
+
     // --- Stub features (18-24) ---
     if (useStubFeatures_) {
       if (hasL1Match) {
@@ -416,7 +416,6 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
     }
 
     // --- NEW L1 matching features (30-31) ---
-
     // 30: nCompatible - number of L1 candidates within loose window
     features.push_back(static_cast<float>(nCompatible));
 
@@ -429,16 +428,18 @@ std::vector<float> MuonIOTracksDNNSelector::extractFeatures(const reco::Track& t
       features.push_back(std::log10(std::abs(kImputeSecondDR2) + kEpsilon));
     }
   }
+
   // Feature 32: Low pT indicator
   float exponent = (pt - 5.0f) * 2.0f;
   exponent = std::clamp(exponent, -20.0f, 20.0f);
   const float lowPtIndicator = 1.0f / (1.0f + std::exp(exponent));
   features.push_back(lowPtIndicator);
+
   return features;
 }
 
-void MuonIOTracksDNNSelector::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
-  const std::string metname = "RecoMuon|L3TrackFinder|MuonIOTracksDNNSelector";
+void MuonIOTracksForestSelector::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
+  const std::string metname = "RecoMuon|L3TrackFinder|MuonIOTracksForestSelector";
 
   auto selectedTracks = std::make_unique<reco::TrackCollection>();
   auto scores = std::make_unique<std::vector<float>>();
@@ -456,75 +457,63 @@ void MuonIOTracksDNNSelector::produce(edm::Event& iEvent, const edm::EventSetup&
     return;
   }
 
-  // Prepare batch input
-  std::vector<float> inputData;
-  inputData.reserve(tracks->size() * nFeatures_);
+  const auto* cache = globalCache();
 
   const unsigned int evtIdx = eventCounter_++;
   for (size_t i = 0; i < tracks->size(); ++i) {
     const auto& track = (*tracks)[i];
     auto features = extractFeatures(track, *l1TkMuons);
     if (static_cast<int>(features.size()) != nFeatures_) {
-      throw cms::Exception("MuonIOTracksDNNSelector")
+      throw cms::Exception("MuonIOTracksForestSelector")
           << "Feature count mismatch: extracted " << features.size() << " features, expected " << nFeatures_
-          << ". Check useStubFeatures/useL1TkMuFeatures vs the trained ONNX model.";
+          << ". Check useStubFeatures/useL1TkMuFeatures vs the trained forest model.";
     }
-    inputData.insert(inputData.end(), features.begin(), features.end());
+
+    // --- Forest inference: serial tree traversal ---
+    float margin = cache->baseLogit;
+    for (int t = 0; t < cache->nTrees; ++t) {
+      int32_t node = cache->roots[t];
+      while (cache->feat[node] >= 0)
+        node = (features[cache->feat[node]] < cache->val[node]) ? cache->left[node] : cache->right[node];
+      margin += cache->val[node];
+    }
+    float prob = 1.0f / (1.0f + std::exp(-margin));
+    prob = std::clamp(prob, 0.0f, 1.0f);
+
+    scores->push_back(prob);
 
     // Optional dump for cross-validation
     if (dumpFeatures_) {
       std::ostringstream oss;
       oss << evtIdx << "," << i;
       oss << std::scientific << std::setprecision(9);
-      for (float f : features) {
+      for (float f : features)
         oss << "," << f;
-      }
+      oss << "," << prob;
       std::cout << oss.str() << "\n";
     }
-  }
-
-  // Run inference
-  std::vector<std::vector<int64_t>> inputShapes = {
-      {static_cast<int64_t>(tracks->size()), static_cast<int64_t>(nFeatures_)}};
-  cms::Ort::FloatArrays inputTensor({inputData});
-
-  auto outputs = globalCache()->run({"input"}, inputTensor, inputShapes, {"output"}, 1);
-
-  // Model outputs probabilities directly (sigmoid is in the network)
-  const auto& probs = outputs[0];
-
-  LogDebug(metname) << "Processing " << tracks->size() << " tracks with threshold " << decisionThreshold_;
-
-  for (size_t i = 0; i < tracks->size(); ++i) {
-    float prob = probs[i];
-    LogDebug(metname) << "  Track " << i << ": DNN score = " << prob;
-
-    // Clamp probability to valid range (safety check)
-    prob = std::clamp(prob, 0.0f, 1.0f);
-
-    scores->push_back(prob);
 
     if (prob >= decisionThreshold_) {
-      LogDebug(metname) << "    -> Selected";
       selectedTracks->push_back(*(reco::TrackRef(tracks, i)));
     }
   }
 
-  std::cout << "Selected " << selectedTracks->size() << " out of " << tracks->size() << " tracks\n";
+  std::cout << metname << " Selected " << selectedTracks->size() << " out of " << tracks->size() << " tracks\n";
 
   iEvent.put(std::move(selectedTracks));
   iEvent.put(std::move(scores), "scores");
 }
 
-void MuonIOTracksDNNSelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
+void MuonIOTracksForestSelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
 
   desc.add<edm::InputTag>("tracks", edm::InputTag("hltPhase2MuonPixelTracks"))->setComment("Input track collection");
   desc.add<edm::InputTag>("l1TkMuons", edm::InputTag("l1tTkMuonsGmt"))
       ->setComment("L1 Tracker Muon collection for matching features");
-  desc.add<std::string>("modelPath", "RecoMuon/L3TrackFinder/data/pixel_track_selector.onnx")
-      ->setComment("Path to ONNX model file (expects raw unscaled inputs, scaler fused)");
-  desc.add<double>("decisionThreshold", 0.5)->setComment("Probability threshold for track selection");
+  desc.add<std::string>("modelPath", "RecoMuon/L3TrackFinder/data/pixel_track_selector_forest.bin")
+      ->setComment("Path to compact gradient-boosted-tree binary (.bin)");
+  desc.add<double>("decisionThreshold", 0.5)
+      ->setComment("Probability threshold for track selection (use F2-optimal from training)");
   desc.add<bool>("useL1TkMuFeatures", true)->setComment("Include L1 Tracker Muon matching features");
   desc.add<bool>("useStubFeatures", true)->setComment("Include stub-related features (requires stub info in event)");
   desc.add<int>("nFeatures", 33)
@@ -538,4 +527,4 @@ void MuonIOTracksDNNSelector::fillDescriptions(edm::ConfigurationDescriptions& d
 }
 
 #include "FWCore/Framework/interface/MakerMacros.h"
-DEFINE_FWK_MODULE(MuonIOTracksDNNSelector);
+DEFINE_FWK_MODULE(MuonIOTracksForestSelector);

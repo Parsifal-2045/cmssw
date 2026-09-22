@@ -25,7 +25,7 @@ HLTPhase2MuonPixelTracksFromL1TkSequence = cms.Sequence(
 
 from ..sequences.HLTPhase2PixelTracksAndVerticesSequence_cfi import *
 from ..modules.hltPhase2MuonPixelTracks_cfi import *
-from ..modules.hltPhase2MuonPixelTracksHighPurity_cfi import *
+from ..modules.hltPhase2MuonPixelTracksHighPurityForest_cfi import *
 _HLTPhase2MuonPixelTracksSelectorSequence = cms.Sequence(
     HLTBeamSpotSequence
     + hltPhase2OtRecHitsSoA
@@ -34,7 +34,7 @@ _HLTPhase2MuonPixelTracksSelectorSequence = cms.Sequence(
     + hltPhase2PixelTrackTorchHighPuritySelector
     + hltPhase2PixelTracks
     + hltPhase2MuonPixelTracks
-    + hltPhase2MuonPixelTracksHighPurity
+    + hltPhase2MuonPixelTracksHighPurityForest
 )
 
 from Configuration.ProcessModifiers.phase2MuonPixelTracksSelector_cff import phase2MuonPixelTracksSelector

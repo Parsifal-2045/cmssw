@@ -45,7 +45,7 @@ from ..sequences.HLTMkFitInputSequence_cfi import *
 from ..modules.hltPhase2MuonIOTrackSeeds_cfi import *
 from ..modules.hltPhase2MuonIOTrackMkFitSeeds_cfi import *
 from ..modules.hltPhase2MuonIOTrackCandidatesMkFit_cfi import *
-from ..modules.hltPhase2MuonIOTrackSelectionHighPurity_cfi import *
+from ..modules.hltPhase2MuonIOTrackSelectionHighPurityForest_cfi import *
 _HLTPhase2L3MuonsIOSequenceSeedsSelector = cms.Sequence(
     # Global seeding
     HLTItLocalRecoSequence
@@ -64,7 +64,7 @@ _HLTPhase2L3MuonsIOSequenceSeedsSelector = cms.Sequence(
     + hltPhase2MuonIOTrackCandidatesMkFit
     + hltPhase2MuonIOTrackCandidates 
     + hltPhase2MuonIOTracks 
-    + hltPhase2MuonIOTrackSelectionHighPurity 
+    + hltPhase2MuonIOTrackSelectionHighPurityForest
 )
 
 from Configuration.ProcessModifiers.phase2MuonSeedsSelector_cff import phase2MuonSeedsSelector
