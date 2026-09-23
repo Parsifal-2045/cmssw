@@ -21,35 +21,35 @@ hltPhase2L3OIMuonTrackSelectionHighPurity = cms.EDProducer("TrackCollectionFilte
 _pixelOIForestSelector = cms.EDProducer('MuonOITracksForestSelector',
     tracks = cms.InputTag('hltPhase2L3OIMuCtfWithMaterialTracks'),
     standaloneMuons = cms.InputTag('hltL2MuonsFromL1TkMuon', 'UpdatedAtVtx'),
-    modelPath = cms.string('RecoMuon/L3TrackFinder/data/OI_pixel_track_selector_forest.bin'),
-    # OI-pixel forest (evt10 split, 5000-tree budget pruned to 1200 on
-    # validation); per-pT-bin F2 working points from its training records.
-    decisionThreshold = cms.double(0.4347943663597107),
+    # OI pixel forest v3: 300 trees, 22 features, trained 2026-09-23 (git ad9361e5e2); working points = validation per-pT-bin
+    # F2 set points from production/oi/pixel/thresholds.json (written by deploy_cmssw.py)
+    modelPath = cms.FileInPath('RecoMuon/L3TrackFinder/data/OI/muonHP_OI_pixelPath_forest_v3.bin'),
+    decisionThreshold = cms.double(0.27376416325569153),
     ptBinEdges = cms.vdouble(0.0, 2.0, 5.0, 10.0, 50.0, 200.0),
     decisionThresholds = cms.vdouble(
-        0.36963194608688354,   # pT [0, 2)
-        0.19431737065315247,   # pT [2, 5)
-        0.4301176071166992,    # pT [5, 10)
-        0.2698938846588135,    # pT [10, 50)
-        0.47758954763412476,   # pT [50, 200)
-        0.5737308859825134,    # pT [200, inf)
+        0.1006140485405922,  # pT [0, 2)
+        0.27376416325569153,  # pT [2, 5)
+        0.276641845703125,  # pT [5, 10)
+        0.3339681029319763,  # pT [10, 50)
+        0.3438858985900879,  # pT [50, 200)
+        0.5035520195960999,  # pT [200, inf)
     ),
-    useStandaloneMuonFeatures = cms.bool(True),
     nFeatures = cms.int32(22),
     dumpFeatures = cms.untracked.bool(False),
 )
 
 _seedsOIForestSelector = _pixelOIForestSelector.clone(
-    modelPath = cms.string('RecoMuon/L3TrackFinder/data/OI_general_track_selector_forest.bin'),
-    # OI-general forest (850 trees).
-    decisionThreshold = cms.double(0.6497626304626465),
+    # OI general forest v3: 200 trees, 22 features, trained 2026-09-23 (git ad9361e5e2); working points = validation per-pT-bin
+    # F2 set points from production/oi/general/thresholds.json (written by deploy_cmssw.py)
+    modelPath = cms.FileInPath('RecoMuon/L3TrackFinder/data/OI/muonHP_OI_seedsPath_forest_v3.bin'),
+    decisionThreshold = cms.double(0.5891533493995667),
     decisionThresholds = cms.vdouble(
-        0.42146751284599304,   # pT [0, 2)
-        0.5860887765884399,    # pT [2, 5)
-        0.45810478925704956,   # pT [5, 10)
-        0.705085277557373,     # pT [10, 50)
-        0.6939941644668579,    # pT [50, 200)
-        0.6880988478660583,    # pT [200, inf)
+        0.47719821333885193,  # pT [0, 2)
+        0.4623990058898926,  # pT [2, 5)
+        0.32259517908096313,  # pT [5, 10)
+        0.6471585631370544,  # pT [10, 50)
+        0.6572598814964294,  # pT [50, 200)
+        0.5691716074943542,  # pT [200, inf)
     ),
 )
 

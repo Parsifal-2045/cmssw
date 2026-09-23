@@ -1,287 +1,150 @@
 /** \class MuonOITracksForestSelector
  *
- *  \brief XGBoost forest (compact binary) selector for OI muon tracks.
+ *  \brief XGBoost-forest HighPurity selector for outside-in (OI) muon tracks.
  *
- *  Identical 22-feature extraction as the retired DNN selector, shared through
- *  RecoMuon/L3TrackFinder/interface/OITrackSelectorFeatures.h (named struct
- *  muonhp::OITrackFeatures; toArray() fixes the canonical training order).
- *  Replaces ONNX Runtime DNN inference with a serial tree traversal of the
- *  compact gradient-boosted-tree binary (.bin) exported by the OI XGBoost
- *  trainers: smaller model files and faster at low track multiplicity.
+ *  Serves the OI selection of both Phase-2 muon HLT chains (pixel-track chain
+ *  and seeds chain): same 22-feature extraction with standalone-muon matching
+ *  (RecoMuon/L3TrackFinder/interface/OITrackSelectorFeatures.h), chain-
+ *  specific forest (.bin) and working points (set per cfi, from the
+ *  training's thresholds.json).
  *
- *  Handles both the pixel-chain and the seeds-chain (general) OI selectors:
- *  same extraction, only the .bin model and thresholds differ (set per cfi).
- *
- *  The 22-feature production set = the original 26-feature layout minus
- *  ptErr, chi2, sigmaPtOverPt and relUncertaintyProduct (pruned in the
- *  round-2 training campaign).
- *
- *  The compact .bin format (identical to MuonIOTracksForestSelector):
- *    int32 nNodes, int32 nTrees, float baseLogit,
- *    int8  feat[nNodes]   (-1 = leaf),
- *    float val[nNodes]    (threshold / leaf value),
- *    int32 left[nNodes], right[nNodes],
- *    int32 roots[nTrees]
- *
- *  Traversal: for each tree, walk from root; at internal nodes go left if
- *  x[feat[node]] < val[node], else right. At leaf, add val[node] to margin.
- *  Score = sigmoid(margin). Selection: score >= threshold (optionally
- *  pT-binned via ptBinEdges/decisionThresholds, thresholds[i] applying to
- *  pT in [edges[i], edges[i+1]) with the last bin open-ended).
+ *  Inference: batched traversal of the compact forest over the event's
+ *  tracks (interface/CompactForest.h), score = sigmoid(margin). A track is kept if its score is
+ *  >= the working point of its pT bin (ptBinEdges/decisionThresholds; single
+ *  decisionThreshold if no bins are configured). Outputs the selected track
+ *  collection and the scores of all input tracks (input order).
  */
 
 #include "FWCore/Framework/interface/stream/EDProducer.h"
 #include "FWCore/Framework/interface/Event.h"
+#include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "FWCore/ParameterSet/interface/ConfigurationDescriptions.h"
+#include "FWCore/ParameterSet/interface/FileInPath.h"
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
 #include "FWCore/ParameterSet/interface/ParameterSetDescription.h"
-#include "FWCore/Utilities/interface/InputTag.h"
 #include "FWCore/Utilities/interface/Exception.h"
-#include "FWCore/ParameterSet/interface/FileInPath.h"
-#include "FWCore/MessageLogger/interface/MessageLogger.h"
+#include "FWCore/Utilities/interface/InputTag.h"
 
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
-#include "DataFormats/Common/interface/Handle.h"
-#include "DataFormats/Math/interface/deltaR.h"
-#include "DataFormats/Math/interface/deltaPhi.h"
 
+#include "RecoMuon/L3TrackFinder/interface/CompactForest.h"
 #include "RecoMuon/L3TrackFinder/interface/OITrackSelectorFeatures.h"
 
-#include <cmath>
 #include <algorithm>
-#include <limits>
-#include <fstream>
-#include <sstream>
 #include <iomanip>
+#include <memory>
+#include <sstream>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// GlobalCache: compact forest loaded ONCE per process from the .bin file.
-// Binary format: int32 nNodes, int32 nTrees, float baseLogit, then
-//   int8 feat[nNodes] (-1=leaf), float val[nNodes],
-//   int32 left[nNodes], right[nNodes], int32 roots[nTrees].
-// (Identical layout to MuonIOTracksForestSelector's ForestCache.)
-// ---------------------------------------------------------------------------
-struct OIForestCache {
-  int nNodes = 0;
-  int nTrees = 0;
-  float baseLogit = 0.0f;
-  std::vector<int8_t> feat;
-  std::vector<float> val;
-  std::vector<int32_t> left;
-  std::vector<int32_t> right;
-  std::vector<int32_t> roots;
-
-  static std::unique_ptr<OIForestCache> load(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open())
-      throw cms::Exception("MuonOITracksForestSelector") << "Cannot open compact forest binary: " << path;
-    int32_t nNodes = 0, nTrees = 0;
-    float baseLogit = 0.0f;
-    in.read(reinterpret_cast<char*>(&nNodes), 4);
-    in.read(reinterpret_cast<char*>(&nTrees), 4);
-    in.read(reinterpret_cast<char*>(&baseLogit), 4);
-    if (!in)
-      throw cms::Exception("MuonOITracksForestSelector") << "compact tree binary header truncated: " << path;
-
-    auto cache = std::make_unique<OIForestCache>();
-    cache->nNodes = nNodes;
-    cache->nTrees = nTrees;
-    cache->baseLogit = baseLogit;
-    cache->feat.resize(nNodes);
-    cache->val.resize(nNodes);
-    cache->left.resize(nNodes);
-    cache->right.resize(nNodes);
-    cache->roots.resize(nTrees);
-    in.read(reinterpret_cast<char*>(cache->feat.data()), nNodes);
-    in.read(reinterpret_cast<char*>(cache->val.data()), 4LL * nNodes);
-    in.read(reinterpret_cast<char*>(cache->left.data()), 4LL * nNodes);
-    in.read(reinterpret_cast<char*>(cache->right.data()), 4LL * nNodes);
-    in.read(reinterpret_cast<char*>(cache->roots.data()), 4LL * nTrees);
-    if (!in)
-      throw cms::Exception("MuonOITracksForestSelector") << "compact tree binary body truncated: " << path;
-
-    edm::LogInfo("MuonOITracksForestSelector")
-        << "Loaded compact forest: nNodes=" << nNodes << " nTrees=" << nTrees << " baseLogit=" << baseLogit
-        << " from " << path;
-    return cache;
-  }
-};
-
-class MuonOITracksForestSelector : public edm::stream::EDProducer<edm::GlobalCache<OIForestCache>> {
+class MuonOITracksForestSelector : public edm::stream::EDProducer<edm::GlobalCache<muonhp::CompactForest>> {
 public:
-  explicit MuonOITracksForestSelector(const edm::ParameterSet&, const OIForestCache*);
-  ~MuonOITracksForestSelector() override = default;
+  MuonOITracksForestSelector(const edm::ParameterSet&, const muonhp::CompactForest*);
 
   static void fillDescriptions(edm::ConfigurationDescriptions&);
-  static std::unique_ptr<OIForestCache> initializeGlobalCache(const edm::ParameterSet&);
-  static void globalEndJob(const OIForestCache*) {}
+  static std::unique_ptr<muonhp::CompactForest> initializeGlobalCache(const edm::ParameterSet&);
+  static void globalEndJob(const muonhp::CompactForest*) {}
 
 private:
   void produce(edm::Event&, const edm::EventSetup&) override;
-  // Working point for one track: global threshold, or the threshold of the
-  // pT bin the track falls into.
-  float thresholdForPt(double pt) const {
-    if (ptBinEdges_.empty())
-      return decisionThreshold_;
-    size_t b = 0;
-    while (b + 1 < ptBinEdges_.size() && pt >= ptBinEdges_[b + 1])
-      ++b;
-    return static_cast<float>(decisionThresholds_[b]);
-  }
 
-  // Input tokens
-  edm::EDGetTokenT<reco::TrackCollection> tracksToken_;
-  edm::EDGetTokenT<reco::TrackCollection> standaloneMuonsToken_;
-
-  // Model parameters
-  const float decisionThreshold_;
-  // Optional pT-binned working points (same convention as
-  // MuonIOTracksForestSelector): bin i applies decisionThresholds_[i] to
-  // tracks with pT in [ptBinEdges_[i], ptBinEdges_[i+1]), last bin
-  // open-ended; both vectors empty or equal-sized.
-  const std::vector<double> ptBinEdges_;
-  const std::vector<double> decisionThresholds_;
-  const bool useStandaloneMuonFeatures_;
-  const int nFeatures_;
+  const edm::EDGetTokenT<reco::TrackCollection> tracksToken_;
+  const edm::EDGetTokenT<reco::TrackCollection> standaloneMuonsToken_;
+  const muonhp::BinnedWorkingPoints workingPoints_;
   const bool dumpFeatures_;
-  unsigned int eventCounter_;
-
-
 };
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-
-MuonOITracksForestSelector::MuonOITracksForestSelector(const edm::ParameterSet& iConfig, const OIForestCache* cache)
+MuonOITracksForestSelector::MuonOITracksForestSelector(const edm::ParameterSet& iConfig, const muonhp::CompactForest*)
     : tracksToken_(consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("tracks"))),
-      standaloneMuonsToken_(
-          consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("standaloneMuons"))),
-      decisionThreshold_(iConfig.getParameter<double>("decisionThreshold")),
-      ptBinEdges_(iConfig.getParameter<std::vector<double>>("ptBinEdges")),
-      decisionThresholds_(iConfig.getParameter<std::vector<double>>("decisionThresholds")),
-      useStandaloneMuonFeatures_(iConfig.getParameter<bool>("useStandaloneMuonFeatures")),
-      nFeatures_(iConfig.getParameter<int>("nFeatures")),
-      dumpFeatures_(iConfig.getUntrackedParameter<bool>("dumpFeatures")),
-      eventCounter_(0) {
-  if (!ptBinEdges_.empty()) {
-    if (decisionThresholds_.size() != ptBinEdges_.size())
-      throw cms::Exception("MuonOITracksForestSelector")
-          << "pT-binned working points are inconsistent: " << decisionThresholds_.size()
-          << " decisionThresholds but " << ptBinEdges_.size()
-          << " ptBinEdges; they must have equal size (thresholds[i] applies to pT in [edges[i], edges[i+1]), "
-             "last bin open-ended).";
-    for (size_t i = 1; i < ptBinEdges_.size(); ++i)
-      if (ptBinEdges_[i] <= ptBinEdges_[i - 1])
-        throw cms::Exception("MuonOITracksForestSelector") << "ptBinEdges must be strictly increasing.";
-  } else if (!decisionThresholds_.empty()) {
-    throw cms::Exception("MuonOITracksForestSelector")
-        << "decisionThresholds set without ptBinEdges; set both for pT-binned working points or neither.";
-  }
+      standaloneMuonsToken_(consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("standaloneMuons"))),
+      workingPoints_(iConfig.getParameter<double>("decisionThreshold"),
+                     iConfig.getParameter<std::vector<double>>("ptBinEdges"),
+                     iConfig.getParameter<std::vector<double>>("decisionThresholds")),
+      dumpFeatures_(iConfig.getUntrackedParameter<bool>("dumpFeatures")) {
   produces<reco::TrackCollection>();
   produces<std::vector<float>>("scores");
 }
 
-std::unique_ptr<OIForestCache> MuonOITracksForestSelector::initializeGlobalCache(const edm::ParameterSet& iConfig) {
-  edm::FileInPath modelPath(iConfig.getParameter<std::string>("modelPath"));
-  return OIForestCache::load(modelPath.fullPath());
+std::unique_ptr<muonhp::CompactForest> MuonOITracksForestSelector::initializeGlobalCache(
+    const edm::ParameterSet& iConfig) {
+  constexpr int kFeatures = muonhp::OITrackFeatures::kSize;
+  const int nFeatures = iConfig.getParameter<int>("nFeatures");
+  if (nFeatures != kFeatures)
+    throw cms::Exception("Configuration") << "MuonOITracksForestSelector: nFeatures = " << nFeatures
+                                          << " but the OI extractor provides " << kFeatures << " features";
+  const edm::FileInPath modelPath(iConfig.getParameter<edm::FileInPath>("modelPath"));
+  auto forest = muonhp::CompactForest::load(modelPath.fullPath(), kFeatures);
+  edm::LogInfo("MuonOITracksForestSelector")
+      << "Loaded " << modelPath.relativePath() << ": " << forest->nTrees() << " trees, " << forest->nNodes()
+      << " nodes, baseLogit " << forest->baseLogit();
+  return forest;
 }
 
+void MuonOITracksForestSelector::produce(edm::Event& iEvent, const edm::EventSetup&) {
+  const auto& tracks = iEvent.get(tracksToken_);
+  const auto& standaloneMuons = iEvent.get(standaloneMuonsToken_);
+  const auto* forest = globalCache();
 
-void MuonOITracksForestSelector::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
-  const std::string metname = "RecoMuon|L3TrackFinder|MuonOITracksForestSelector";
+  // Features of all tracks, then one batched forest evaluation (CompactForest
+  // evaluates tree-major over the tracks: same scores, better cache reuse).
+  constexpr size_t kFeatures = muonhp::OITrackFeatures::kSize;
+  std::vector<float> features(tracks.size() * kFeatures);
+  for (size_t i = 0; i < tracks.size(); ++i) {
+    const auto f = muonhp::extractOITrackFeatures(tracks[i], standaloneMuons).toArray();
+    std::copy(f.begin(), f.end(), features.begin() + i * kFeatures);
+  }
+  auto scores = std::make_unique<std::vector<float>>(tracks.size());
+  forest->evaluate(features.data(), tracks.size(), kFeatures, scores->data());
 
   auto selectedTracks = std::make_unique<reco::TrackCollection>();
-  auto scores = std::make_unique<std::vector<float>>();
+  for (size_t i = 0; i < tracks.size(); ++i) {
+    const float score = (*scores)[i];
+    if (score >= workingPoints_.threshold(tracks[i].pt()))
+      selectedTracks->push_back(tracks[i]);
 
-  edm::Handle<reco::TrackCollection> tracks;
-  iEvent.getByToken(tracksToken_, tracks);
-
-  edm::Handle<reco::TrackCollection> standaloneMuons;
-  iEvent.getByToken(standaloneMuonsToken_, standaloneMuons);
-
-  if (!tracks.isValid() || tracks->empty()) {
-    iEvent.put(std::move(selectedTracks));
-    iEvent.put(std::move(scores), "scores");
-    return;
-  }
-
-  const auto* cache = globalCache();
-
-  const unsigned int evtIdx = eventCounter_++;
-  for (size_t i = 0; i < tracks->size(); ++i) {
-    const auto& track = (*tracks)[i];
-    const auto featureArray = muonhp::extractOITrackFeatures(track, *standaloneMuons).toArray();
-    const auto& features = featureArray;
-    if (static_cast<int>(features.size()) != nFeatures_) {
-      throw cms::Exception("MuonOITracksForestSelector")
-          << "Feature count mismatch: extracted " << features.size() << " features, expected " << nFeatures_
-          << ". The deployed 22-feature ABI is fixed; check nFeatures vs the trained forest model.";
-    }
-
-    // --- Forest inference: serial tree traversal ---
-    float margin = cache->baseLogit;
-    for (int t = 0; t < cache->nTrees; ++t) {
-      int32_t node = cache->roots[t];
-      while (cache->feat[node] >= 0)
-        node = (features[cache->feat[node]] < cache->val[node]) ? cache->left[node] : cache->right[node];
-      margin += cache->val[node];
-    }
-    float prob = 1.0f / (1.0f + std::exp(-margin));
-    prob = std::clamp(prob, 0.0f, 1.0f);
-
-    scores->push_back(prob);
-
-    // Optional dump for cross-validation
     if (dumpFeatures_) {
-      std::ostringstream oss;
-      oss << evtIdx << "," << i;
-      oss << std::scientific << std::setprecision(9);
-      for (float f : features)
-        oss << "," << f;
-      oss << "," << prob;
-      std::cout << oss.str() << "\n";
-    }
-
-    if (prob >= thresholdForPt(track.pt())) {
-      selectedTracks->push_back(*(reco::TrackRef(tracks, i)));
+      // One line per track, for the Python/C++ feature and score cross-check
+      // (muonHighPurityTrackSelection/production/features_validation).
+      std::ostringstream line;
+      line << "MUONHP_FEATURES," << moduleDescription().moduleLabel() << ',' << iEvent.id().run() << ','
+           << iEvent.id().luminosityBlock() << ',' << iEvent.id().event() << ',' << i << std::scientific
+           << std::setprecision(9);
+      for (size_t k = 0; k < kFeatures; ++k)
+        line << ',' << features[i * kFeatures + k];
+      line << ',' << score;
+      edm::LogPrint("MuonOITracksForestSelector") << line.str();
     }
   }
 
-  LogTrace(metname) << " Selected " << selectedTracks->size() << " out of " << tracks->size() << " tracks";
-
+  LogTrace("MuonOITracksForestSelector") << "selected " << selectedTracks->size() << " of " << tracks.size()
+                                         << " tracks";
   iEvent.put(std::move(selectedTracks));
   iEvent.put(std::move(scores), "scores");
 }
 
 void MuonOITracksForestSelector::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
-
   desc.add<edm::InputTag>("tracks", edm::InputTag("hltPhase2L3OIMuCtfWithMaterialTracks"))
       ->setComment("Input OI track collection");
   desc.add<edm::InputTag>("standaloneMuons", edm::InputTag("hltL2MuonsFromL1TkMuon", "UpdatedAtVtx"))
-      ->setComment("Standalone (L2 muon vertex) track collection for matching features");
-  desc.add<std::string>("modelPath", "RecoMuon/L3TrackFinder/data/OI_track_selector_forest.bin")
-      ->setComment("Path to compact gradient-boosted-tree binary (.bin)");
+      ->setComment("Standalone muons updated at the vertex (matching features)");
+  desc.add<edm::FileInPath>("modelPath")
+      ->setComment(
+          "Compact forest binary (.bin) exported by the training pipeline (RecoMuon/L3TrackFinder/data/IO|OI)");
   desc.add<double>("decisionThreshold", 0.5)
-      ->setComment("Probability threshold for track selection (use F2-optimal from training); "
-                   "used for every track when ptBinEdges is empty");
+      ->setComment("Score threshold used for every track when ptBinEdges is empty (training global F2 point)");
   desc.add<std::vector<double>>("ptBinEdges", {})
-      ->setComment("Lower pT edges [GeV] of per-bin working points (thresholds[i] applies to pT in "
-                   "[edges[i], edges[i+1]), last bin open-ended); from the training thresholds.json "
-                   "pt_bin_edges. Empty = single-threshold mode.");
+      ->setComment(
+          "Lower pT edges [GeV] of the per-bin working points (last bin open-ended); "
+          "training thresholds.json pt_bin_edges. Empty = single threshold.");
   desc.add<std::vector<double>>("decisionThresholds", {})
-      ->setComment("Per-pT-bin probability thresholds (must match ptBinEdges in size and ordering); "
-                   "from the training thresholds.json pt_bin_f2_thresholds.");
-  desc.add<bool>("useStandaloneMuonFeatures", true)->setComment("Include standalone-muon matching features");
-  desc.add<int>("nFeatures", 22)
-      ->setComment("Total number of input features the forest was trained with "
-                   "(always 22: the extractor emits exactly the OI production set)");
+      ->setComment(
+          "Per-pT-bin score thresholds, one per ptBinEdges entry; training thresholds.json "
+          "pt_bin_f2_thresholds");
+  desc.add<int>("nFeatures", muonhp::OITrackFeatures::kSize)
+      ->setComment("Feature count the forest was trained with; must equal the extractor's (22)");
   desc.addUntracked<bool>("dumpFeatures", false)
-      ->setComment("Print one CSV-like line per track to stdout, for cross-validation against build_dataset().");
-
+      ->setComment("Print one MUONHP_FEATURES line per track (features + score) for the training cross-check");
   descriptions.addWithDefaultLabel(desc);
 }
 
