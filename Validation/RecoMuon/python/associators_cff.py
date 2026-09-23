@@ -296,7 +296,7 @@ Phase2tpToL3IOTkAssociation = MABHhlt.clone(
 from Configuration.ProcessModifiers.phase2MuonSeedsSelector_cff import phase2MuonSeedsSelector
 phase2MuonSeedsSelector.toModify(
     Phase2tpToL3IOTkAssociation,
-    tracksTag = 'hltPhase2MuonIOTrackSelectionHighPurity'
+    tracksTag = 'hltPhase2MuonIOTrackSelectionHighPurityForest'
 )
 # L3 OI inner tracks no HP
 Phase2tpToL3OINoHPTkAssociation = MABHhlt.clone(

@@ -341,7 +341,7 @@ from Configuration.ProcessModifiers.ngtScouting_cff import ngtScouting
 )
 from Configuration.ProcessModifiers.phase2MuonSeedsSelector_cff import phase2MuonSeedsSelector
 phase2MuonSeedsSelector.toModify(l3TkIOTable,
-    src = cms.InputTag("hltPhase2MuonIOTrackSelectionHighPurity")
+    src = cms.InputTag("hltPhase2MuonIOTrackSelectionHighPurityForest")
 )
 
 # Muon OI inner tracks (with MC truth info)

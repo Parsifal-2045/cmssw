@@ -208,7 +208,7 @@ def _modify_for_seedsSelector(validator):
     # Replace the L3IO association and label with IO HP tracks
     _replace_associator_label(validator,
                               target_label = 'hltIter2Phase2L3FromL1TkMuonMerged',
-                              new_label = 'hltPhase2MuonIOTrackSelectionHighPurity',
+                              new_label = 'hltPhase2MuonIOTrackSelectionHighPurityForest',
                               new_associator = 'Phase2tpToL3IOTkAssociation',
                               new_histo_params = trkMuonHistoParameters)
 
