@@ -44,8 +44,6 @@ private:
   const edm::EDGetTokenT<reco::TrackCollection> tkToken_;
   // Track selection parameters
   const float l1TkMuMinPt_;
-  const float tkMinPt_;
-  const float tkMaxEta_;
   const float tkMaxPtForMatch_;
   const float maxDz_;
   const float maxDr_;
@@ -59,8 +57,6 @@ MuonTracksSelectorFromL1TkMuon::MuonTracksSelectorFromL1TkMuon(const edm::Parame
           iConfig.getParameter<edm::InputTag>("L1TkMuonInputCollection"))},
       tkToken_{consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("TrackInputCollection"))},
       l1TkMuMinPt_{static_cast<float>(iConfig.getParameter<double>("L1TkMuMinPt"))},
-      tkMinPt_{static_cast<float>(iConfig.getParameter<double>("trackMinPt"))},
-      tkMaxEta_{static_cast<float>(iConfig.getParameter<double>("trackMaxEta"))},
       tkMaxPtForMatch_{static_cast<float>(iConfig.getParameter<double>("trackMaxPtForMatch"))},
       maxDz_{static_cast<float>(iConfig.getParameter<double>("maxDz"))},
       maxDr_{static_cast<float>(iConfig.getParameter<double>("maxDr"))},
@@ -192,8 +188,6 @@ void MuonTracksSelectorFromL1TkMuon::fillDescriptions(edm::ConfigurationDescript
   // Track selection parameters
   desc.add<edm::InputTag>("TrackInputCollection", edm::InputTag("generalTracks"))
       ->setComment("Input track collection to be filtered based on L1TkMuon matching");
-  desc.add<double>("trackMinPt", 0.9)->setComment("Minimum pT for tracks to be considered for matching");
-  desc.add<double>("trackMaxEta", 3.0)->setComment("Maximum |eta| for tracks to be considered for matching");
   desc.add<double>("trackMaxPtForMatch", 50.0)
       ->setComment("Maximum pT to apply curvature compatibility in matching (above this pT, only dR and dZ are used)");
   desc.add<double>("maxChi2", 9)
