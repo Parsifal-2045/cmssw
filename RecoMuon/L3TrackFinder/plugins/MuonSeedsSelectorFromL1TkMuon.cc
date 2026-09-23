@@ -11,8 +11,10 @@
  *  3. Hit-by-hit consistency check with L1TkMuon tracker stubs (OT hits only)
  *  4. Arbitration: keep only the N best seeds per L1TkMuon based on a combined quality metric
  *
- *  For high-pT L1Tk Muons and seeds only dR check is performed and all seeds with pT above
- *  threshold found in the cone are kept (no arbitration or other limits)
+ *  Seeds with pT above maxPtForCompatibilityCheck found in the cone are kept with no further
+ *  requirement (no arbitration or other limits); seeds below it are arbitrated per L1TkMuon,
+ *  whatever the L1TkMuon pT (the seed pT resolution spreads genuine muons of high-pT
+ *  L1TkMuons below the threshold).
  *
  *  \author Luca Ferragina (INFN BO), 2026
  */
@@ -28,6 +30,7 @@
 #include "FWCore/ParameterSet/interface/ConfigurationDescriptions.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 
+#include "DataFormats/BeamSpot/interface/BeamSpot.h"
 #include "DataFormats/Common/interface/Handle.h"
 #include "DataFormats/L1TMuonPhase2/interface/TrackerMuon.h"
 #include "DataFormats/Math/interface/deltaR.h"
@@ -39,6 +42,8 @@
 #include "DataFormats/SiPixelDetId/interface/PixelSubdetector.h"
 #include "DataFormats/SiStripDetId/interface/StripSubdetector.h"
 
+#include "TrackingTools/PatternTools/interface/TSCBLBuilderNoMaterial.h"
+#include "TrackingTools/TrajectoryState/interface/TrajectoryStateClosestToBeamLine.h"
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateOnSurface.h"
 #include "TrackingTools/TrajectoryState/interface/TrajectoryStateTransform.h"
 #include "MagneticField/Engine/interface/MagneticField.h"
@@ -111,7 +116,8 @@ private:
                         const size_t seedIndex,
                         const GlobalTrackingGeometry* geometry,
                         const MagneticField* magField,
-                        const TrackerTopology* tkTopo) const;
+                        const TrackerTopology* tkTopo,
+                        const reco::BeamSpot& beamSpot) const;
 
   // Check how many OT hits in a seed are consistent with L1TkMu stubs
   int countConsistentHits(const std::vector<DetId>& hitIds, const std::unordered_set<DetId>& stubDetIds) const;
@@ -125,6 +131,7 @@ private:
   // Tokens
   const edm::EDGetTokenT<l1t::TrackerMuonCollection> l1TkMuToken_;
   const edm::EDGetTokenT<TrajectorySeedCollection> seedToken_;
+  const edm::EDGetTokenT<reco::BeamSpot> beamSpotToken_;
   const edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> magFieldToken_;
   const edm::ESGetToken<GlobalTrackingGeometry, GlobalTrackingGeometryRecord> geometryToken_;
   const edm::ESGetToken<TrackerTopology, TrackerTopologyRcd> tkTopoToken_;
@@ -147,6 +154,7 @@ MuonSeedsSelectorFromL1TkMuon::MuonSeedsSelectorFromL1TkMuon(const edm::Paramete
     : l1TkMuToken_{consumes<l1t::TrackerMuonCollection>(
           iConfig.getParameter<edm::InputTag>("L1TkMuonInputCollection"))},
       seedToken_{consumes<TrajectorySeedCollection>(iConfig.getParameter<edm::InputTag>("SeedInputCollection"))},
+      beamSpotToken_{consumes<reco::BeamSpot>(iConfig.getParameter<edm::InputTag>("beamSpot"))},
       magFieldToken_{esConsumes<MagneticField, IdealMagneticFieldRecord>()},
       geometryToken_{esConsumes<GlobalTrackingGeometry, GlobalTrackingGeometryRecord>()},
       tkTopoToken_{esConsumes<TrackerTopology, TrackerTopologyRcd>()},
@@ -167,7 +175,8 @@ MuonSeedsSelectorFromL1TkMuon::SeedInfo MuonSeedsSelectorFromL1TkMuon::fillSeedI
     const size_t seedIndex,
     const GlobalTrackingGeometry* geometry,
     const MagneticField* magField,
-    const TrackerTopology* tkTopo) const {
+    const TrackerTopology* tkTopo,
+    const reco::BeamSpot& beamSpot) const {
   SeedInfo info;
   info.seedIndex = seedIndex;
   info.nHits = seed.nHits();
@@ -187,9 +196,17 @@ MuonSeedsSelectorFromL1TkMuon::SeedInfo MuonSeedsSelectorFromL1TkMuon::fillSeedI
     return info;
   }
 
-  info.eta = seedTSOS.globalMomentum().eta();
-  info.phi = seedTSOS.globalMomentum().phi();
-  info.pt = seedTSOS.globalMomentum().perp();
+  // Seed direction at the closest approach to the beam line, comparable with
+  // the L1TkMuon track direction (a vertex quantity). The starting state sits
+  // on the outermost seed hit, up to R ~ 1 m for LST seeds, where low-pT tracks
+  // are rotated by the bending: dphi ~ 0.3 B R / (2 pT), ~0.25 rad at 2.3 GeV,
+  // enough to lose the arbitration to unrelated seeds.
+  const TrajectoryStateClosestToBeamLine atBeamLine = TSCBLBuilderNoMaterial()(*seedTSOS.freeState(), beamSpot);
+  const GlobalVector momentum =
+      atBeamLine.isValid() ? atBeamLine.trackStateAtPCA().momentum() : seedTSOS.globalMomentum();
+  info.eta = momentum.eta();
+  info.phi = momentum.phi();
+  info.pt = momentum.perp();
 
   info.nPixelHits = 0;
   info.nOTHits = 0;
@@ -312,6 +329,7 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
   const MagneticField* magField = &iSetup.getData(magFieldToken_);
   const GlobalTrackingGeometry* geometry = &iSetup.getData(geometryToken_);
   const TrackerTopology* tkTopo = &iSetup.getData(tkTopoToken_);
+  const reco::BeamSpot& beamSpot = iEvent.get(beamSpotToken_);
 
   // Store indices of matched seeds
   std::set<size_t> seedsToKeep;
@@ -323,7 +341,7 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
   std::vector<SeedInfo> seedsInfo;
   seedsInfo.reserve(seedCollectionH->size());
   for (size_t seedIndex = 0; seedIndex != seedCollectionH->size(); ++seedIndex) {
-    SeedInfo info = fillSeedInfo((*seedCollectionH)[seedIndex], seedIndex, geometry, magField, tkTopo);
+    SeedInfo info = fillSeedInfo((*seedCollectionH)[seedIndex], seedIndex, geometry, magField, tkTopo, beamSpot);
     if (!info.skip) {
       seedsInfo.push_back(info);
     } else {
@@ -430,8 +448,11 @@ void MuonSeedsSelectorFromL1TkMuon::produce(edm::Event& iEvent, const edm::Event
                         << ", dR2=" << squal.dR2 << ", normPtDiff=" << squal.normalizedPtDiff << ")";
     }  // End loop on seeds
 
-    // Only arbitrate low pT seeds, high pT seeds already added to output collection
-    if (l1TkMuPt <= maxPtForCompatibilityCheck_) {
+    // Arbitrate the low-pT seeds (the candidate lists only hold seeds with pT <=
+    // maxPtForCompatibilityCheck_; the others were kept above). Done for every
+    // L1TkMuon: gating it on the L1TkMuon pT would drop the genuine seeds of
+    // high-pT L1TkMuons whose measured pT falls below the threshold.
+    {
       // Arbitration: first take best seeds with pixels and OT hits consistent with L1 stubs
       std::vector<SeedQuality> finalSeeds;
       finalSeeds.reserve(nSeedsToKeep_);
@@ -507,6 +528,9 @@ void MuonSeedsSelectorFromL1TkMuon::fillDescriptions(edm::ConfigurationDescripti
       ->setComment("Input collection of L1TkMuons to match to");
   desc.add<edm::InputTag>("SeedInputCollection", edm::InputTag("hltInitialStepTrajectorySeedsLST"))
       ->setComment("Input seed collection to be filtered based on L1TkMuon matching");
+  desc.add<edm::InputTag>("beamSpot", edm::InputTag("hltOnlineBeamSpot"))
+      ->setComment(
+          "Beam spot: seed directions are compared with the L1TkMuons at the closest approach to the beam line");
 
   // L1TkMuon selection
   desc.add<double>("L1TkMuMinPt", 0.0)->setComment("Minimum pT for L1TkMuons to be considered for matching");

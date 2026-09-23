@@ -4,8 +4,11 @@
   <use name="FWCore/Utilities"/>
   <use name="RecoMuon/L3TrackFinder"/>
   <use name="DataFormats/TrackReco"/>
+  <use name="DataFormats/BeamSpot"/>
   <use name="DataFormats/Common"/>
   <use name="DataFormats/L1TMuonPhase2"/>
   <use name="DataFormats/MuonReco"/>
+  <use name="TrackingTools/PatternTools"/>
+  <use name="TrackingTools/TrajectoryState"/>
   <flags EDM_PLUGIN="1"/>
 </library>
