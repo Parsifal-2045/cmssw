@@ -11,10 +11,11 @@ hltPhase2PixelTracksWithStubs = cms.EDProducer("PixelTrackProducerFromSoAAlpaka"
     minQuality = cms.string('tight'),
     useOTExtension = cms.bool(True),
     expandStubs = cms.bool(True),
-    requireQuadsFromConsecutiveLayers = cms.bool(False),
+    requireQuadsFromConsecutiveLayers = cms.bool(True),
     # Stamp the CA iteration that found each track into the reco::Track algorithm word, so the merged
     # collection can be split by origin (prompt / displaced) downstream and in the validation.
-    setAlgorithmFromIteration = cms.bool(True)
+    setAlgorithmFromIteration = cms.bool(True),
+    fillTrackExtra = cms.bool(False)
 )
 
 # Two-iteration stub chain (pixelTrackMask): trackSrc is the final high-purity selection, not the merger.

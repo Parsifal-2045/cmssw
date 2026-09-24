@@ -1,6 +1,7 @@
 #ifndef RecoTracker_PixelTrackFitting_plugins_storeTracks_h
 #define RecoTracker_PixelTrackFitting_plugins_storeTracks_h
 
+#include <cassert>
 #include <numeric>
 
 #include "FWCore/Framework/interface/Event.h"
@@ -17,14 +18,21 @@
 #include "DataFormats/TrackerCommon/interface/TrackerTopology.h"
 #include "Geometry/Records/interface/TrackerTopologyRcd.h"
 
+// extrasWithStates: optional TrackExtras already carrying the inner and outer states, one per track in the
+// order of tracksWithHits; the hits and the trajectory parameters are added here. Left empty, every track
+// gets a default TrackExtra, without states.
 template <typename Ev, typename TWH>
-void storeTracks(Ev& ev, const TWH& tracksWithHits, const TrackerTopology& ttopo) {
+void storeTracks(Ev& ev,
+                 const TWH& tracksWithHits,
+                 const TrackerTopology& ttopo,
+                 reco::TrackExtraCollection extrasWithStates = {}) {
   auto tracks = std::make_unique<reco::TrackCollection>();
   auto recHits = std::make_unique<TrackingRecHitCollection>();
-  auto trackExtras = std::make_unique<reco::TrackExtraCollection>();
+  auto trackExtras = std::make_unique<reco::TrackExtraCollection>(std::move(extrasWithStates));
 
   int cc = 0, nTracks = tracksWithHits.size();
 
+  assert(trackExtras->empty() or int(trackExtras->size()) == nTracks);
   trackExtras->resize(nTracks);
   tracks->reserve(nTracks);
   const size_t nHitsTot = std::accumulate(

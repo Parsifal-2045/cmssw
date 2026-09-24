@@ -38,13 +38,18 @@
 #include "Geometry/CommonTopologies/interface/SimplePixelTopology.h"
 #include "Geometry/Records/interface/TrackerTopologyRcd.h"
 #include "Geometry/TrackerGeometryBuilder/interface/TrackerGeometry.h"
+#include "MagneticField/Engine/interface/MagneticField.h"
 #include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
 #include "RecoTracker/PixelSeeding/interface/OTHitTag.h"
 #include "RecoTracker/PixelTrackFitting/interface/alpaka/FitUtils.h"
 #include "RecoTracker/Record/interface/TrackerRecoGeometryRecord.h"
+#include "TrackingTools/AnalyticalJacobians/interface/AnalyticalCurvilinearJacobian.h"
 #include "TrackingTools/AnalyticalJacobians/interface/JacobianLocalToCurvilinear.h"
+#include "TrackingTools/GeomPropagators/interface/OptimalHelixPlaneCrossing.h"
+#include "TrackingTools/GeomPropagators/interface/StraightLinePlaneCrossing.h"
 #include "TrackingTools/TrajectoryParametrization/interface/CurvilinearTrajectoryError.h"
 #include "TrackingTools/TrajectoryParametrization/interface/GlobalTrajectoryParameters.h"
+#include "TrackingTools/TrajectoryState/interface/FreeTrajectoryState.h"
 
 #include "storeTracks.h"
 
@@ -64,6 +69,87 @@ struct DetIdMaps {
   // map from detId to bool if used as OT extension
   std::map<uint32_t, bool> detIdIsUsedOTModule_;
 };
+
+namespace {
+  // State of the helix of a free state where it crosses a module plane along the momentum: what
+  // AnalyticalPropagator(alongMomentum) returns for a plane, with its straight-line case and its limit on the
+  // turning angle, without building a TrajectoryStateOnSurface and without its field lookup at the destination.
+  struct PlaneState {
+    GlobalPoint position;
+    GlobalVector momentum;
+    AlgebraicSymMatrix55 covariance;
+    bool ok = false;
+  };
+
+  PlaneState helixStateOnPlane(FreeTrajectoryState const &fts, Plane const &plane) {
+    constexpr float maxDPhi = 1.6f;  // AnalyticalPropagator's default limit on the turning angle
+    PlaneState state;
+    float const rho = fts.transverseCurvature();
+    double s;
+    if (std::abs(rho) < 1.e-10f) {
+      StraightLinePlaneCrossing crossing(StraightLinePlaneCrossing::PositionType(fts.position()),
+                                         StraightLinePlaneCrossing::DirectionType(fts.momentum()),
+                                         alongMomentum);
+      auto const [ok, path] = crossing.pathLength(plane);
+      if (not ok)
+        return state;
+      s = path;
+      state.position = GlobalPoint(crossing.position(s));
+      state.momentum = fts.momentum();
+    } else {
+      OptimalHelixPlaneCrossing crossing(plane,
+                                         HelixPlaneCrossing::PositionType(fts.position()),
+                                         HelixPlaneCrossing::DirectionType(fts.momentum()),
+                                         rho,
+                                         alongMomentum);
+      auto const [ok, path] = (*crossing).pathLength(plane);
+      if (not ok)
+        return state;
+      s = path;
+      float const dphi = float(s) * rho;
+      if (dphi * dphi * fts.momentum().perp2() > maxDPhi * maxDPhi * fts.momentum().mag2())
+        return state;
+      state.position = GlobalPoint((*crossing).position(s));
+      GlobalVector const direction((*crossing).direction(s));
+      state.momentum = direction * (fts.momentum().mag() / direction.mag());
+    }
+    AnalyticalCurvilinearJacobian const jacobian(fts.parameters(), state.position, state.momentum, s);
+    state.covariance = ROOT::Math::Similarity(jacobian.jacobian(), fts.curvilinearError().matrix());
+    state.ok = true;
+    return state;
+  }
+
+  // TrackExtra state on the plane of a hit, from the helix of the fit. A helix that does not reach the plane
+  // (loopers) is replaced by the straight line of the momentum, with the untransported covariance and the ok
+  // flag down: the state still lies on the plane of the hit, so the consumers that start from it on that surface
+  // (trajectoryStateTransform::inner/outerStateOnSurface, TrackTransformer) never start off the surface.
+  struct ExtraState {
+    reco::TrackExtra::Point position;
+    reco::TrackExtra::Vector momentum;
+    reco::TrackExtra::CovarianceMatrix covariance;
+    unsigned int detId;
+    bool ok;
+  };
+
+  ExtraState extraStateOnHit(FreeTrajectoryState const &fts, TrackingRecHit const &hit) {
+    Plane const &plane = hit.det()->surface();
+    PlaneState state = helixStateOnPlane(fts, plane);
+    if (not state.ok) {
+      StraightLinePlaneCrossing crossing(StraightLinePlaneCrossing::PositionType(fts.position()),
+                                         StraightLinePlaneCrossing::DirectionType(fts.momentum()),
+                                         anyDirection);
+      auto const [ok, path] = crossing.pathLength(plane);
+      state.position = ok ? GlobalPoint(crossing.position(path)) : hit.globalPosition();
+      state.momentum = fts.momentum();
+      state.covariance = fts.curvilinearError().matrix();
+    }
+    return ExtraState{reco::TrackExtra::Point(state.position.x(), state.position.y(), state.position.z()),
+                      reco::TrackExtra::Vector(state.momentum.x(), state.momentum.y(), state.momentum.z()),
+                      state.covariance,
+                      hit.geographicalId().rawId(),
+                      state.ok};
+  }
+}  // namespace
 
 class PixelTrackProducerFromSoAAlpaka : public edm::global::EDProducer<edm::RunCache<DetIdMaps>> {
   using TrackSoAHost = reco::TracksHost;
@@ -103,6 +189,7 @@ private:
   const bool expandStubs_;
   const bool requireQuadsFromConsecutiveLayers_;
   const bool setAlgorithmFromIteration_;
+  const bool fillTrackExtra_;
   const bool verbose_;
 };
 
@@ -122,6 +209,7 @@ PixelTrackProducerFromSoAAlpaka::PixelTrackProducerFromSoAAlpaka(const edm::Para
       expandStubs_(iConfig.getParameter<bool>("expandStubs")),
       requireQuadsFromConsecutiveLayers_(iConfig.getParameter<bool>("requireQuadsFromConsecutiveLayers")),
       setAlgorithmFromIteration_(iConfig.getParameter<bool>("setAlgorithmFromIteration")),
+      fillTrackExtra_(iConfig.getParameter<bool>("fillTrackExtra")),
       verbose_(iConfig.getUntrackedParameter<bool>("verbose")) {
   if (minQuality_ == pixelTrack::Quality::notQuality) {
     throw cms::Exception("PixelTrackConfiguration")
@@ -213,6 +301,17 @@ void PixelTrackProducerFromSoAAlpaka::fillDescriptions(edm::ConfigurationDescrip
           "displacedGeneralStep. None of the three names is produced anywhere else in the Phase-2 HLT menu, so the "
           "algorithm word splits a merged collection by the iteration it came from (validation labels). False (the "
           "default) leaves the algorithm at undefAlgorithm.");
+  desc.add<bool>("fillTrackExtra", false)
+      ->setComment(
+          "Fill the inner and outer states of each TrackExtra (position, momentum, curvilinear covariance and detId "
+          "at the first and last hit), from the helix of the fitted perigee state where it crosses the planes of the "
+          "two hits; the outer helix bends in Bz averaged along the chord to the last hit (perigee, midpoint and last "
+          "hit, weights 1:2:1). Needed when the tracks feed consumers that start from those states without a refit, "
+          "such as the global muon matching and refit (L3MuonProducer), the muon identification and PF. No material "
+          "is applied between the perigee and the hits: the outer momentum is the perigee momentum (no energy loss), "
+          "and the covariance is the perigee covariance transported along the helix, a conservative uncertainty of "
+          "the extrapolated state and not the covariance of a state smoothed with the hits (much tighter at the last "
+          "hit). False (the default) leaves the TrackExtras without states.");
 
   // this option for removing tracks with exactly 4 hits is a temporary solution to reduce the fake rate in Phase-2
   // and is to be replaced by a smarter inclusive track selection in the CA directly
@@ -579,6 +678,14 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   // Per-event diagnostic tallies of the tagged-OT-extra branch (one-shot print below).
   uint32_t nOTExtrasResolved = 0, nOTExtrasDropped = 0;
 
+  // TrackExtras with the inner and outer states (fillTrackExtra_), one per stored track: the helix of the fitted
+  // perigee state at the first and last hit, without material (the field-profile, energy-loss and scattering
+  // corrections of the fit are not applied between the perigee and the hits).
+  reco::TrackExtraCollection extras;
+  if (fillTrackExtra_)
+    extras.reserve(nTracks);
+  uint32_t nExtraStatesFailed = 0;
+
   // loop over (sorted) tracks
   for (const auto &it : sortIdxs) {
     auto nHits = reco::nHits(tsoa.view().tracks(), it);
@@ -780,6 +887,36 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       const auto iter = tsoa.view().tracks()[it].iteration();
       track->setAlgorithm(recoAlgo[std::min<uint32_t>(uint32_t(iter), pixelTrack::iterationSize)]);
     }
+    if (fillTrackExtra_) {
+      if (hits.empty()) {
+        extras.emplace_back();
+      } else {
+        CurvilinearTrajectoryError const perigeeError(mo);
+        ExtraState const inner = extraStateOnHit(FreeTrajectoryState(gp, perigeeError), *hits.front());
+        // the outer helix bends in Bz averaged along the chord from the perigee to the last hit, closer to the
+        // real bending of the long path than the field at the perigee
+        GlobalPoint const &x0 = gp.position();
+        GlobalPoint const x1 = hits.back()->globalPosition();
+        GlobalPoint const xm(0.5f * (x0.x() + x1.x()), 0.5f * (x0.y() + x1.y()), 0.5f * (x0.z() + x1.z()));
+        float const bz =
+            0.25f * (gp.magneticFieldInTesla().z() + 2.f * idealField.inTesla(xm).z() + idealField.inTesla(x1).z());
+        GlobalTrajectoryParameters const gpAveraged(
+            x0, gp.momentum(), gp.charge(), &idealField, GlobalVector(0.f, 0.f, bz));
+        ExtraState const outer = extraStateOnHit(FreeTrajectoryState(gpAveraged, perigeeError), *hits.back());
+        nExtraStatesFailed += (not inner.ok) + (not outer.ok);
+        extras.emplace_back(outer.position,
+                            outer.momentum,
+                            outer.ok,
+                            inner.position,
+                            inner.momentum,
+                            inner.ok,
+                            outer.covariance,
+                            outer.detId,
+                            inner.covariance,
+                            inner.detId,
+                            alongMomentum);
+      }
+    }
     // filter???
     tracks.emplace_back(track.release(), hits);
   }
@@ -794,14 +931,15 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   if (verbose_ && nOTExtrasResolved + nOTExtrasDropped > 0)
     edm::LogInfo("PixelTrackProducerFromSoAAlpaka")
         << "tagged OT extras -> legacy hits: resolved=" << nOTExtrasResolved << " dropped=" << nOTExtrasDropped;
-
-  if (verbose_ && (nTracksReordered > 0 || nDuplicateHits > 0))
+  if (verbose_ && (nExtraStatesFailed > 0 || nTracksReordered > 0 || nDuplicateHits > 0))
     edm::LogInfo("PixelTrackProducerFromSoAAlpaka")
         << "hits reordered across layers for " << nTracksReordered << " tracks, " << nDuplicateHits
-        << " repeated measurements dropped (" << tracks.size() << " tracks)";
+        << " repeated measurements dropped; TrackExtra states: " << nExtraStatesFailed
+        << " helices not reaching the plane of the first/last hit, replaced by the straight "
+        << "line (" << tracks.size() << " tracks)";
 
   // store tracks
-  storeTracks(iEvent, tracks, trackerTopology);
+  storeTracks(iEvent, tracks, trackerTopology, std::move(extras));
   iEvent.put(std::move(indToEdmP));
 }
 
