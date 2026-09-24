@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "DataFormats/BeamSpot/interface/BeamSpot.h"
+#include "DataFormats/Common/interface/OrphanHandle.h"
+#include "DataFormats/Common/interface/RefCoreGet.h"
 #include "DataFormats/GeometrySurface/interface/Plane.h"
 #include "DataFormats/SiPixelClusterSoA/interface/ClusteringConstants.h"
 #include "DataFormats/SiPixelDetId/interface/PixelSubdetector.h"
@@ -51,15 +53,14 @@
 #include "TrackingTools/TrajectoryParametrization/interface/GlobalTrajectoryParameters.h"
 #include "TrackingTools/TrajectoryState/interface/FreeTrajectoryState.h"
 
-#include "storeTracks.h"
-
 /**
  * This class creates "legacy" reco::Track
  * objects from the output of SoA CA.
  */
 
 // #define GPU_DEBUG
-// struct that holds two maps for detIds of the OT modules
+// per-run data: the maps of the OT modules used by the extension, and per tracker detUnit the words the track
+// loop would otherwise compute from the topology for every hit
 struct DetIdMaps {
   DetIdMaps() : detIdToOTModuleId_(), detIdIsUsedOTModule_() {}
 
@@ -68,9 +69,19 @@ struct DetIdMaps {
   std::map<uint32_t, uint32_t> detIdToOTModuleId_;
   // map from detId to bool if used as OT extension
   std::map<uint32_t, bool> detIdIsUsedOTModule_;
+  // per tracker detUnit, by GeomDet::index(): the HitPattern word of a valid hit and the layer key of the
+  // crossing-order sort, with the detId they were computed for
+  std::vector<uint32_t> detUnitDetId_;
+  std::vector<uint16_t> validHitPattern_;
+  std::vector<uint32_t> layerKey_;
 };
 
 namespace {
+  // subdetector, side and layer of a module in one word: two hits are on the same layer iff their words are equal
+  uint32_t layerKeyOf(DetId const &id, TrackerTopology const &topology) {
+    return (uint32_t(id.subdetId()) << 24) | (uint32_t(topology.side(id)) << 16) | topology.layer(id);
+  }
+
   // State of the helix of a free state where it crosses a module plane along the momentum: what
   // AnalyticalPropagator(alongMomentum) returns for a plane, with its straight-line case and its limit on the
   // turning angle, without building a TrajectoryStateOnSurface and without its field lookup at the destination.
@@ -181,6 +192,7 @@ private:
   const edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> idealMagneticFieldToken_;
   const edm::ESGetToken<TrackerTopology, TrackerTopologyRcd> trackerTopologyToken_;
   const edm::ESGetToken<TrackerGeometry, TrackerDigiGeometryRecord> trackerGeometryTokenRun_;
+  const edm::ESGetToken<TrackerTopology, TrackerTopologyRcd> trackerTopologyTokenRun_;
 
   int32_t const minNumberOfHits_;
   pixelTrack::Quality const minQuality_;
@@ -202,6 +214,7 @@ PixelTrackProducerFromSoAAlpaka::PixelTrackProducerFromSoAAlpaka(const edm::Para
       idealMagneticFieldToken_(esConsumes()),
       trackerTopologyToken_(esConsumes()),
       trackerGeometryTokenRun_(esConsumes<edm::Transition::BeginRun>()),
+      trackerTopologyTokenRun_(esConsumes<edm::Transition::BeginRun>()),
       minNumberOfHits_(iConfig.getParameter<int>("minNumberOfHits")),
       minQuality_(pixelTrack::qualityByName(iConfig.getParameter<std::string>("minQuality"))),
       useOTExtension_(iConfig.getParameter<bool>("useOTExtension")),
@@ -271,6 +284,29 @@ std::shared_ptr<DetIdMaps> PixelTrackProducerFromSoAAlpaka::globalBeginRun(const
         otModuleId++;
       }
     }
+  }
+
+  // per detUnit, the HitPattern word of a valid hit (appending a hit by its word skips the topology lookups of
+  // HitPattern::encode) and the layer key
+  auto const &geometry = iSetup.getData(trackerGeometryTokenRun_);
+  auto const &topology = iSetup.getData(trackerTopologyTokenRun_);
+  // GeomDet::index() is the position in detUnits(); the range is taken from the indices themselves
+  int maxIndex = -1;
+  for (auto const *detUnit : geometry.detUnits())
+    maxIndex = std::max(maxIndex, detUnit->index());
+  detIdMaps->detUnitDetId_.assign(maxIndex + 1, 0);
+  detIdMaps->validHitPattern_.assign(maxIndex + 1, 0);
+  detIdMaps->layerKey_.assign(maxIndex + 1, 0);
+  for (auto const *detUnit : geometry.detUnits()) {
+    DetId const id = detUnit->geographicalId();
+    // detUnits the topology cannot describe stay unknown to the cache (their hits take the topology path)
+    if (detUnit->index() < 0 or id.det() != DetId::Tracker or id.subdetId() < 1 or id.subdetId() > 6)
+      continue;
+    reco::HitPattern pattern;
+    pattern.appendHit(id, TrackingRecHit::valid, topology);
+    detIdMaps->detUnitDetId_[detUnit->index()] = id.rawId();
+    detIdMaps->validHitPattern_[detUnit->index()] = pattern.getHitPattern(reco::HitPattern::TRACK_HITS, 0);
+    detIdMaps->layerKey_[detUnit->index()] = layerKeyOf(id, topology);
   }
 
   return detIdMaps;
@@ -359,15 +395,38 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
 
   auto const &idealField = iSetup.getData(idealMagneticFieldToken_);
 
-  // prepare container for legacy tracks
-  pixeltrackfitting::TracksWithRecHits tracks;
+  // legacy tracks, built in place in their output collection, and their hits (all tracks in a row): the hits are
+  // cloned into their collection when the products are stored
+  auto outputTracks = std::make_unique<reco::TrackCollection>();
+  std::vector<TrackingRecHit const *> outputHits;
 
   // get trackerTopology
   auto const &trackerTopology = iSetup.getData(trackerTopologyToken_);
 
   // get the maps for the detId of the OT modules
-  auto const &detIdIsUsedOTModule = runCache(iEvent.getRun().index())->detIdIsUsedOTModule_;
-  auto const &detIdToOTModuleId = runCache(iEvent.getRun().index())->detIdToOTModuleId_;
+  auto const &runData = *runCache(iEvent.getRun().index());
+  auto const &detIdIsUsedOTModule = runData.detIdIsUsedOTModule_;
+  auto const &detIdToOTModuleId = runData.detIdToOTModuleId_;
+  auto const &detUnitDetId = runData.detUnitDetId_;
+  auto const &validHitPattern = runData.validHitPattern_;
+  auto const &cachedLayerKey = runData.layerKey_;
+  // index of the detUnit of a hit in the per-detUnit caches, or -1 if the caches do not know it
+  auto cacheIndex = [&](TrackingRecHit const &hit) -> int {
+    auto const *det = hit.det();
+    if (det == nullptr)
+      return -1;
+    auto const index = det->index();
+    return (index >= 0 and size_t(index) < detUnitDetId.size() and detUnitDetId[index] == hit.geographicalId().rawId())
+               ? index
+               : -1;
+  };
+  // append a hit (with its cache index) to the HitPattern of a track: a valid hit by the cached word of its detUnit,
+  // anything else (or a detUnit the cache does not know) through the topology, with the same result
+  auto appendHitPattern = [&](reco::Track &track, TrackingRecHit const &hit, int index) {
+    if (hit.getType() == TrackingRecHit::valid and index >= 0)
+      return track.appendHitPattern(validHitPattern[index], TrackingRecHit::valid);
+    return track.appendHitPattern(hit, trackerTopology);
+  };
 
   // Validation clones run for every event, including those whose HLT paths did not run the
   // pixel tracking: without the track SoA they write empty collections.
@@ -421,64 +480,78 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
 
   // hitmap to go from a unique RecHit identifier to the RecHit in the legacy collection
   // (unique hit identifier is equivalent to the position of the hit in the RecHit SoA)
-  std::vector<TrackingRecHit const *> hitmap;
-  hitmap.resize(nTotalHits, nullptr);
+  // On the stub path each OT SoA row stores origRecHitIdx, the flat index of its legacy RecHit in the
+  // Phase2TrackerRecHit1DCollectionNew (assigned while iterating the DetSets in legacy order): an OT row then resolves
+  // to its legacy RecHit directly when a track uses it (otHitOfRow below), and the hitmap holds the pixel hits only.
+  bool const otRowsResolvedDirectly = useOTExtension_ && expandStubs_ && otRecHitsSoAHost != nullptr;
+  std::vector<TrackingRecHit const *> hitmap(otRowsResolvedDirectly ? nPixelHits : nTotalHits, nullptr);
 
-  // loop over pixel RecHits to fill the hitmap
-  for (auto const &pixelHit : pixelRecHits) {
-    auto const &thit = static_cast<BaseTrackerRecHit const &>(pixelHit);
-    auto const detI = thit.det()->index();
-    auto const &clus = thit.firstClusterRef();
-    assert(clus.isPixel());
-
-    // get hit identifier as (hit offset of the module) + (hit index in this module)
-    auto const idx = pixelHitsModuleStart[detI] + clus.pixelCluster().originalId();
-
-    assert(nullptr == hitmap[idx]);
-    hitmap[idx] = &pixelHit;
+  // loop over pixel RecHits to fill the hitmap, module by module; the clusters are read by index from the data of
+  // their DetSetVector (that of the first hit, fetched once), rather than through an edm::Ref per hit, which
+  // resolves to the same element but takes the filling lock of the DetSetVector (an atomic compare-exchange and a
+  // store) on every dereference
+  SiPixelCluster const *pixelClusters = nullptr;
+  edm::ProductID pixelClustersID;
+  for (auto const &detSet : pixelRecHitsDSV) {
+    if (detSet.empty())
+      continue;
+    // hit identifier = (hit offset of the module) + (hit index in this module)
+    auto const moduleStart = pixelHitsModuleStart[detSet.begin()->det()->index()];
+    for (auto const &pixelHit : detSet) {
+      auto const &clus = pixelHit.omniClusterRef();
+      assert(clus.isPixel());
+      if (pixelClusters == nullptr) {
+        auto const clusterRef = clus.cluster_pixel();
+        assert(clusterRef.isNonnull());
+        pixelClusters =
+            edm::getProductWithCoreFromRef<SiPixelClusterCollectionNew>(clusterRef.refCore(), &iEvent.productGetter())
+                ->data()
+                .data();
+        pixelClustersID = clus.id();
+      }
+      auto const &cluster = clus.id() == pixelClustersID ? pixelClusters[clus.index()] : clus.pixelCluster();
+      auto const idx = moduleStart + cluster.originalId();
+      assert(nullptr == hitmap[idx]);
+      hitmap[idx] = &pixelHit;
+    }
   }
 
-  // if OT RecHits are used in PixelTracks, fill the hitmap also with those
-  if (useOTExtension_) {
-    if (expandStubs_ && otRecHitsSoAHost != nullptr) {
-      // The OT hits in the SoA are organized by StackedModuleGeometry index, not by
-      // detUnit->index(). Each SoA hit stores origRecHitIdx, the flat index into the legacy
-      // Phase2TrackerRecHit1DCollectionNew assigned while iterating the DetSets in legacy order,
-      // so each SoA hit maps straight to its legacy RecHit by that index.
-      auto const &otData = otRecHitsDSV->data();
-      auto otHitsView = otRecHitsSoAHost->const_view().otRecHits();
-      uint32_t nOTHitsSoA = otHitsView.metadata().size();
-      for (uint32_t i = 0; i < nOTHitsSoA; ++i) {
-        uint32_t flatIdx = otHitsView[i].origRecHitIdx();
-        assert(flatIdx < otData.size());
-        hitmap[nPixelHits + i] = &otData[flatIdx];
-      }
-    } else {
-      // Without stub expansion: OT hits organized by detUnit->index() for Ph2PSP TOB modules.
-      // The RecHits in the SoA are ordered according to the detUnit->index()
-      // of the respective OT module. For this reason, we need the map from the
-      // detId to the moduleId among all used OT modules. This otModuleId corresponds
-      // to the module's position in the otHitsModuleStart that we get from the event.
+  // legacy RecHit of an OT SoA row on the stub path; rows past the SoA resolve to nullptr, as unfilled map entries
+  uint32_t const nOTRowsSoA = otRowsResolvedDirectly ? otRecHitsSoAView.metadata().size() : 0;
+  auto otHitOfRow = [&](uint32_t row) -> TrackingRecHit const * {
+    if (row >= nOTRowsSoA)
+      return nullptr;
+    uint32_t const flatIdx = otRecHitsSoAView[row].origRecHitIdx();
+    assert(flatIdx < otRecHitsDSV->data().size());
+    return &otRecHitsDSV->data()[flatIdx];
+  };
 
-      // get the module's starting indices in the hit collection
-      auto const &otHitsModuleStart = iEvent.get(otHMSToken_);
+  // without stub expansion, fill the hitmap also with the OT RecHits used by the extension
+  if (useOTExtension_ and not otRowsResolvedDirectly) {
+    // Without stub expansion: OT hits organized by detUnit->index() for Ph2PSP TOB modules.
+    // The RecHits in the SoA are ordered according to the detUnit->index()
+    // of the respective OT module. For this reason, we need the map from the
+    // detId to the moduleId among all used OT modules. This otModuleId corresponds
+    // to the module's position in the otHitsModuleStart that we get from the event.
 
-      // perform the exact same loop of how the SoA is initially filled with OT hits
-      // and get the index by counting the hits (starting from the correpondign HitStartModule)
-      for (auto const &detSet : *otRecHitsDSV) {
-        auto detId = detSet.detId();
+    // get the module's starting indices in the hit collection
+    auto const &otHitsModuleStart = iEvent.get(otHMSToken_);
 
-        // check if module is used in extension
-        if (detIdIsUsedOTModule.find(detId)->second) {
-          // get the corresponding otModuleId
-          auto otModuleId = detIdToOTModuleId.find(detId)->second;
+    // perform the exact same loop of how the SoA is initially filled with OT hits
+    // and get the index by counting the hits (starting from the correpondign HitStartModule)
+    for (auto const &detSet : *otRecHitsDSV) {
+      auto detId = detSet.detId();
 
-          // loop over the RecHits of the module and fill the hitmap
-          for (int idx = otHitsModuleStart[otModuleId]; auto const &recHit : detSet) {
-            assert(nullptr == hitmap[idx]);
-            hitmap[idx] = &recHit;
-            idx++;
-          }
+      // check if module is used in extension
+      if (detIdIsUsedOTModule.find(detId)->second) {
+        // get the corresponding otModuleId
+        auto otModuleId = detIdToOTModuleId.find(detId)->second;
+
+        // loop over the RecHits of the module and fill the hitmap
+        for (int idx = otHitsModuleStart[otModuleId]; auto const &recHit : detSet) {
+          assert(nullptr == hitmap[idx]);
+          hitmap[idx] = &recHit;
+          idx++;
         }
       }
     }
@@ -591,19 +664,21 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   constexpr float kMaxBackStep = 5.f;  // cm
   uint32_t nTracksReordered = 0;
   uint32_t nDuplicateHits = 0;
+  std::vector<uint32_t> layerKeys;
+  std::vector<float> planeDistances;
   auto moduleDistance = [&bs](TrackingRecHit const *hit) { return (hit->det()->position() - bs).mag(); };
-  auto sameLayer = [&trackerTopology](TrackingRecHit const *a, TrackingRecHit const *b) {
-    DetId const ia = a->geographicalId(), ib = b->geographicalId();
-    return ia.subdetId() == ib.subdetId() and trackerTopology.layer(ia) == trackerTopology.layer(ib) and
-           trackerTopology.side(ia) == trackerTopology.side(ib);
-  };
   auto planeDistance = [&bs](TrackingRecHit const *hit) {
     auto const &surface = hit->det()->surface();
     return std::abs(surface.normalVector().dot(surface.position() - bs));
   };
-  auto sortInCrossingOrder = [&](std::vector<const TrackingRecHit *> &trackHits) {
-    if (trackHits.size() < 2)
+  // the cache index of each hit is returned in cacheIndices, in the final order, for the HitPattern of the track
+  auto sortInCrossingOrder = [&](std::vector<const TrackingRecHit *> &trackHits, std::vector<int> &cacheIndices) {
+    if (trackHits.size() < 2) {
+      cacheIndices.resize(trackHits.size());
+      for (size_t i = 0; i < trackHits.size(); ++i)
+        cacheIndices[i] = cacheIndex(*trackHits[i]);
       return;
+    }
     float previous = moduleDistance(trackHits.front());
     for (auto hit = trackHits.begin() + 1; hit != trackHits.end(); ++hit) {
       float const distance = moduleDistance(*hit);
@@ -616,32 +691,63 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       }
       previous = distance;
     }
+    auto const nHits = trackHits.size();
+    cacheIndices.resize(nHits);
+    layerKeys.resize(nHits);
+    for (size_t i = 0; i < nHits; ++i) {
+      cacheIndices[i] = cacheIndex(*trackHits[i]);
+      layerKeys[i] = cacheIndices[i] >= 0 ? cachedLayerKey[cacheIndices[i]]
+                                          : layerKeyOf(trackHits[i]->geographicalId(), trackerTopology);
+    }
     // compacting in place: the kept hits of a run are written at `kept`, never past the hit being read
-    auto kept = trackHits.begin();
-    for (auto first = trackHits.begin(); first != trackHits.end();) {
-      auto const last = std::find_if(
-          first + 1, trackHits.end(), [&](TrackingRecHit const *hit) { return not sameLayer(*first, hit); });
-      if (last - first > 1)
-        std::stable_sort(first, last, [&](TrackingRecHit const *a, TrackingRecHit const *b) {
-          return planeDistance(a) < planeDistance(b);
-        });
-      auto const runBegin = kept;
-      for (auto hit = first; hit != last; ++hit) {
-        if (std::any_of(runBegin, kept, [&](TrackingRecHit const *k) {
-              return k == *hit or k->sharesInput(*hit, TrackingRecHit::all);
+    size_t kept = 0;
+    for (size_t first = 0; first < nHits;) {
+      size_t last = first + 1;
+      while (last < nHits and layerKeys[last] == layerKeys[first])
+        ++last;
+      if (last - first > 1) {
+        // stable insertion sort by the plane distance: a run holds a few hits
+        planeDistances.resize(last - first);
+        for (size_t i = first; i < last; ++i)
+          planeDistances[i - first] = planeDistance(trackHits[i]);
+        for (size_t i = first + 1; i < last; ++i) {
+          auto const *hit = trackHits[i];
+          int const index = cacheIndices[i];
+          float const distance = planeDistances[i - first];
+          size_t j = i;
+          for (; j > first and distance < planeDistances[j - 1 - first]; --j) {
+            trackHits[j] = trackHits[j - 1];
+            cacheIndices[j] = cacheIndices[j - 1];
+            planeDistances[j - first] = planeDistances[j - 1 - first];
+          }
+          trackHits[j] = hit;
+          cacheIndices[j] = index;
+          planeDistances[j - first] = distance;
+        }
+      }
+      size_t const runBegin = kept;
+      for (size_t i = first; i < last; ++i) {
+        auto const *hit = trackHits[i];
+        if (std::any_of(trackHits.begin() + runBegin, trackHits.begin() + kept, [&](TrackingRecHit const *k) {
+              return k == hit or
+                     (k->geographicalId() == hit->geographicalId() and k->sharesInput(hit, TrackingRecHit::all));
             })) {
           ++nDuplicateHits;
           continue;
         }
-        *kept++ = *hit;
+        cacheIndices[kept] = cacheIndices[i];
+        trackHits[kept++] = hit;
       }
       first = last;
     }
-    trackHits.erase(kept, trackHits.end());
+    trackHits.resize(kept);
+    cacheIndices.resize(kept);
   };
 
   std::vector<const TrackingRecHit *> hits;
   hits.reserve(5);  //TODO move to a configurable parameter?
+  // parallel to hits: the index of each hit in the per-detUnit caches, filled by sortInCrossingOrder
+  std::vector<int> hitCacheIndices;
 
   auto const &tsoa = iEvent.get(trackSoAToken_);
   auto const quality = tsoa.view().tracks().quality();
@@ -653,7 +759,9 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   auto const hitIdxs = tsoa.view().trackHits().id();
   auto nTracks = tsoa.view().tracks().nTracks();
 
-  tracks.reserve(nTracks);
+  outputTracks->reserve(nTracks);
+  // stub expansion at most doubles the hits of a track
+  outputHits.reserve(nTracks > 0 ? size_t(hitOffs[nTracks - 1]) * (expandStubs_ ? 2 : 1) : 0);
 
   int32_t nt = 0;
 
@@ -672,9 +780,8 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
 
   // A track-hit id with caOTHitTag::kOTHitTag set is a raw OT rechit attached by the extension
   // stage; its low bits are the OT SoA row. It resolves to a legacy Phase2TrackerRecHit1D via
-  // the OT portion of the hitmap (hitmap[nPixelHits + row]), populated only on the expandStubs OT
-  // path. Where that map is unavailable the tagged extra is dropped, never crashing.
-  const bool otTagResolvable = useOTExtension_ && expandStubs_ && otRecHitsSoAHost != nullptr;
+  // its OT SoA row (otHitOfRow), available only on the expandStubs OT
+  // path. Where it is unavailable the tagged extra is dropped, never crashing.
   // Per-event diagnostic tallies of the tagged-OT-extra branch (one-shot print below).
   uint32_t nOTExtrasResolved = 0, nOTExtrasDropped = 0;
 
@@ -713,7 +820,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
           // Tagged raw-OT extra: one legacy rechit, no stub expansion. Neither expanded nor removed
           // when resolvable, dropped otherwise, matching the fill pass.
           const uint32_t o = caOTHitTag::otIdx(hitIdx);
-          if (!(otTagResolvable && (nPixelHits + o) < nTotalHits))
+          if (!(otRowsResolvedDirectly && (nPixelHits + o) < nTotalHits))
             nRemovedHits++;
           continue;
         }
@@ -735,7 +842,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
         if (caOTHitTag::isOTId(hitIdx)) {
           // Tagged OT extra: resolvable only on the expandStubs OT path (false here) -> dropped.
           const uint32_t o = caOTHitTag::otIdx(hitIdx);
-          if (!(otTagResolvable && (nPixelHits + o) < nTotalHits))
+          if (!(otRowsResolvedDirectly && (nPixelHits + o) < nTotalHits))
             nRemovedHits++;
           continue;
         }
@@ -752,11 +859,11 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       auto hitIdx = hitIdxs[iHit];
       if (caOTHitTag::isOTId(hitIdx)) {
         // Tagged raw-OT extra -> its legacy Phase2TrackerRecHit1D via the OT hitmap (same lookup as
-        // a stub's lower/upper sensor hit: hitmap[nPixelHits + otSoARow]). Unresolvable tagged ids
+        // a stub's lower/upper sensor hit: otHitOfRow(otSoARow)). Unresolvable tagged ids
         // are dropped (counted as removed above), keeping the hits vector correctly sized.
         const uint32_t o = caOTHitTag::otIdx(hitIdx);
-        if (otTagResolvable && (nPixelHits + o) < nTotalHits) {
-          hits[hitOutputIdx++] = hitmap[nPixelHits + o];
+        if (otRowsResolvedDirectly && (nPixelHits + o) < nTotalHits) {
+          hits[hitOutputIdx++] = otHitOfRow(o);
           ++nOTExtrasResolved;
         } else {
           ++nOTExtrasDropped;
@@ -769,12 +876,12 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
           uint32_t stubIdx = hitIdx - offsetStubs;
           uint32_t lowerHitIdx = stubsSoAView[stubIdx].lowerHitIdx();
 
-          hits[hitOutputIdx++] = hitmap[nPixelHits + lowerHitIdx];
+          hits[hitOutputIdx++] = otHitOfRow(lowerHitIdx);
 
           // Add outer sensor hit only if not PHitOnly (PHitOnly stubs have invalid upperHitIdx)
           if (isStub(stubsSoAView, stubIdx)) {
             uint32_t upperHitIdx = stubsSoAView[stubIdx].upperHitIdx();
-            hits[hitOutputIdx++] = hitmap[nPixelHits + upperHitIdx];
+            hits[hitOutputIdx++] = otHitOfRow(upperHitIdx);
           }
         } else {
           hits[hitOutputIdx++] = hitmap[hitIdx];
@@ -782,7 +889,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       }
       // else: removed hits are skipped
     }
-    sortInCrossingOrder(hits);
+    sortInCrossingOrder(hits, hitCacheIndices);
 
     end = end - nRemovedHits;
 
@@ -817,7 +924,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
     ++nt;
 
     // mind: this values are respect the beamspot!
-    float chi2 = tsoa.view().tracks()[it].chi2();
+    float chi2 = tsoa.view().tracks().chi2()[it];
     float phi = reco::phi(tsoa.view().tracks(), it);
 
     riemannFit::Vector5d ipar, opar;
@@ -851,7 +958,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       ndof = 2 * std::min(nHits, maxHitsOnTrackForFullFit) - 5;
       // The fit kernel stamps the degrees of freedom of the positions it fitted (2N-5 for the
       // N <= maxHitsOnTrackForFullFit positions used) into the SoA; prefer it.
-      const int ndofSoA = tsoa.view().tracks()[it].ndof();
+      const int ndofSoA = tsoa.view().tracks().ndof()[it];
       if (ndofSoA > 0)
         ndof = ndofSoA;
     }
@@ -870,22 +977,22 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       continue;
     }
 
-    auto track = std::make_unique<reco::Track>(chi2, ndof, pos, mom, gp.charge(), CurvilinearTrajectoryError(mo));
+    auto &track = outputTracks->emplace_back(chi2, ndof, pos, mom, gp.charge(), CurvilinearTrajectoryError(mo));
 
     // bad and edup not supported as fit not present or not reliable
     auto tkq = recoQuality[int(q)];
-    track->setQuality(tkq);
+    track.setQuality(tkq);
     // loose,tight and HP are inclusive
     if (reco::TrackBase::highPurity == tkq) {
-      track->setQuality(reco::TrackBase::tight);
-      track->setQuality(reco::TrackBase::loose);
+      track.setQuality(reco::TrackBase::tight);
+      track.setQuality(reco::TrackBase::loose);
     } else if (reco::TrackBase::tight == tkq) {
-      track->setQuality(reco::TrackBase::loose);
+      track.setQuality(reco::TrackBase::loose);
     }
-    track->setQuality(tkq);
+    track.setQuality(tkq);
     if (setAlgorithmFromIteration_) {
-      const auto iter = tsoa.view().tracks()[it].iteration();
-      track->setAlgorithm(recoAlgo[std::min<uint32_t>(uint32_t(iter), pixelTrack::iterationSize)]);
+      const auto iter = tsoa.view().tracks().iteration()[it];
+      track.setAlgorithm(recoAlgo[std::min<uint32_t>(uint32_t(iter), pixelTrack::iterationSize)]);
     }
     if (fillTrackExtra_) {
       if (hits.empty()) {
@@ -917,12 +1024,15 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
                             alongMomentum);
       }
     }
-    // filter???
-    tracks.emplace_back(track.release(), hits);
+    for (size_t k = 0; k < hits.size(); ++k) {
+      appendHitPattern(track, *hits[k], hitCacheIndices[k]);
+      outputHits.push_back(hits[k]);
+    }
   }
 
 #ifdef GPU_DEBUG
-  std::cout << "processed " << nt << " good tuples " << tracks.size() << " out of " << indToEdm.size() << std::endl;
+  std::cout << "processed " << nt << " good tuples " << outputTracks->size() << " out of " << indToEdm.size()
+            << std::endl;
 #endif
 
   // Diagnostic, printed only for events with tagged OT extras: "dropped" counts unresolvable tags
@@ -936,10 +1046,32 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
         << "hits reordered across layers for " << nTracksReordered << " tracks, " << nDuplicateHits
         << " repeated measurements dropped; TrackExtra states: " << nExtraStatesFailed
         << " helices not reaching the plane of the first/last hit, replaced by the straight "
-        << "line (" << tracks.size() << " tracks)";
+        << "line (" << outputTracks->size() << " tracks)";
 
-  // store tracks
-  storeTracks(iEvent, tracks, trackerTopology, std::move(extras));
+  // store the hits, the TrackExtras and the tracks, which refer to the other two
+  auto const nStored = outputTracks->size();
+  auto recHits = std::make_unique<TrackingRecHitCollection>();
+  recHits->reserve(outputHits.size());
+  for (auto const *hit : outputHits)
+    recHits->push_back(hit->clone());  // need to clone (at least if from SoA)
+  edm::OrphanHandle<TrackingRecHitCollection> const recHitsHandle = iEvent.put(std::move(recHits));
+  edm::RefProd<TrackingRecHitCollection> const recHitsRef(recHitsHandle);
+
+  auto trackExtras = std::make_unique<reco::TrackExtraCollection>(std::move(extras));
+  trackExtras->resize(nStored);
+  LocalTrajectoryParameters const noTrajParams(AlgebraicVector5(0, 0, 0, 0, 0), 1.);
+  for (unsigned int k = 0, firstHit = 0; k < nStored; ++k) {
+    unsigned int const nValidHits = (*outputTracks)[k].numberOfValidHits();
+    auto &extra = (*trackExtras)[k];
+    extra.setHits(recHitsRef, firstHit, nValidHits);
+    firstHit += nValidHits;
+    extra.setTrajParams(reco::TrackExtra::TrajParams(nValidHits, noTrajParams),
+                        reco::TrackExtra::Chi2sFive(nValidHits, 0));
+  }
+  edm::OrphanHandle<reco::TrackExtraCollection> const extrasHandle = iEvent.put(std::move(trackExtras));
+  for (unsigned int k = 0; k < nStored; ++k)
+    (*outputTracks)[k].setExtra(reco::TrackExtraRef(extrasHandle, k));
+  iEvent.put(std::move(outputTracks));
   iEvent.put(std::move(indToEdmP));
 }
 
