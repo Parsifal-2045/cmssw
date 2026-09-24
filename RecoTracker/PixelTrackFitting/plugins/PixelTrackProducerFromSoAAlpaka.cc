@@ -474,6 +474,73 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
     return nSkippedLayers;
   };
 
+  // The consumers that fit the hits of a track in sequence (KF refits, the global muon refit) propagate along
+  // the momentum from one hit to the next and stop at the first hit behind the state, so the hits are stored in
+  // the order the track crosses them:
+  // - across layers the CA order is inside-out, except for the tracks the merger unites from twins, which carry
+  //   the non-shared hits of the absorbed twin after the winner's. A backward step between module centres larger
+  //   than kMaxBackStep (above the spread of the module centres of one layer) flags them, and their hits are
+  //   reordered by their distance from the beam spot;
+  // - within a layer (the two sensors of a stub, overlapping modules) the order is not defined. Each run of
+  //   consecutive hits on the same layer is sorted by the distance of the module plane from the beam spot along
+  //   its normal: the planes of one layer are nearly parallel, and the distance does not depend on where the hit
+  //   lies on the sensor (a strip hit sits at the strip centre).
+  // A twin-merged track can also carry the same measurement twice (a raw OT hit and a stub sensor hit, or two
+  // stubs sharing a sensor cluster, possibly as distinct rechit objects): a hit sharing its cluster with a hit
+  // already kept in the layer run is dropped, so that no fit counts the measurement twice.
+  // Both twin-merge effects are fixed on the device only in the merger's refit copy of the hit list.
+  constexpr float kMaxBackStep = 5.f;  // cm
+  uint32_t nTracksReordered = 0;
+  uint32_t nDuplicateHits = 0;
+  auto moduleDistance = [&bs](TrackingRecHit const *hit) { return (hit->det()->position() - bs).mag(); };
+  auto sameLayer = [&trackerTopology](TrackingRecHit const *a, TrackingRecHit const *b) {
+    DetId const ia = a->geographicalId(), ib = b->geographicalId();
+    return ia.subdetId() == ib.subdetId() and trackerTopology.layer(ia) == trackerTopology.layer(ib) and
+           trackerTopology.side(ia) == trackerTopology.side(ib);
+  };
+  auto planeDistance = [&bs](TrackingRecHit const *hit) {
+    auto const &surface = hit->det()->surface();
+    return std::abs(surface.normalVector().dot(surface.position() - bs));
+  };
+  auto sortInCrossingOrder = [&](std::vector<const TrackingRecHit *> &trackHits) {
+    if (trackHits.size() < 2)
+      return;
+    float previous = moduleDistance(trackHits.front());
+    for (auto hit = trackHits.begin() + 1; hit != trackHits.end(); ++hit) {
+      float const distance = moduleDistance(*hit);
+      if (distance < previous - kMaxBackStep) {
+        std::stable_sort(trackHits.begin(), trackHits.end(), [&bs](TrackingRecHit const *a, TrackingRecHit const *b) {
+          return (a->globalPosition() - bs).mag2() < (b->globalPosition() - bs).mag2();
+        });
+        ++nTracksReordered;
+        break;
+      }
+      previous = distance;
+    }
+    // compacting in place: the kept hits of a run are written at `kept`, never past the hit being read
+    auto kept = trackHits.begin();
+    for (auto first = trackHits.begin(); first != trackHits.end();) {
+      auto const last = std::find_if(
+          first + 1, trackHits.end(), [&](TrackingRecHit const *hit) { return not sameLayer(*first, hit); });
+      if (last - first > 1)
+        std::stable_sort(first, last, [&](TrackingRecHit const *a, TrackingRecHit const *b) {
+          return planeDistance(a) < planeDistance(b);
+        });
+      auto const runBegin = kept;
+      for (auto hit = first; hit != last; ++hit) {
+        if (std::any_of(runBegin, kept, [&](TrackingRecHit const *k) {
+              return k == *hit or k->sharesInput(*hit, TrackingRecHit::all);
+            })) {
+          ++nDuplicateHits;
+          continue;
+        }
+        *kept++ = *hit;
+      }
+      first = last;
+    }
+    trackHits.erase(kept, trackHits.end());
+  };
+
   std::vector<const TrackingRecHit *> hits;
   hits.reserve(5);  //TODO move to a configurable parameter?
 
@@ -608,6 +675,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
       }
       // else: removed hits are skipped
     }
+    sortInCrossingOrder(hits);
 
     end = end - nRemovedHits;
 
@@ -615,7 +683,7 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
     if (requireQuadsFromConsecutiveLayers_ && (nHits == 4)) {
       bool skipThisTrack{false};
       // loop over layer pairs and check if they skip
-      for (auto iHit = start; iHit < end - 1; ++iHit) {
+      for (auto iHit = start; iHit < end - 1 and size_t(iHit - start + 1) < hits.size(); ++iHit) {
         // if the inner (iHit-start) to outer (iHit-start+1) hit layer-change skips 1 or more
         // layers skipt the track
         if (getNSkippedLayers(hits[iHit - start], hits[iHit - start + 1]) > 0) {
@@ -726,6 +794,11 @@ void PixelTrackProducerFromSoAAlpaka::produce(edm::StreamID streamID,
   if (verbose_ && nOTExtrasResolved + nOTExtrasDropped > 0)
     edm::LogInfo("PixelTrackProducerFromSoAAlpaka")
         << "tagged OT extras -> legacy hits: resolved=" << nOTExtrasResolved << " dropped=" << nOTExtrasDropped;
+
+  if (verbose_ && (nTracksReordered > 0 || nDuplicateHits > 0))
+    edm::LogInfo("PixelTrackProducerFromSoAAlpaka")
+        << "hits reordered across layers for " << nTracksReordered << " tracks, " << nDuplicateHits
+        << " repeated measurements dropped (" << tracks.size() << " tracks)";
 
   // store tracks
   storeTracks(iEvent, tracks, trackerTopology);
