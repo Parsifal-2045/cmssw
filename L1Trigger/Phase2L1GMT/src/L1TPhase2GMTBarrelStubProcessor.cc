@@ -256,3 +256,27 @@ int L1TPhase2GMTBarrelStubProcessor::calculateEta(uint i, int wheel, uint sector
 
   return eta;
 }
+
+// Temporary workaround: the stub building of CMSSW_20_0_0 (coarse eta per wheel and station in eta1, etaQuality 0)
+l1t::MuonStubCollection L1TPhase2GMTBarrelStubProcessor::makeStubsEta(const L1Phase2MuDTPhContainer* phiContainer,
+                                                                      const L1MuDTChambThContainer* etaContainer) {
+  l1t::MuonStubCollection out;
+  for (int bx = minBX_; bx <= maxBX_; bx++) {
+    for (int wheel = -2; wheel <= 2; wheel++) {
+      for (int sector = 0; sector < 12; sector++) {
+        for (int station = 1; station < 5; station++) {
+          const L1MuDTChambThDigi* tseta = etaContainer->chThetaSegm(wheel, station, sector, bx);
+          for (const auto& phiDigi : *phiContainer->getContainer()) {
+            if ((phiDigi.bxNum() - 20) != bx || phiDigi.whNum() != wheel || phiDigi.scNum() != sector ||
+                phiDigi.stNum() != station)
+              continue;
+            if (phiDigi.quality() < minPhiQuality_)
+              continue;
+            out.push_back(tseta != nullptr ? buildStub(phiDigi, tseta) : buildStubNoEta(phiDigi));
+          }
+        }
+      }
+    }
+  }
+  return out;
+}

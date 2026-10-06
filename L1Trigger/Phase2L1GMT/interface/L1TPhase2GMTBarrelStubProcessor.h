@@ -20,6 +20,8 @@ public:
   ~L1TPhase2GMTBarrelStubProcessor();
 
   l1t::MuonStubCollection makeStubs(const L1Phase2MuDTExtPhiThetaPairContainer*);
+  // Temporary workaround: stubs with the coarse eta in eta1, the encoding TPSAlgorithm reads
+  l1t::MuonStubCollection makeStubsEta(const L1Phase2MuDTPhContainer*, const L1MuDTChambThContainer*);
 
 private:
   l1t::MuonStub buildStubwithZandkSlope(const L1Phase2MuDTExtPhiThetaPair&);

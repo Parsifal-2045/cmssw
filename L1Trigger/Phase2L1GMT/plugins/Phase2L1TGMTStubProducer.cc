@@ -124,9 +124,12 @@ void Phase2L1TGMTStubProducer::produce(edm::Event& iEvent, const edm::EventSetup
   }
   l1t::MuonStubCollection stubsBarrel = procBarrel_->makeStubs(dtPairs.product());
   for (auto& stub : stubsBarrel) {
-    //convert to Hybrid
-    stubs.push_back(convertToHybrid(stub));
     stubsKMTF.push_back(stub);
+  }
+  // Temporary workaround: makeStubs() stores z and a slope in eta1 / eta2 (for the KMTF), which TPSAlgorithm
+  // reads as pseudorapidity; the stubs of the track-plus-stub matching are built with the coarse eta instead
+  for (auto& stub : procBarrel_->makeStubsEta(dtDigis.product(), dtThetaDigis.product())) {
+    stubs.push_back(convertToHybrid(stub));
   }
 
   iEvent.put(std::make_unique<l1t::MuonStubCollection>(stubs), "tps");
