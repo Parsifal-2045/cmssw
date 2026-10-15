@@ -58,4 +58,7 @@
   <class name="edm::RefVector<l1t::HPSPFTauCollection>" /> 
   <class name="std::vector<edm::Ref<l1t::HPSPFTauCollection> >" />
 
+  <!-- l1t::PFJet::constituents_: without its own dictionary ROOT emulates it and builds each element through Cling -->
+  <class name="edm::Ptr<l1t::PFCandidate>" />
+  <class name="std::vector<edm::Ptr<l1t::PFCandidate> >" />
 </lcgdict>
