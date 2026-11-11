@@ -518,7 +518,7 @@ private:
     Measurement& thread(AtomicResources& r);
     // the number of threads registered by thread()
     unsigned int unobserved() const { return unobserved_; }
-    // account the resources of the threads that have not left the TBB pool
+    // account the resources of the calling thread, and retire all threads
     void finalize();
 
   private:

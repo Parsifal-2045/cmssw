@@ -1872,9 +1872,14 @@ void FastTimerService::ThreadGuard::retire_thread(void* p) {
 
 // finalize all threads that have not retired
 void FastTimerService::ThreadGuard::finalize() {
+  // the CPU time and memory counters are per-thread: only the calling thread can be measured
+  specific_t const* self = nullptr;
+  if (auto p = ::pthread_getspecific(key_)) {
+    self = ptr(p)->get();
+  }
   for (auto& p : thread_resources_) {
     auto expected = true;
-    if (p->live_.compare_exchange_strong(expected, false)) {
+    if (p->live_.compare_exchange_strong(expected, false) and p.get() == self) {
       p->measurement_.measure_and_accumulate(p->resource_);
     }
   }
