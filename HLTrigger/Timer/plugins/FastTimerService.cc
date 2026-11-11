@@ -261,6 +261,9 @@ void FastTimerService::ResourcesPerJob::reset() {
   idle.reset();
   source.reset();
   eventsetup.reset();
+  files.reset();
+  beginjob.reset();
+  endjob.reset();
   cleanup.reset();
   event.reset();
   for (auto& module : highlight)
@@ -277,6 +280,9 @@ FastTimerService::ResourcesPerJob& FastTimerService::ResourcesPerJob::operator+=
   idle += other.idle;
   source += other.source;
   eventsetup += other.eventsetup;
+  files += other.files;
+  beginjob += other.beginjob;
+  endjob += other.endjob;
   cleanup += other.cleanup;
   event += other.event;
   assert(highlight.size() == other.highlight.size());
@@ -893,6 +899,47 @@ FastTimerService::FastTimerService(const edm::ParameterSet& config, edm::Activit
   registry.watchPostEventReadFromSource(this, &FastTimerService::postEventReadFromSource);
   registry.watchPreESModule(this, &FastTimerService::preESModule);
   registry.watchPostESModule(this, &FastTimerService::postESModule);
+
+  // EventSetup IOV synchronisation
+  registry.watchPreESSyncIOV([this](auto const&) { thread().measure_and_accumulate(job_summary_.overhead); });
+  registry.watchPostESSyncIOV([this](auto const&) { thread().measure_and_accumulate(job_summary_.eventsetup); });
+
+  // file signals; the first input file is opened before the event loop
+  auto preFile = [this](auto const&...) {
+    thread().measure_and_accumulate(event_loop_ ? job_summary_.overhead : job_summary_.beginjob);
+  };
+  auto postFile = [this](auto const&...) {
+    thread().measure_and_accumulate(event_loop_ ? job_summary_.files : job_summary_.beginjob);
+  };
+  registry.watchPreOpenFile(preFile);
+  registry.watchPostOpenFile(postFile);
+  registry.watchPreCloseFile(preFile);
+  registry.watchPostCloseFile(postFile);
+  registry.watchPreOpenOutputFiles(preFile);
+  registry.watchPostOpenOutputFiles(postFile);
+  registry.watchPreCloseOutputFiles(preFile);
+  registry.watchPostCloseOutputFiles(postFile);
+
+  // begin job signals; construction and beginStream may run on other threads
+  auto beginJob = [this](auto const&...) { thread().measure_and_accumulate(job_summary_.beginjob); };
+  registry.watchPostSourceConstruction(beginJob);
+  registry.watchPreModuleConstruction(beginJob);
+  registry.watchPostModuleConstruction(beginJob);
+  registry.watchPreModuleBeginStream(beginJob);
+  registry.watchPostModuleBeginStream(beginJob);
+  registry.watchBeginProcessing([this]() {
+    thread().measure_and_accumulate(job_summary_.beginjob);
+    event_loop_ = true;
+  });
+
+  // end job signals; endStream may run on other threads
+  registry.watchEndProcessing([this]() {
+    thread().measure_and_accumulate(job_summary_.overhead);
+    event_loop_ = false;
+  });
+  auto endJob = [this](auto const&...) { thread().measure_and_accumulate(job_summary_.endjob); };
+  registry.watchPreModuleEndStream(endJob);
+  registry.watchPostModuleEndStream(endJob);
 }
 
 void FastTimerService::ignoredSignal(const std::string& signal) const {
@@ -1038,6 +1085,7 @@ void FastTimerService::preallocate(edm::service::SystemBounds const& bounds) {
 }
 
 void FastTimerService::preSourceConstruction(edm::ModuleDescription const& module) {
+  thread().measure_and_accumulate(job_summary_.beginjob);
   callgraph_.preSourceConstruction(module);
 }
 
@@ -1074,7 +1122,10 @@ void FastTimerService::lookupInitializationComplete(edm::PathsAndConsumesOfModul
   if (print_lumi_summary_) {
     lumi_summary_.resize(concurrent_lumis_, temp);
   }
-  job_summary_ = temp;
+  // keep the resources accounted before this point, e.g. module construction
+  job_summary_.highlight = temp.highlight;
+  job_summary_.modules = temp.modules;
+  job_summary_.process = temp.process;
 
   // check that the DQMStore service is available
   if (enable_dqm_ and not edm::Service<dqm::legacy::DQMStore>().isAvailable()) {
@@ -1170,6 +1221,8 @@ void FastTimerService::postSourceLumi(edm::LuminosityBlockIndex index) {
 }
 
 void FastTimerService::postEndJob() {
+  thread().measure_and_accumulate(job_summary_.endjob);
+
   // stop observing to avoid potential race conditions at exit
   tbb::task_scheduler_observer::observe(false);
   guard_.finalize();
@@ -1389,9 +1442,12 @@ void FastTimerService::printSummary(T& out, ResourcesPerJob const& data, std::st
   }
   printSummaryLine(out, data.total, data.events, "total");
   printSummaryLine(out, data.eventsetup, data.events, "eventsetup");
+  printSummaryLine(out, data.files, data.events, "files");
   printSummaryLine(out, data.cleanup, data.events, "cleanup");
   printSummaryLine(out, data.overhead, data.events, "other");
   printSummaryLine(out, data.idle, data.events, "idle");
+  printSummaryLine(out, data.beginjob, data.events, "begin job");
+  printSummaryLine(out, data.endjob, data.events, "end job");
   out << '\n';
   printPathSummaryHeader(out, "Processes and Paths");
   printSummaryLine(out, data.source, data.events, source_d.moduleLabel());
@@ -1408,9 +1464,12 @@ void FastTimerService::printSummary(T& out, ResourcesPerJob const& data, std::st
   }
   printSummaryLine(out, data.total, data.events, "total");
   printSummaryLine(out, data.eventsetup, data.events, "eventsetup");
+  printSummaryLine(out, data.files, data.events, "files");
   printSummaryLine(out, data.cleanup, data.events, "cleanup");
   printSummaryLine(out, data.overhead, data.events, "other");
   printSummaryLine(out, data.idle, data.events, "idle");
+  printSummaryLine(out, data.beginjob, data.events, "begin job");
+  printSummaryLine(out, data.endjob, data.events, "end job");
   out << '\n';
   for (unsigned int group : boost::irange(0ul, highlight_modules_.size())) {
     printSummaryHeader(out, "Highlighted modules", true);
@@ -1459,10 +1518,8 @@ void FastTimerService::writeSummaryJSON(ResourcesPerJob const& data, std::string
        json{{"name", "mem_free"}, {"description", "deallocated memory"}, {"unit", "kB"}, {"title", "Memory"}}});
 
   // write the resources used by the job
-  j["total"] = encodeToJSON("Job",
-                            callgraph_.processDescription().name_,
-                            data.events,
-                            data.total + data.eventsetup + data.overhead + data.idle);
+  auto total = data.total + data.eventsetup + data.files + data.overhead + data.idle + data.beginjob + data.endjob;
+  j["total"] = encodeToJSON("Job", callgraph_.processDescription().name_, data.events, total);
 
   // write the resources used by every module
   j["modules"] = json::array();
@@ -1481,7 +1538,10 @@ void FastTimerService::writeSummaryJSON(ResourcesPerJob const& data, std::string
   j["modules"].push_back(encodeToJSON("cleanup", "cleanup", data.events, data.cleanup));
   j["modules"].push_back(encodeToJSON("other", "other", data.events, data.overhead));
   j["modules"].push_back(encodeToJSON("eventsetup", "eventsetup", data.events, data.eventsetup));
+  j["modules"].push_back(encodeToJSON("files", "files", data.events, data.files));
   j["modules"].push_back(encodeToJSON("idle", "idle", data.events, data.idle));
+  j["modules"].push_back(encodeToJSON("beginjob", "begin job", data.events, data.beginjob));
+  j["modules"].push_back(encodeToJSON("endjob", "end job", data.events, data.endjob));
 
   std::ofstream out(filename);
   out << std::setw(2) << j << std::flush;
@@ -1729,6 +1789,8 @@ void FastTimerService::preESModule(edm::eventsetup::EventSetupRecordKey const&, 
     unsigned int sid = top->parent().placeInPathContext()->pathContext()->streamContext()->streamID().value();
     auto& stream = streams_[sid];
     thread().measure_and_accumulate(stream.overhead);
+  } else {
+    thread().measure_and_accumulate(job_summary_.overhead);
   }
 }
 void FastTimerService::postESModule(edm::eventsetup::EventSetupRecordKey const&,
@@ -1738,6 +1800,9 @@ void FastTimerService::postESModule(edm::eventsetup::EventSetupRecordKey const&,
     unsigned int sid = top->parent().placeInPathContext()->pathContext()->streamContext()->streamID().value();
     auto& stream = streams_[sid];
     thread().measure_and_accumulate(stream.eventsetup);
+  } else {
+    // non-Event transitions
+    thread().measure_and_accumulate(job_summary_.eventsetup);
   }
 }
 

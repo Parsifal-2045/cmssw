@@ -48,6 +48,9 @@ using json = nlohmann::json;
 procesing time is divided into
  - source
  - event processing, sum of the time spent in all the modules
+ - eventsetup, EventSetup modules and IOV synchronisation
+ - files, opening and closing files
+ - begin job and end job, before and after the event loop
 */
 
 class FastTimerService : public tbb::task_scheduler_observer {
@@ -327,6 +330,9 @@ private:
     AtomicResources eventsetup;
     AtomicResources idle;
     AtomicResources source;
+    AtomicResources files;
+    AtomicResources beginjob;
+    AtomicResources endjob;
     Resources cleanup;  // total time etc. spent between preClearEvent and postClearEvent
     Resources event;    // total time etc. spent between preSourceEvent and postEvent
     std::vector<Resources> highlight;
@@ -339,7 +345,7 @@ private:
     // possibility of reimplementing something like SubProcess and having them
     // separate will make that easier...
     ResourcesPerProcess process;
-    unsigned events;
+    unsigned events = 0;
   };
 
   // plot ranges and resolution
@@ -488,6 +494,9 @@ private:
   std::vector<ResourcesPerJob> run_summary_;   // whole event time accounting per-run
   std::vector<ResourcesPerJob> lumi_summary_;  // whole event time accounting per-lumi, only if print_lumi_summary_
   std::mutex summary_mutex_;                   // synchronise access to the summary objects across different threads
+
+  // between BeginProcessing and EndProcessing
+  std::atomic<bool> event_loop_ = false;
 
   // per-thread measurements, kept in thread-specific storage; each accessor looks them up once, and registers the
   // calling thread the first time it is seen
