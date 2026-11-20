@@ -5,8 +5,6 @@
 #include "DataFormats/CaloRecHit/interface/CaloID.h"
 #include "DataFormats/HcalDetId/interface/HcalDetId.h"
 
-#include "oneapi/tbb/task_arena.h"
-#include "oneapi/tbb.h"
 #include <limits>
 
 using namespace hgcal_clustering;
@@ -76,22 +74,20 @@ void BarrelCLUEAlgoT<T>::prepareDataStructures(unsigned int l) {
 
 template <typename T>
 void BarrelCLUEAlgoT<T>::makeClusters() {
-  tbb::this_task_arena::isolate([&] {
-    tbb::parallel_for(size_t(0), size_t(maxlayer_ + 1), [&](size_t i) {
-      prepareDataStructures(i);
-      T lt;
-      lt.clear();
-      lt.fill(cells_[i].eta, cells_[i].phi);
+  for (unsigned int i = 0; i < maxlayer_ + 1; ++i) {
+    prepareDataStructures(i);
+    T lt;
+    lt.clear();
+    lt.fill(cells_[i].eta, cells_[i].phi);
 
-      calculateLocalDensity(lt, i, deltac_);
-      calculateDistanceToHigher(lt, i, deltac_);
-      numberOfClustersPerLayer_[i] = findAndAssignClusters(i, deltac_);
+    calculateLocalDensity(lt, i, deltac_);
+    calculateDistanceToHigher(lt, i, deltac_);
+    numberOfClustersPerLayer_[i] = findAndAssignClusters(i, deltac_);
 
-      if (doSharing_)
-        // Now running the sharing routine
-        passSharedClusterIndex(lt, i, deltac_);
-    });
-  });
+    if (doSharing_)
+      // Now running the sharing routine
+      passSharedClusterIndex(lt, i, deltac_);
+  }
   for (unsigned int i = 0; i < maxlayer_ + 1; ++i) {
     setDensity(i);
   }

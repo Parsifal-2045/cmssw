@@ -11,8 +11,6 @@
 #include "RecoEcal/EgammaCoreTools/interface/PositionCalc.h"
 //
 #include "DataFormats/CaloRecHit/interface/CaloID.h"
-#include "oneapi/tbb/task_arena.h"
-#include "oneapi/tbb.h"
 #include <limits>
 #include <cmath>
 #include <utility>
@@ -104,25 +102,23 @@ void HGCalCLUEAlgoT<T, STRATEGY>::prepareDataStructures(unsigned int l) {
 template <typename T, typename STRATEGY>
 void HGCalCLUEAlgoT<T, STRATEGY>::makeClusters() {
   // assign all hits in each layer to a cluster core
-  tbb::this_task_arena::isolate([&] {
-    tbb::parallel_for(size_t(0), size_t(2 * maxlayer_ + 2), [&](size_t i) {
-      prepareDataStructures(i);
-      T lt;
-      lt.clear();
-      lt.fill(cells_[i].dim1, cells_[i].dim2);
+  for (unsigned int i = 0; i < 2 * maxlayer_ + 2; ++i) {
+    prepareDataStructures(i);
+    T lt;
+    lt.clear();
+    lt.fill(cells_[i].dim1, cells_[i].dim2);
 
-      LogDebug("HGCalCLUEAlgo") << "maxlayer: " << maxlayer_ << " lastLayerEE: " << lastLayerEE_
-                                << " firstLayerBH: " << firstLayerBH_ << "\n";
+    LogDebug("HGCalCLUEAlgo") << "maxlayer: " << maxlayer_ << " lastLayerEE: " << lastLayerEE_
+                              << " firstLayerBH: " << firstLayerBH_ << "\n";
 
-      // The critical distance for the local-density calculation (vecDeltasC_), the
-      // seed-promotion distance (vecDeltasSeed_) and the outlier distance (vecDeltasO_)
-      // are three independent, per-sensor-group parameters; each function looks up
-      // the relevant value per cell via its cellType (sensor group).
-      calculateLocalDensity(lt, i, vecDeltasC_);
-      calculateDistanceToHigher(lt, i, vecDeltasO_);
-      numberOfClustersPerLayer_[i] = findAndAssignClusters(i, vecDeltasSeed_, vecDeltasO_);
-    });
-  });
+    // The critical distance for the local-density calculation (vecDeltasC_), the
+    // seed-promotion distance (vecDeltasSeed_) and the outlier distance (vecDeltasO_)
+    // are three independent, per-sensor-group parameters; each function looks up
+    // the relevant value per cell via its cellType (sensor group).
+    calculateLocalDensity(lt, i, vecDeltasC_);
+    calculateDistanceToHigher(lt, i, vecDeltasO_);
+    numberOfClustersPerLayer_[i] = findAndAssignClusters(i, vecDeltasSeed_, vecDeltasO_);
+  }
 #if DEBUG_CLUSTERS_ALPAKA
   hgcalUtils::DumpLegacySoA dumperLegacySoA;
   dumperLegacySoA.dumpInfos(cells_, moduleType_);
